@@ -17,7 +17,7 @@
 
   <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap; justify-content:center;">
     <a href="https://github.com/iodn/tap-ducky/releases" style="display:inline-flex; align-items:center;">
-      <img src="https://raw.githubusercontent.com/element-hq/element-x-android/refs/heads/develop/fastlane/metadata/android/en-US/images/featureGraphic.png" alt="GitHub Releases" style="display:block; height:28px; width:auto;">
+      <img src="assets/images/get-it-on-github.png" alt="GitHub Releases" style="display:block; height:28px; width:auto;">
     </a>
   </div>
 </div>
