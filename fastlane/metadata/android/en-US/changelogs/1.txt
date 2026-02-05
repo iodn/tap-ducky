@@ -1,0 +1,10 @@
+## Changelog (v1.0)
+
+ * Initial release of TapDucky
+ * Execute DuckyScript with delay multiplier and optional jitter
+ * HID keyboard/mouse gadget via ConfigFS (root required)
+ * Payload editor with parameters and local library
+ * Import/preview from GitHub repositories
+ * On-demand execution and scheduling
+ * Execution logs and history
+ * Device status and HID diagnostics (VID/PID, UDC bind/unbind)

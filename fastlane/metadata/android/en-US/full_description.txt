@@ -1,0 +1,5 @@
+TapDucky turns your rooted Android device into a programmable USB HID keyboard. Create,
+edit, and run DuckyScript payloads with delay multipliers and optional human-like timing jitter. Import scripts from
+GitHub, manage a local library, and parameterize payloads. Execute on demand or on a schedule, then review logs and
+history. Monitor live device status and HID diagnostics (VID/PID). Requires root and a kernel with USB
+gadget/ConfigFS.

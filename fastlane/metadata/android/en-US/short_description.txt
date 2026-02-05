@@ -1,0 +1,1 @@
+Run DuckyScript over USB HID. Import, schedule, and manage payloads (root)
