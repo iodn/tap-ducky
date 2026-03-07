@@ -13,6 +13,7 @@ class KeyboardLayoutOption {
 class AdvancedSettings {
   const AdvancedSettings({
     required this.keyboardLayout,
+    required this.preferredUdc,
     required this.defaultVid,
     required this.defaultPid,
     required this.commandPresets,
@@ -20,6 +21,7 @@ class AdvancedSettings {
   });
 
   final String keyboardLayout;
+  final String preferredUdc;
   final String defaultVid;
   final String defaultPid;
   final List<String> commandPresets;
@@ -27,6 +29,7 @@ class AdvancedSettings {
 
   AdvancedSettings copyWith({
     String? keyboardLayout,
+    String? preferredUdc,
     String? defaultVid,
     String? defaultPid,
     List<String>? commandPresets,
@@ -34,6 +37,7 @@ class AdvancedSettings {
   }) {
     return AdvancedSettings(
       keyboardLayout: keyboardLayout ?? this.keyboardLayout,
+      preferredUdc: preferredUdc ?? this.preferredUdc,
       defaultVid: defaultVid ?? this.defaultVid,
       defaultPid: defaultPid ?? this.defaultPid,
       commandPresets: commandPresets ?? this.commandPresets,
@@ -43,6 +47,7 @@ class AdvancedSettings {
 
   Map<String, dynamic> toJson() => {
         'keyboardLayout': normalizeKeyboardLayoutId(keyboardLayout),
+        'preferredUdc': normalizePreferredUdc(preferredUdc),
         'defaultVid': defaultVid,
         'defaultPid': defaultPid,
         'commandPresets': commandPresets,
@@ -95,6 +100,7 @@ class AdvancedSettings {
 
   static AdvancedSettings defaults() => const AdvancedSettings(
         keyboardLayout: 'us',
+        preferredUdc: 'auto',
         defaultVid: '0x1D6B',
         defaultPid: '0x0104',
         commandPresets: <String>[
@@ -129,6 +135,7 @@ class AdvancedSettings {
 
     return AdvancedSettings(
       keyboardLayout: normalizeKeyboardLayoutId((json['keyboardLayout'] ?? 'us').toString()),
+      preferredUdc: normalizePreferredUdc((json['preferredUdc'] ?? 'auto').toString()),
       defaultVid: (json['defaultVid'] ?? '0x1D6B').toString(),
       defaultPid: (json['defaultPid'] ?? '0x0104').toString(),
       commandPresets: presetsRaw is List
@@ -229,5 +236,12 @@ class AdvancedSettings {
       if (opt.id == mapped) return mapped;
     }
     return 'us';
+  }
+
+  static String normalizePreferredUdc(String raw) {
+    final s = raw.trim();
+    if (s.isEmpty) return 'auto';
+    if (s.toLowerCase() == 'auto') return 'auto';
+    return s;
   }
 }

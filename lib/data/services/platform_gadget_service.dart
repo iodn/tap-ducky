@@ -34,6 +34,7 @@ class GadgetProfile {
     required this.product,
     required this.serialNumber,
     required this.maxPowerMa,
+    this.preferredUdc,
   });
 
   final String id;
@@ -45,6 +46,7 @@ class GadgetProfile {
   final String product;
   final String serialNumber;
   final int maxPowerMa;
+  final String? preferredUdc;
 
   Map<String, dynamic> toMap() => {
         'id': id,
@@ -56,6 +58,7 @@ class GadgetProfile {
         'vendorId': vendorId,
         'productId': productId,
         'maxPowerMa': maxPowerMa,
+        if (preferredUdc != null && preferredUdc!.trim().isNotEmpty) 'preferredUdc': preferredUdc!.trim(),
       };
 
   factory GadgetProfile.keyboard({
@@ -67,6 +70,7 @@ class GadgetProfile {
     String product = 'TapDucky Keyboard',
     String serialNumber = 'TDK-001',
     int maxPowerMa = 250,
+    String? preferredUdc,
   }) {
     return GadgetProfile(
       id: id,
@@ -78,6 +82,7 @@ class GadgetProfile {
       product: product,
       serialNumber: serialNumber,
       maxPowerMa: maxPowerMa,
+      preferredUdc: preferredUdc,
     );
   }
 
@@ -90,6 +95,7 @@ class GadgetProfile {
     String product = 'TapDucky Mouse',
     String serialNumber = 'TDM-001',
     int maxPowerMa = 250,
+    String? preferredUdc,
   }) {
     return GadgetProfile(
       id: id,
@@ -101,6 +107,7 @@ class GadgetProfile {
       product: product,
       serialNumber: serialNumber,
       maxPowerMa: maxPowerMa,
+      preferredUdc: preferredUdc,
     );
   }
 
@@ -113,6 +120,7 @@ class GadgetProfile {
     String product = 'TapDucky Composite',
     String serialNumber = 'TDC-001',
     int maxPowerMa = 250,
+    String? preferredUdc,
   }) {
     return GadgetProfile(
       id: id,
@@ -124,6 +132,7 @@ class GadgetProfile {
       product: product,
       serialNumber: serialNumber,
       maxPowerMa: maxPowerMa,
+      preferredUdc: preferredUdc,
     );
   }
 }

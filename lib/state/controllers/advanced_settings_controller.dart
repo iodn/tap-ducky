@@ -41,6 +41,11 @@ class AdvancedSettingsController extends AsyncNotifier<AdvancedSettings> {
     await _save(current.copyWith(defaultPid: pid));
   }
 
+  Future<void> setPreferredUdc(String udc) async {
+    final current = state.value ?? AdvancedSettings.defaults();
+    await _save(current.copyWith(preferredUdc: AdvancedSettings.normalizePreferredUdc(udc)));
+  }
+
   Future<void> addCommandPreset(String preset) async {
     final current = state.value ?? AdvancedSettings.defaults();
     final next = [...current.commandPresets, preset].where((s) => s.trim().isNotEmpty).toList();

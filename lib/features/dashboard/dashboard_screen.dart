@@ -121,6 +121,13 @@ class DashboardScreen extends ConsumerWidget {
       appBar: AppBar(
         title: const Text('TapDucky'),
         actions: [
+          if (exec.isRunning)
+            IconButton(
+              tooltip: 'Panic Stop',
+              onPressed: () => ref.read(executionControllerProvider.notifier).panicStop(),
+              icon: const Icon(Icons.warning_amber_rounded),
+              color: Theme.of(context).colorScheme.error,
+            ),
           IconButton(
             tooltip: 'Logs',
             onPressed: () => context.push(const LogsRoute().location),
@@ -191,6 +198,10 @@ class DashboardScreen extends ConsumerWidget {
                   }
                 },
                 onStop: exec.isRunning ? () => ref.read(executionControllerProvider.notifier).stop() : null,
+                onPanicStop:
+                    (exec.isRunning && exec.panicAvailable)
+                        ? () => ref.read(executionControllerProvider.notifier).panicStop()
+                        : null,
               ),
             ),
             const SizedBox(height: 16),
@@ -262,7 +273,7 @@ class DashboardScreen extends ConsumerWidget {
             SectionHeader(
               title: 'Quick Access',
               trailing: IconButton(
-                onPressed: () => _showQuickActionsSheet(context),
+                onPressed: () => _showQuickActionsSheet(context, ref, exec),
                 icon: const Icon(Icons.more_horiz),
                 tooltip: 'More actions',
               ),
@@ -295,7 +306,7 @@ class DashboardScreen extends ConsumerWidget {
     );
   }
 
-  void _showQuickActionsSheet(BuildContext context) {
+  void _showQuickActionsSheet(BuildContext context, WidgetRef ref, ExecutionState exec) {
     showModalBottomSheet(
       context: context,
       builder: (context) => SafeArea(
@@ -357,6 +368,16 @@ class DashboardScreen extends ConsumerWidget {
                 context.push(const DeviceRoute().location);
               },
             ),
+            if (exec.isRunning)
+              ListTile(
+                leading: Icon(Icons.warning_amber_rounded, color: Theme.of(context).colorScheme.error),
+                title: const Text('Panic Stop'),
+                subtitle: const Text('Emergency stop and gadget teardown'),
+                onTap: () async {
+                  Navigator.pop(context);
+                  await ref.read(executionControllerProvider.notifier).panicStop();
+                },
+              ),
             const SizedBox(height: 8),
           ],
         ),
@@ -371,12 +392,14 @@ class _HeroStatusCard extends ConsumerWidget {
     required this.exec,
     required this.onArmToggle,
     required this.onStop,
+    required this.onPanicStop,
   });
 
   final HidStatus hid;
   final ExecutionState exec;
   final VoidCallback onArmToggle;
   final VoidCallback? onStop;
+  final VoidCallback? onPanicStop;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -506,6 +529,22 @@ class _HeroStatusCard extends ConsumerWidget {
                 ],
               ],
             ),
+            if (exec.isRunning && exec.panicAvailable) ...[
+              const SizedBox(height: 10),
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  onPressed: onPanicStop,
+                  icon: const Icon(Icons.warning_amber_rounded),
+                  label: const Text('Panic Stop'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: cs.error,
+                    side: BorderSide(color: cs.error),
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                  ),
+                ),
+              ),
+            ],
           ],
         ),
       ),

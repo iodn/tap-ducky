@@ -18,6 +18,8 @@ class ExecutionState {
     required this.progress,
     required this.status,
     required this.executionId,
+    this.stopRequested = false,
+    this.panicAvailable = false,
     this.payloadId,
     this.payloadName,
     this.startedAt,
@@ -30,6 +32,8 @@ class ExecutionState {
   final double progress;
   final String status;
   final String executionId;
+  final bool stopRequested;
+  final bool panicAvailable;
   final String? payloadId;
   final String? payloadName;
   final DateTime? startedAt;
@@ -42,6 +46,8 @@ class ExecutionState {
     double? progress,
     String? status,
     String? executionId,
+    bool? stopRequested,
+    bool? panicAvailable,
     String? payloadId,
     String? payloadName,
     DateTime? startedAt,
@@ -54,6 +60,8 @@ class ExecutionState {
       progress: progress ?? this.progress,
       status: status ?? this.status,
       executionId: executionId ?? this.executionId,
+      stopRequested: stopRequested ?? this.stopRequested,
+      panicAvailable: panicAvailable ?? this.panicAvailable,
       payloadId: payloadId ?? this.payloadId,
       payloadName: payloadName ?? this.payloadName,
       startedAt: startedAt ?? this.startedAt,
@@ -76,10 +84,14 @@ final executionControllerProvider =
 
 class ExecutionController extends Notifier<ExecutionState> {
   static const _uuid = Uuid();
+  static const Duration _panicGraceDelay = Duration(seconds: 3);
+  static const Duration _autoPanicDelay = Duration(seconds: 6);
 
   StreamSubscription<Map<String, dynamic>>? _execSub;
   String? _activeExecutionId;
   Timer? _timeoutTimer;
+  Timer? _panicTimer;
+  Timer? _autoPanicTimer;
 
   int _tailSeq = 0;
   DateTime? _lastStepTailAt;
@@ -92,6 +104,10 @@ class ExecutionController extends Notifier<ExecutionState> {
     ref.onDispose(() {
       _timeoutTimer?.cancel();
       _timeoutTimer = null;
+      _panicTimer?.cancel();
+      _panicTimer = null;
+      _autoPanicTimer?.cancel();
+      _autoPanicTimer = null;
       _execSub?.cancel();
       _execSub = null;
       _activeExecutionId = null;
@@ -268,6 +284,8 @@ class ExecutionController extends Notifier<ExecutionState> {
         status: 'Timed out',
         finishedAt: finishedAt,
         success: false,
+        stopRequested: false,
+        panicAvailable: false,
       );
 
       _pushTail(_mkTail(
@@ -303,6 +321,30 @@ class ExecutionController extends Notifier<ExecutionState> {
 
       _timeoutTimer?.cancel();
       _timeoutTimer = null;
+      _panicTimer?.cancel();
+      _panicTimer = null;
+      _autoPanicTimer?.cancel();
+      _autoPanicTimer = null;
+    });
+  }
+
+  void _startPanicGraceTimer(String executionId) {
+    _panicTimer?.cancel();
+    _panicTimer = Timer(_panicGraceDelay, () {
+      if (_activeExecutionId != executionId) return;
+      if (!state.isRunning) return;
+      if (!state.stopRequested) return;
+      state = state.copyWith(panicAvailable: true);
+    });
+  }
+
+  void _startAutoPanicTimer(String executionId) {
+    _autoPanicTimer?.cancel();
+    _autoPanicTimer = Timer(_autoPanicDelay, () async {
+      if (_activeExecutionId != executionId) return;
+      if (!state.isRunning) return;
+      if (!state.stopRequested) return;
+      await panicStop();
     });
   }
 
@@ -358,6 +400,8 @@ class ExecutionController extends Notifier<ExecutionState> {
       isRunning: true,
       progress: 0,
       status: 'Executing…',
+      stopRequested: false,
+      panicAvailable: false,
       payloadId: null,
       payloadName: null,
       startedAt: startedAt,
@@ -434,6 +478,8 @@ class ExecutionController extends Notifier<ExecutionState> {
           status: cancelled ? 'Cancelled' : (ok ? 'Completed' : 'Failed'),
           finishedAt: finishedAt,
           success: ok && !cancelled,
+          stopRequested: false,
+          panicAvailable: false,
         );
 
         _pushTail(_mkTail(
@@ -466,6 +512,10 @@ class ExecutionController extends Notifier<ExecutionState> {
 
         _timeoutTimer?.cancel();
         _timeoutTimer = null;
+        _panicTimer?.cancel();
+        _panicTimer = null;
+        _autoPanicTimer?.cancel();
+        _autoPanicTimer = null;
         return;
       }
     });
@@ -516,6 +566,8 @@ class ExecutionController extends Notifier<ExecutionState> {
           status: 'Completed',
           finishedAt: finishedAt,
           success: true,
+          stopRequested: false,
+          panicAvailable: false,
         );
 
         _pushTail(_mkTail(
@@ -547,6 +599,10 @@ class ExecutionController extends Notifier<ExecutionState> {
 
         _timeoutTimer?.cancel();
         _timeoutTimer = null;
+        _panicTimer?.cancel();
+        _panicTimer = null;
+        _autoPanicTimer?.cancel();
+        _autoPanicTimer = null;
       });
     } catch (e) {
       final finishedAt = DateTime.now();
@@ -558,6 +614,8 @@ class ExecutionController extends Notifier<ExecutionState> {
         status: cancelled ? 'Cancelled' : 'Failed',
         finishedAt: finishedAt,
         success: false,
+        stopRequested: false,
+        panicAvailable: false,
       );
 
       _pushTail(_mkTail(
@@ -584,6 +642,10 @@ class ExecutionController extends Notifier<ExecutionState> {
 
       _timeoutTimer?.cancel();
       _timeoutTimer = null;
+      _panicTimer?.cancel();
+      _panicTimer = null;
+      _autoPanicTimer?.cancel();
+      _autoPanicTimer = null;
     }
   }
 
@@ -645,6 +707,8 @@ class ExecutionController extends Notifier<ExecutionState> {
       isRunning: true,
       progress: 0,
       status: 'Starting…',
+      stopRequested: false,
+      panicAvailable: false,
       payloadId: payload.id,
       payloadName: payload.name,
       startedAt: startedAt,
@@ -747,6 +811,8 @@ class ExecutionController extends Notifier<ExecutionState> {
           status: cancelled ? 'Cancelled' : (ok ? 'Completed' : 'Failed'),
           finishedAt: finishedAt,
           success: ok && !cancelled,
+          stopRequested: false,
+          panicAvailable: false,
         );
 
         _pushTail(_mkTail(
@@ -783,6 +849,10 @@ class ExecutionController extends Notifier<ExecutionState> {
 
         _timeoutTimer?.cancel();
         _timeoutTimer = null;
+        _panicTimer?.cancel();
+        _panicTimer = null;
+        _autoPanicTimer?.cancel();
+        _autoPanicTimer = null;
         return;
       }
     });
@@ -835,6 +905,8 @@ class ExecutionController extends Notifier<ExecutionState> {
           status: 'Completed',
           finishedAt: finishedAt,
           success: true,
+          stopRequested: false,
+          panicAvailable: false,
         );
 
         _pushTail(_mkTail(
@@ -870,6 +942,10 @@ class ExecutionController extends Notifier<ExecutionState> {
 
         _timeoutTimer?.cancel();
         _timeoutTimer = null;
+        _panicTimer?.cancel();
+        _panicTimer = null;
+        _autoPanicTimer?.cancel();
+        _autoPanicTimer = null;
       });
     } catch (e) {
       final finishedAt = DateTime.now();
@@ -881,6 +957,8 @@ class ExecutionController extends Notifier<ExecutionState> {
         status: cancelled ? 'Cancelled' : 'Failed',
         finishedAt: finishedAt,
         success: false,
+        stopRequested: false,
+        panicAvailable: false,
       );
 
       _pushTail(_mkTail(
@@ -911,6 +989,10 @@ class ExecutionController extends Notifier<ExecutionState> {
 
       _timeoutTimer?.cancel();
       _timeoutTimer = null;
+      _panicTimer?.cancel();
+      _panicTimer = null;
+      _autoPanicTimer?.cancel();
+      _autoPanicTimer = null;
     }
   }
 
@@ -919,8 +1001,64 @@ class ExecutionController extends Notifier<ExecutionState> {
     final id = _activeExecutionId;
     if (id == null) return;
     final service = ref.read(platformGadgetServiceProvider);
-    state = state.copyWith(status: 'Stopping…');
+    state = state.copyWith(
+      status: 'Stopping…',
+      stopRequested: true,
+      panicAvailable: false,
+    );
+    _startPanicGraceTimer(id);
+    _startAutoPanicTimer(id);
     await service.cancelExecution(id);
+  }
+
+  Future<void> panicStop() async {
+    if (!state.isRunning) return;
+    final service = ref.read(platformGadgetServiceProvider);
+    final execId = _activeExecutionId ?? state.executionId;
+
+    state = state.copyWith(
+      status: 'Panic stopping…',
+      stopRequested: true,
+      panicAvailable: false,
+    );
+
+    try {
+      await service.cancelExecution('*');
+    } catch (_) {}
+    try {
+      await service.panicStop();
+    } catch (_) {}
+
+    final finishedAt = DateTime.now();
+    state = state.copyWith(
+      isRunning: false,
+      progress: 1.0,
+      status: 'Stopped (panic)',
+      finishedAt: finishedAt,
+      success: false,
+      stopRequested: false,
+      panicAvailable: false,
+    );
+
+    _pushTail(_mkTail(
+      executionId: execId,
+      level: 'warn',
+      message: 'Execution panic-stopped',
+      success: false,
+      payloadId: state.payloadId,
+      payloadName: state.payloadName,
+    ));
+
+    await _execSub?.cancel();
+    _execSub = null;
+    _activeExecutionId = null;
+
+    _timeoutTimer?.cancel();
+    _timeoutTimer = null;
+    _panicTimer?.cancel();
+    _panicTimer = null;
+    _autoPanicTimer?.cancel();
+    _autoPanicTimer = null;
   }
 
   Future<void> _emitAndPersist(LogEntry entry) async {

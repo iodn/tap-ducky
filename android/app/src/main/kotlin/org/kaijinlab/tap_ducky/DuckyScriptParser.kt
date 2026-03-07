@@ -640,6 +640,7 @@ class DuckyScriptExecutor(
   private val emitExec: (Map<String, Any?>) -> Unit,
   private val shouldCancel: () -> Boolean,
 ) {
+  private val cancelPollMs = 100L
   private var defaultDelay = 0
   private val globalVariables = mutableMapOf<String, Int>()
   private val localScopes = ArrayDeque<MutableMap<String, Int>>()
@@ -842,7 +843,7 @@ class DuckyScriptExecutor(
         else -> {
           if (requiresHost(cmd.type)) {
             if (!manager.isHostConnected()) {
-              val ok = manager.waitForHostConnected(10_000)
+              val ok = waitForPredicateCancellable(timeoutMs = 10_000L) { manager.isHostConnected() }
               if (!ok) {
                 throw GadgetManager.HidWriteException("HOST_DISCONNECTED", "Host not connected")
               }
@@ -851,12 +852,51 @@ class DuckyScriptExecutor(
           executeCommand(cmd)
           markStep(cmd)
           if (defaultDelay > 0) {
-            timing.sleepMs(defaultDelay)
+            sleepMsCancellable(defaultDelay)
           }
         }
       }
       i++
     }
+  }
+
+  private fun throwIfCancelled() {
+    if (shouldCancel()) throw CancelSignal()
+  }
+
+  private fun sleepMsCancellable(rawMs: Int) {
+    val totalMs = timing.scaleMs(rawMs).toLong()
+    if (totalMs <= 0L) return
+    var remaining = totalMs
+    while (remaining > 0L) {
+      throwIfCancelled()
+      val chunk = minOf(cancelPollMs, remaining)
+      Thread.sleep(chunk)
+      remaining -= chunk
+    }
+    throwIfCancelled()
+  }
+
+  private fun waitForPredicateCancellable(
+    timeoutMs: Long,
+    pollMs: Long = 200L,
+    predicate: () -> Boolean,
+  ): Boolean {
+    if (predicate()) return true
+    val timeout = timeoutMs.coerceAtLeast(0L)
+    if (timeout == 0L) return predicate()
+
+    val start = System.currentTimeMillis()
+    while (System.currentTimeMillis() - start < timeout) {
+      throwIfCancelled()
+      val elapsed = System.currentTimeMillis() - start
+      val remaining = (timeout - elapsed).coerceAtLeast(0L)
+      val sleepChunk = minOf(pollMs.coerceAtLeast(50L), remaining)
+      if (sleepChunk > 0L) Thread.sleep(sleepChunk)
+      if (predicate()) return true
+    }
+    throwIfCancelled()
+    return predicate()
   }
 
   private fun markStep(cmd: DuckyCommand) {
@@ -1282,14 +1322,14 @@ class DuckyScriptExecutor(
 
       CommandType.DELAY -> {
         val ms = cmd.args.firstOrNull()?.toIntOrNull() ?: 0
-        timing.sleepMs(ms)
+        sleepMsCancellable(ms)
         setExitCode(0)
       }
 
       CommandType.SLEEP_UNTIL -> {
         val arg = cmd.args.firstOrNull().orEmpty()
         val ms = computeSleepUntilMs(arg)
-        if (ms > 0) timing.sleepMs(ms)
+        if (ms > 0) sleepMsCancellable(ms)
         setExitCode(0)
       }
 
@@ -1297,11 +1337,11 @@ class DuckyScriptExecutor(
         val target = cmd.args.firstOrNull()?.uppercase(Locale.US) ?: ""
         val timeoutMs = cmd.args.getOrNull(1)?.toIntOrNull() ?: 15000
         val ok = when (target) {
-          "HOST_CONNECTED", "HOST" -> manager.waitForHostConnected(timeoutMs.toLong())
-          "UDC_CONFIGURED", "UDC" -> manager.waitForCondition(timeoutMs.toLong()) { manager.isUdcConfigured() }
-          "KEYBOARD_READY", "KBD_READY" -> manager.waitForCondition(timeoutMs.toLong()) { manager.isKeyboardWriterReady() }
-          "MOUSE_READY" -> manager.waitForCondition(timeoutMs.toLong()) { manager.isMouseWriterReady() }
-          "SESSION_ARMED", "ACTIVE" -> manager.waitForCondition(timeoutMs.toLong()) { manager.isActive() }
+          "HOST_CONNECTED", "HOST" -> waitForPredicateCancellable(timeoutMs.toLong()) { manager.isHostConnected() }
+          "UDC_CONFIGURED", "UDC" -> waitForPredicateCancellable(timeoutMs.toLong()) { manager.isUdcConfigured() }
+          "KEYBOARD_READY", "KBD_READY" -> waitForPredicateCancellable(timeoutMs.toLong()) { manager.isKeyboardWriterReady() }
+          "MOUSE_READY" -> waitForPredicateCancellable(timeoutMs.toLong()) { manager.isMouseWriterReady() }
+          "SESSION_ARMED", "ACTIVE" -> waitForPredicateCancellable(timeoutMs.toLong()) { manager.isActive() }
           "" -> true
           else -> throw IllegalArgumentException("WAIT_FOR unsupported target: $target")
         }

@@ -1,0 +1,3 @@
+## Changelog (v1.0)
+
+Fix stop reliability and host detection by adding a two-stage+auto panic stop, global emergency controls, preferred UDC selection with bind fallback, and relaxed UDC host-state heuristics

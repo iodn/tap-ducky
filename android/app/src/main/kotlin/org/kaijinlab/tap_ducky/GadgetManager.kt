@@ -45,6 +45,8 @@ class GadgetManager(
   private val udcStatePoller = Handler(Looper.getMainLooper())
   private var pollingRunnable: Runnable? = null
   private var lastUdcState: String? = null
+  private var hostConfigurationRequestCount: Int = 0
+  private var lastHostLikelyConnected: Boolean = false
 
   private val execSinkRef = AtomicReference<EventChannel.EventSink?>(null)
   private val cancelExecRef = AtomicReference<String?>(null)
@@ -73,6 +75,7 @@ class GadgetManager(
     val mouseWriterReady: Boolean,
     val deviceConnected: Boolean,
     val udcState: String?,
+    val hostConfigurationRequestCount: Int,
   ) {
     val isActive: Boolean get() = state == "ACTIVE" || state == "ACTIVATING"
     fun toMap(): Map<String, Any?> = mapOf(
@@ -87,6 +90,7 @@ class GadgetManager(
       "mouseWriterReady" to mouseWriterReady,
       "deviceConnected" to deviceConnected,
       "udcState" to udcState,
+      "hostConfigurationRequestCount" to hostConfigurationRequestCount,
     )
   }
 
@@ -102,6 +106,7 @@ class GadgetManager(
       mouseWriterReady = false,
       deviceConnected = false,
       udcState = null,
+      hostConfigurationRequestCount = 0,
     )
   )
 
@@ -197,6 +202,7 @@ class GadgetManager(
       mouseWriterReady = root.isMouseWriterReady(),
       deviceConnected = deviceConnected,
       udcState = udcState,
+      hostConfigurationRequestCount = hostConfigurationRequestCount,
     )
     statusRef.set(next)
     emit(next)
@@ -389,6 +395,8 @@ class GadgetManager(
     }
 
     prefs.setActive(profile.id, profile.roleType, gadgetDir, kbdDev, mouseDev)
+    hostConfigurationRequestCount = 0
+    lastHostLikelyConnected = false
     startForeground("USB gadget active: ${profile.name}")
     openHidWritersBestEffort(kbdDev, mouseDev)
     setState("ACTIVE", profile.id, null)
@@ -430,6 +438,8 @@ class GadgetManager(
     restoreUsbSnapshotBestEffort(reason = "deactivate")
     prefs.clearActive()
     prefs.clearUsbSnapshot()
+    hostConfigurationRequestCount = 0
+    lastHostLikelyConnected = false
     setState("IDLE", null, null)
     log.log("gadget", "Deactivated")
   }
@@ -452,6 +462,8 @@ class GadgetManager(
     restoreUsbSnapshotBestEffort(reason = "panic_stop")
     prefs.clearActive()
     prefs.clearUsbSnapshot()
+    hostConfigurationRequestCount = 0
+    lastHostLikelyConnected = false
     setState("IDLE", null, null)
     log.log("gadget", "Panic stop complete")
   }
@@ -637,22 +649,28 @@ class GadgetManager(
       override fun run() {
         try {
           val udcState = pollUdcState()
-          val isConnected = udcState == "configured"
-          if (udcState != lastUdcState) {
-            lastUdcState = udcState
+          val isConnected = isLikelyHostPresent(udcState)
+          if (isConnected && !lastHostLikelyConnected) {
+            hostConfigurationRequestCount += 1
+          }
+          val shouldEmit = udcState != lastUdcState || isConnected != lastHostLikelyConnected
+          if (shouldEmit) {
             val current = statusRef.get()
             val next = current.copy(
               deviceConnected = isConnected,
               udcState = udcState,
+              hostConfigurationRequestCount = hostConfigurationRequestCount,
             )
             statusRef.set(next)
             emit(next)
             if (isConnected) {
-              log.log("udc", "Host connected (state: $udcState)")
+              log.log("udc", "Host connected (state: ${udcState ?: "unknown"}, cfgReq=$hostConfigurationRequestCount)")
             } else {
               log.log("udc", "Host disconnected (state: ${udcState ?: "unknown"})")
             }
           }
+          lastUdcState = udcState
+          lastHostLikelyConnected = isConnected
         } catch (t: Throwable) {
           log.logError("udc", "Polling failed: ${t.message}")
         }
@@ -667,6 +685,28 @@ class GadgetManager(
     pollingRunnable?.let { udcStatePoller.removeCallbacks(it) }
     pollingRunnable = null
     lastUdcState = null
+    lastHostLikelyConnected = false
+  }
+
+  private fun isLikelyHostPresent(udcState: String?): Boolean {
+    val s = udcState?.trim()?.lowercase(Locale.US) ?: return false
+    if (s.isEmpty()) return false
+    if (s.contains("not attached") ||
+      s.contains("disconnected") ||
+      s.contains("unbound") ||
+      s.contains("disabled") ||
+      s.contains("not connected")
+    ) {
+      return false
+    }
+    if (s.contains("configured")) return true
+    if (s.contains("connected")) return true
+    if (s.contains("addressed")) return true
+    if (s.contains("default")) return true
+    if (s.contains("powered")) return true
+    if (s.contains("suspended")) return true
+    if (s.contains("active")) return true
+    return false
   }
 
   private fun openHidWritersBestEffort(kbdDev: String?, mouseDev: String?) {
@@ -707,6 +747,7 @@ class GadgetManager(
     val name = (map["name"] ?: "Profile").toString()
     val roleType = (map["roleType"] ?: "mouse").toString()
     val tunables = (map["tunables"] as? Map<*, *>)
+    val preferredUdcRaw = (tunables?.get("preferredUdc") ?: map["preferredUdc"])?.toString()?.trim()
 
     fun str(key: String, fallback: String): String {
       val v = (tunables?.get(key) ?: map[key])?.toString()
@@ -736,11 +777,13 @@ class GadgetManager(
       }
     )
     val maxPower = intHexOrDec("maxPowerMa", 250)
+    val preferredUdc = preferredUdcRaw?.takeIf { it.isNotBlank() && udcNameRegex.matches(it) }
 
     return Configfs.ParsedProfile(
       id = id,
       name = name,
       roleType = roleType,
+      preferredUdc = preferredUdc,
       manufacturer = manufacturer,
       product = product,
       serialNumber = serial,
@@ -1165,6 +1208,7 @@ class GadgetManager(
       message = message,
       keyboardWriterReady = root.isKeyboardWriterReady(),
       mouseWriterReady = root.isMouseWriterReady(),
+      hostConfigurationRequestCount = hostConfigurationRequestCount,
     )
     statusRef.set(next)
     emit(next)
@@ -1177,6 +1221,7 @@ class GadgetManager(
       message = message,
       keyboardWriterReady = root.isKeyboardWriterReady(),
       mouseWriterReady = root.isMouseWriterReady(),
+      hostConfigurationRequestCount = hostConfigurationRequestCount,
     )
     statusRef.set(next)
     emit(next)

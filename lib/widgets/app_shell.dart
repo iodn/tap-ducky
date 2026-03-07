@@ -34,6 +34,7 @@ class _AppShellState extends ConsumerState<AppShell> with WidgetsBindingObserver
 
   final Map<int, int> _downAtMs = <int, int>{};
   final Map<int, _TapState> _tap = <int, _TapState>{};
+  int _lastEmergencyPanicAtMs = 0;
 
   static const int _multiTapWindowMs = 350;
   static const int _longPressMinMs = 550;
@@ -87,7 +88,9 @@ class _AppShellState extends ConsumerState<AppShell> with WidgetsBindingObserver
     final duration = (e.eventTimeMs - down).abs();
 
     if (duration >= _longPressMinMs) {
+      final panicTriggered = _tryEmergencyPanicByVolumeCombo(e, duration);
       _clearTapState(e.keyCode);
+      if (panicTriggered) return;
       unawaited(_dispatchGesture('${base}_long_press'));
       return;
     }
@@ -129,6 +132,26 @@ class _AppShellState extends ConsumerState<AppShell> with WidgetsBindingObserver
   void _clearTapState(int keyCode) {
     final s = _tap.remove(keyCode);
     s?.timer?.cancel();
+  }
+
+  bool _tryEmergencyPanicByVolumeCombo(HardwareKeyEvent e, int releasedKeyHeldMs) {
+    final exec = ref.read(executionControllerProvider);
+    if (!exec.isRunning) return false;
+    if (e.keyCode != 24 && e.keyCode != 25) return false;
+    if (releasedKeyHeldMs < _longPressMinMs) return false;
+
+    final now = e.eventTimeMs;
+    if ((now - _lastEmergencyPanicAtMs).abs() < 1500) return false;
+
+    final otherKey = e.keyCode == 24 ? 25 : 24;
+    final otherDownAt = _downAtMs[otherKey];
+    if (otherDownAt == null) return false;
+    final otherHeldMs = (now - otherDownAt).abs();
+    if (otherHeldMs < _longPressMinMs) return false;
+
+    _lastEmergencyPanicAtMs = now;
+    unawaited(ref.read(executionControllerProvider.notifier).panicStop());
+    return true;
   }
 
   String? _baseForKeyCode(int keyCode) {

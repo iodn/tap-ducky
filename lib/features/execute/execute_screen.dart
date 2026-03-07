@@ -57,6 +57,13 @@ class _ExecuteScreenState extends ConsumerState<ExecuteScreen> with SingleTicker
       appBar: AppBar(
         title: const Text('Execute'),
         actions: [
+          if (exec.isRunning)
+            IconButton(
+              tooltip: 'Panic Stop',
+              onPressed: () => ref.read(executionControllerProvider.notifier).panicStop(),
+              icon: const Icon(Icons.warning_amber_rounded),
+              color: Theme.of(context).colorScheme.error,
+            ),
           logsAsync.when(
             data: (logs) {
               final groups = ExecutionGroup.fromLogs(logs);
@@ -188,6 +195,7 @@ class _ExecuteScreenState extends ConsumerState<ExecuteScreen> with SingleTicker
                         await ref.read(executionControllerProvider.notifier).runPayload(payload, params);
                       },
                       onStop: () => ref.read(executionControllerProvider.notifier).stop(),
+                      onPanicStop: () => ref.read(executionControllerProvider.notifier).panicStop(),
                     ),
                     const SizedBox(height: 16),
                     _ConsoleTabs(
@@ -1189,12 +1197,14 @@ class _ExecutionControlCard extends StatelessWidget {
     required this.hid,
     required this.onRun,
     required this.onStop,
+    required this.onPanicStop,
   });
 
   final ExecutionState exec;
   final HidStatus hid;
   final VoidCallback onRun;
   final VoidCallback onStop;
+  final VoidCallback onPanicStop;
 
   @override
   Widget build(BuildContext context) {
@@ -1289,6 +1299,22 @@ class _ExecutionControlCard extends StatelessWidget {
                 ],
               ],
             ),
+            if (exec.isRunning && exec.panicAvailable) ...[
+              const SizedBox(height: 10),
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  onPressed: onPanicStop,
+                  icon: const Icon(Icons.warning_amber_rounded),
+                  label: const Text('Panic Stop'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: cs.error,
+                    side: BorderSide(color: cs.error),
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                  ),
+                ),
+              ),
+            ],
           ],
         ),
       ),

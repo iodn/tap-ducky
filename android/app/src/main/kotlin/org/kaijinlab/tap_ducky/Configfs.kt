@@ -7,6 +7,7 @@ object Configfs {
     val id: String,
     val name: String,
     val roleType: String,
+    val preferredUdc: String?,
     val manufacturer: String,
     val product: String,
     val serialNumber: String,
@@ -32,6 +33,8 @@ object Configfs {
     val prod = shEscape(p.product)
     val sn = shEscape(p.serialNumber)
     val gadget = sanitizeGadgetName(gadgetDir)
+    val preferredUdc = p.preferredUdc?.trim()?.takeIf { it.isNotEmpty() } ?: ""
+    val preferredUdcQuoted = shEscape(preferredUdc)
 
     val idVendor = String.format(Locale.US, "0x%04x", p.vendorId and 0xFFFF)
     val idProduct = String.format(Locale.US, "0x%04x", p.productId and 0xFFFF)
@@ -41,12 +44,31 @@ object Configfs {
     val create = """
       $baseSelect
 
-      # Choose UDC (before unbinding) so we can be less destructive
-      UDC_NAME=${'$'}(getprop sys.usb.controller 2>/dev/null | tr -d '\r')
-      if [ -z "${'$'}UDC_NAME" ]; then
-        UDC_NAME=${'$'}(ls /sys/class/udc 2>/dev/null | head -n1 | tr -d '\r')
+      PREFERRED_UDC=$preferredUdcQuoted
+      UDC_CANDIDATES=""
+
+      append_udc_candidate() {
+        c=${'$'}1
+        [ -n "${'$'}c" ] || return 0
+        for e in ${'$'}UDC_CANDIDATES; do
+          [ "${'$'}e" = "${'$'}c" ] && return 0
+        done
+        UDC_CANDIDATES="${'$'}UDC_CANDIDATES ${'$'}c"
+      }
+
+      if [ -n "${'$'}PREFERRED_UDC" ]; then
+        append_udc_candidate "${'$'}PREFERRED_UDC"
       fi
-      if [ -z "${'$'}UDC_NAME" ]; then
+
+      SYS_UDC=${'$'}(getprop sys.usb.controller 2>/dev/null | tr -d '\r')
+      append_udc_candidate "${'$'}SYS_UDC"
+
+      for c in ${'$'}(ls /sys/class/udc 2>/dev/null || true); do
+        c=${'$'}(echo "${'$'}c" | tr -d '\r')
+        append_udc_candidate "${'$'}c"
+      done
+
+      if [ -z "${'$'}UDC_CANDIDATES" ]; then
         echo "No UDC found in /sys/class/udc" >&2
         exit 3
       fi
@@ -99,21 +121,37 @@ object Configfs {
     """.trimIndent()
 
     val bind = """
-      # Unbind other gadgets bound to the same UDC (best-effort), but do not nuke everything
-      for U in "${'$'}CFGBASE"/*/UDC; do
-        [ -f "${'$'}U" ] || continue
-        # Skip our gadget's UDC file
-        if [ "${'$'}U" = "${'$'}G/UDC" ]; then
-          continue
-        fi
-        CUR=${'$'}(cat "${'$'}U" 2>/dev/null | tr -d '\r')
-        if [ "${'$'}CUR" = "${'$'}UDC_NAME" ]; then
-          (echo "" > "${'$'}U") 2>/dev/null || true
+      BOUND_UDC=""
+      for UDC_NAME in ${'$'}UDC_CANDIDATES; do
+        [ -d "/sys/class/udc/${'$'}UDC_NAME" ] || continue
+
+        # Unbind other gadgets bound to the selected UDC (best-effort)
+        for U in "${'$'}CFGBASE"/*/UDC; do
+          [ -f "${'$'}U" ] || continue
+          if [ "${'$'}U" = "${'$'}G/UDC" ]; then
+            continue
+          fi
+          CUR=${'$'}(cat "${'$'}U" 2>/dev/null | tr -d '\r')
+          if [ "${'$'}CUR" = "${'$'}UDC_NAME" ]; then
+            (echo "" > "${'$'}U") 2>/dev/null || true
+          fi
+        done
+
+        (echo "" > UDC) 2>/dev/null || true
+        (echo "${'$'}UDC_NAME" > UDC) 2>/dev/null || true
+        CUR_UDC=${'$'}(cat UDC 2>/dev/null | tr -d '\r')
+        if [ "${'$'}CUR_UDC" = "${'$'}UDC_NAME" ]; then
+          BOUND_UDC="${'$'}UDC_NAME"
+          break
         fi
       done
 
-      echo "${'$'}UDC_NAME" > UDC
-      echo "Bound to UDC: ${'$'}UDC_NAME"
+      if [ -z "${'$'}BOUND_UDC" ]; then
+        echo "Failed to bind gadget to any UDC candidate: ${'$'}UDC_CANDIDATES" >&2
+        exit 4
+      fi
+
+      echo "Bound to UDC: ${'$'}BOUND_UDC"
     """.trimIndent()
 
     return listOf(create, functions, link, bind).joinToString("\n\n") + "\n"

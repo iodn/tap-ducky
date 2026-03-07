@@ -176,7 +176,13 @@ class HidStatusController extends Notifier<HidStatus> {
     }
 
     final udcState = (next.udcState ?? _lastUdcState ?? '').trim().toLowerCase();
-    final udcSaysConfigured = udcState.contains('configured');
+    final udcSaysConfigured = udcState.contains('configured') ||
+        udcState.contains('connected') ||
+        udcState.contains('addressed') ||
+        udcState.contains('default') ||
+        udcState.contains('powered') ||
+        udcState.contains('suspended') ||
+        udcState.contains('active');
     final udcSaysDisconnected = udcState.contains('not attached') ||
         udcState.contains('disconnected') ||
         udcState.contains('unbound') ||
@@ -225,12 +231,14 @@ class HidStatusController extends Notifier<HidStatus> {
     final advSettings = ref.read(advancedSettingsControllerProvider).value;
     final vid = _parseHexId(advSettings?.defaultVid ?? '0x1D6B', 0x1d6b);
     final pid = _parseHexId(advSettings?.defaultPid ?? '0x0104', 0x0104);
+    final preferredUdc = _preferredUdcOrNull(advSettings?.preferredUdc);
 
     final profile = GadgetProfile.keyboard(
       id: 'kbd_${DateTime.now().millisecondsSinceEpoch}',
       name: 'TapDucky Keyboard',
       vendorId: vid,
       productId: pid,
+      preferredUdc: preferredUdc,
     );
 
     await service.activateProfile(profile);
@@ -242,12 +250,14 @@ class HidStatusController extends Notifier<HidStatus> {
     final advSettings = ref.read(advancedSettingsControllerProvider).value;
     final vid = _parseHexId(advSettings?.defaultVid ?? '0x1D6B', 0x1d6b);
     final pid = _parseHexId(advSettings?.defaultPid ?? '0x0104', 0x0104);
+    final preferredUdc = _preferredUdcOrNull(advSettings?.preferredUdc);
 
     final profile = GadgetProfile.mouse(
       id: 'mouse_${DateTime.now().millisecondsSinceEpoch}',
       name: 'TapDucky Mouse',
       vendorId: vid,
       productId: pid,
+      preferredUdc: preferredUdc,
     );
 
     await service.activateProfile(profile);
@@ -259,12 +269,14 @@ class HidStatusController extends Notifier<HidStatus> {
     final advSettings = ref.read(advancedSettingsControllerProvider).value;
     final vid = _parseHexId(advSettings?.defaultVid ?? '0x1D6B', 0x1d6b);
     final pid = _parseHexId(advSettings?.defaultPid ?? '0x0104', 0x0104);
+    final preferredUdc = _preferredUdcOrNull(advSettings?.preferredUdc);
 
     final profile = GadgetProfile.composite(
       id: 'comp_${DateTime.now().millisecondsSinceEpoch}',
       name: 'TapDucky Composite',
       vendorId: vid,
       productId: pid,
+      preferredUdc: preferredUdc,
     );
 
     await service.activateProfile(profile);
@@ -313,5 +325,12 @@ class HidStatusController extends Notifier<HidStatus> {
     } catch (_) {
       return fallback;
     }
+  }
+
+  String? _preferredUdcOrNull(String? raw) {
+    final v = raw?.trim() ?? '';
+    if (v.isEmpty) return null;
+    if (v.toLowerCase() == 'auto') return null;
+    return v;
   }
 }

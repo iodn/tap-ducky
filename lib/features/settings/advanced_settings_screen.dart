@@ -75,6 +75,7 @@ class _BodyState extends ConsumerState<_Body> {
 
   Future<({String? vendor, String? product})>? _resolvedNames;
   late Future<List<KeyboardLayoutInfo>> _keyboardLayoutsFuture;
+  late Future<List<String>> _udcsFuture;
 
   static const Map<String, String> _hotkeyTitles = <String, String>{
     'arm_toggle': 'Arm / Disarm session',
@@ -91,6 +92,7 @@ class _BodyState extends ConsumerState<_Body> {
     _pidCtrl = TextEditingController(text: widget.settings.defaultPid);
     _keyboardLayoutsFuture =
         ref.read(platformGadgetServiceProvider).getKeyboardLayouts();
+    _udcsFuture = ref.read(platformGadgetServiceProvider).listUdcs();
     _syncParsedAndResolved();
   }
 
@@ -392,6 +394,46 @@ class _BodyState extends ConsumerState<_Body> {
                                 .read(platformGadgetServiceProvider)
                                 .setKeyboardLayoutByCode(v);
                           } catch (_) {}
+                        },
+                      );
+                    },
+                  ),
+                  const SizedBox(height: 10),
+                  FutureBuilder<List<String>>(
+                    future: _udcsFuture,
+                    builder: (context, snap) {
+                      final udcs = snap.data ?? const <String>[];
+                      final currentRaw = widget.settings.preferredUdc.trim();
+                      final current = currentRaw.isEmpty ? 'auto' : currentRaw;
+                      final items = <DropdownMenuItem<String>>[
+                        const DropdownMenuItem(
+                          value: 'auto',
+                          child: Text('Auto (try all UDCs)'),
+                        ),
+                        ...udcs.map((u) => DropdownMenuItem(value: u, child: Text(u))),
+                      ];
+
+                      final hasCurrent = items.any((e) => e.value == current);
+                      final mergedItems = <DropdownMenuItem<String>>[
+                        if (!hasCurrent && current != 'auto')
+                          DropdownMenuItem(value: current, child: Text('Current ($current)')),
+                        ...items,
+                      ];
+
+                      return DropdownButtonFormField<String>(
+                        value: hasCurrent ? current : mergedItems.first.value,
+                        decoration: InputDecoration(
+                          labelText: 'Preferred UDC',
+                          helperText: snap.connectionState == ConnectionState.waiting
+                              ? 'Loading UDC list…'
+                              : 'Auto will fallback across available UDCs',
+                        ),
+                        items: mergedItems,
+                        onChanged: (v) async {
+                          if (v == null) return;
+                          await ref
+                              .read(advancedSettingsControllerProvider.notifier)
+                              .setPreferredUdc(v);
                         },
                       );
                     },
