@@ -16,6 +16,11 @@
   [![Root Required](https://img.shields.io/badge/Root-Required-red.svg)](#)
 
   <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap; justify-content:center;">
+   <a href="https://f-droid.org/en/packages/org.kaijinlab.tap_ducky/" style="display:inline-flex; align-items:center;">
+    <img src="https://fdroid.gitlab.io/artwork/badge/get-it-on.png"
+         alt="Get it on F-Droid"
+         style="display:block; height:102px; width:auto;">
+    </a>
     <a href="https://github.com/iodn/tap-ducky/releases" style="display:inline-flex; align-items:center;">
       <img src="assets/images/get-it-on-github.png" alt="GitHub Releases" style="display:block; height:100px; width:auto;">
     </a>
