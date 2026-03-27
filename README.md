@@ -5,7 +5,7 @@
 </a>
 <div>
 <h3 style="font-size: 2.2rem; letter-spacing: 1px;">TapDucky - Android USB HID Keystroke Injector</h3>
-<p style="font-size: 1.15rem; font-weight: 500;"> <strong>Open-source DuckyScript runner for rooted Android with USB Gadget (ConfigFS) support</strong><br> <strong>TapDucky</strong> lets you create, customize, schedule, and run DuckyScript on Android by emulating a USB keyboard, mouse, or composite HID device for authorized testing and automation. It includes payload parameterization, multiple scheduler triggers, execution logs, and a GitHub-backed payload library with automatic DuckyScript validation and optional Digispark <code>.ino</code> conversion. </p>
+<p style="font-size: 1.15rem; font-weight: 500;"> <strong>Open-source DuckyScript runner for rooted Android with USB Gadget (ConfigFS) support</strong><br> <strong>TapDucky</strong> lets you create, customize, schedule, and run DuckyScript on Android by emulating a USB keyboard, mouse, or composite HID device for authorized testing and automation. It includes payload parameterization, multiple scheduler triggers, execution logs, and a GitHub-backed payload library with automatic DuckyScript validation and optional Digispark <code>.ino</code> conversion.</p>
 
 <div align="center">
 
