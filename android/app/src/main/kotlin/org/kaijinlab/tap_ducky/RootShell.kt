@@ -1,12 +1,21 @@
 package org.kaijinlab.tap_ducky
 
 import java.io.BufferedReader
+import java.io.InterruptedIOException
 import java.io.InputStreamReader
 import java.io.OutputStreamWriter
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.math.max
 
 class RootShell(private val log: LogBus) {
+
+    private fun isExpectedStreamClose(t: Throwable): Boolean {
+        val msg = t.message?.lowercase() ?: ""
+        return t is InterruptedIOException ||
+            msg.contains("read interrupted by close") ||
+            msg.contains("stream closed") ||
+            msg.contains("socket closed")
+    }
 
     data class ExecResult(
         val ok: Boolean,
@@ -260,19 +269,27 @@ class RootShell(private val log: LogBus) {
             val errSb = StringBuilder()
 
             val tOut = Thread {
-                BufferedReader(InputStreamReader(p.inputStream)).use { br ->
-                    while (true) {
-                        val line = br.readLine() ?: break
-                        outSb.append(line).append('\n')
+                try {
+                    BufferedReader(InputStreamReader(p.inputStream)).use { br ->
+                        while (true) {
+                            val line = br.readLine() ?: break
+                            outSb.append(line).append('\n')
+                        }
                     }
+                } catch (t: Throwable) {
+                    if (!isExpectedStreamClose(t)) throw t
                 }
             }
             val tErr = Thread {
-                BufferedReader(InputStreamReader(p.errorStream)).use { br ->
-                    while (true) {
-                        val line = br.readLine() ?: break
-                        errSb.append(line).append('\n')
+                try {
+                    BufferedReader(InputStreamReader(p.errorStream)).use { br ->
+                        while (true) {
+                            val line = br.readLine() ?: break
+                            errSb.append(line).append('\n')
+                        }
                     }
+                } catch (t: Throwable) {
+                    if (!isExpectedStreamClose(t)) throw t
                 }
             }
 
@@ -378,7 +395,10 @@ class RootShell(private val log: LogBus) {
                             stdoutBuf.add(line)
                         }
                     }
-                } catch (_: Throwable) {
+                } catch (t: Throwable) {
+                    if (!isExpectedStreamClose(t)) {
+                        log.logError("root", "stdout reader failed: ${t.message ?: t.javaClass.simpleName}")
+                    }
                 }
             }.apply { isDaemon = true; name = "su-stdout" }.start()
 
@@ -390,7 +410,10 @@ class RootShell(private val log: LogBus) {
                             stderrBuf.add(line)
                         }
                     }
-                } catch (_: Throwable) {
+                } catch (t: Throwable) {
+                    if (!isExpectedStreamClose(t)) {
+                        log.logError("root", "stderr reader failed: ${t.message ?: t.javaClass.simpleName}")
+                    }
                 }
             }.apply { isDaemon = true; name = "su-stderr" }.start()
         }

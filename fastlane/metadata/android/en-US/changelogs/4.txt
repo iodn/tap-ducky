@@ -1,0 +1,1 @@
+Fix bug: Handle root shell stream-close interruptions without crashing.
