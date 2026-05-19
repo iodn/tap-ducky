@@ -254,6 +254,7 @@ class _BodyState extends ConsumerState<_Body> {
       DropdownMenuItem(value: 'gb', child: Text('UK (QWERTY)')),
       DropdownMenuItem(value: 'fr', child: Text('FR (AZERTY)')),
       DropdownMenuItem(value: 'es', child: Text('Spanish')),
+      DropdownMenuItem(value: 'la', child: Text('Latin American (QWERTY)')),
     ];
   }
 

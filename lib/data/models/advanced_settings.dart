@@ -79,6 +79,11 @@ class AdvancedSettings {
         KeyboardLayoutOption(id: 'br', label: 'Brazilian', backendId: 16),
         KeyboardLayoutOption(id: 'be', label: 'Belgian', backendId: 17),
         KeyboardLayoutOption(id: 'hu', label: 'Hungarian', backendId: 18),
+        KeyboardLayoutOption(
+          id: 'la',
+          label: 'Latin American (QWERTY)',
+          backendId: 19,
+        ),
       ];
 
   static const Map<String, String> keyboardLayoutLabels = <String, String>{
@@ -101,6 +106,7 @@ class AdvancedSettings {
     'br': 'Brazilian',
     'be': 'Belgian',
     'hu': 'Hungarian',
+    'la': 'Latin American (QWERTY)',
   };
 
   static AdvancedSettings defaults() => const AdvancedSettings(
@@ -248,6 +254,15 @@ class AdvancedSettings {
       'hu-hu': 'hu',
       'hu_hu': 'hu',
       'hungarian': 'hu',
+      'la': 'la',
+      'es-la': 'la',
+      'es_la': 'la',
+      'es-mx': 'la',
+      'es_mx': 'la',
+      'latin': 'la',
+      'latin american': 'la',
+      'mexican': 'la',
+      'mexico': 'la',
       'hr-hr': 'hr',
       'hr_hr': 'hr',
       'croatian': 'hr',
