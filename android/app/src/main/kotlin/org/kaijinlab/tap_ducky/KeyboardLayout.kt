@@ -28,6 +28,7 @@ object KeyboardLayout {
     const val LAYOUT_BR = 16
     const val LAYOUT_BE = 17
     const val LAYOUT_HU = 18
+    const val LAYOUT_LA = 19
 
     private val layoutNames = mapOf(
         LAYOUT_US to "US (QWERTY)",
@@ -48,7 +49,8 @@ object KeyboardLayout {
         LAYOUT_CA to "Canadian",
         LAYOUT_BR to "Brazilian",
         LAYOUT_BE to "Belgian",
-        LAYOUT_HU to "Hungarian"
+        LAYOUT_HU to "Hungarian",
+        LAYOUT_LA to "Latin American (QWERTY)"
     )
 
     fun getLayoutName(layout: Int): String = layoutNames[layout] ?: "Unknown"
@@ -60,7 +62,9 @@ class KeyboardMapper(private val layout: Int) {
 
     private companion object {
         const val MOD_NONE = 0x00
+        const val MOD_LCTRL = 0x01
         const val MOD_LSHIFT = 0x02
+        const val MOD_LALT = 0x04
         const val MOD_RALT = 0x40
         const val MOD_SHIFT_RALT = MOD_LSHIFT or MOD_RALT
 
@@ -729,6 +733,7 @@ class KeyboardMapper(private val layout: Int) {
             KeyboardLayout.LAYOUT_BR -> initBR()
             KeyboardLayout.LAYOUT_BE -> initBE()
             KeyboardLayout.LAYOUT_HU -> initHU()
+            KeyboardLayout.LAYOUT_LA -> initLA()
             else -> initUS()
         }
         applyWindowsPunctuationOverrides()
@@ -1165,5 +1170,42 @@ class KeyboardMapper(private val layout: Int) {
         mapCase('ё', 'Ё', 0x35)
         map('№', 0x20, MOD_LSHIFT)
         map('€', 0x08, MOD_RALT)
+    }
+
+    private fun initLA() {
+        initUS()
+        map('"', 0x1F, MOD_LSHIFT)
+        map('/', 0x24, MOD_LSHIFT)
+        map('(', 0x25, MOD_LSHIFT)
+        map(')', 0x26, MOD_LSHIFT)
+        map('=', 0x27, MOD_LSHIFT)
+        map('&', 0x23, MOD_LSHIFT)
+        map('\'', 0x2D)
+        map('?', 0x2D, MOD_LSHIFT)
+        map('\\', 0x2D, MOD_RALT)
+        map('¿', 0x2E)
+        map('¡', 0x2E, MOD_LSHIFT)
+        map('@', 0x14, MOD_RALT)
+        map('´', 0x2F)
+        map('¨', 0x2F, MOD_LSHIFT)
+        map('+', 0x30)
+        map('*', 0x30, MOD_LSHIFT)
+        map('~', 0x30, MOD_RALT)
+        mapCase('ñ', 'Ñ', 0x33)
+        map('{', 0x34)
+        map('[', 0x34, MOD_LSHIFT)
+        map('^', 0x34, MOD_RALT)
+        map('|', 0x35)
+        map('°', 0x35, MOD_LSHIFT)
+        map('¬', 0x35, MOD_RALT)
+        map('-', 0x38)
+        map('_', 0x38, MOD_LSHIFT)
+        map(';', 0x36, MOD_LSHIFT)
+        map(':', 0x37, MOD_LSHIFT)
+        map('<', 0x64)
+        map('>', 0x64, MOD_LSHIFT)
+        map('}', 0x32)
+        map(']', 0x32, MOD_LSHIFT)
+        map('`', 0x32, MOD_RALT)
     }
 }
