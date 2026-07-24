@@ -247,9 +247,16 @@ object Configfs {
           if [ -z "${'$'}CURRENT_HEX" ]; then
             CURRENT_HEX=$(busybox hexdump -v -e '1/1 "%02x"' -n ${'$'}EXPECTED_LEN functions/$fn/report_desc 2>/dev/null | tr -d ' \n\r')
           fi
+        elif command -v cmp >/dev/null 2>&1; then
+          if cmp -s "${'$'}DESC_TMP" functions/$fn/report_desc 2>/dev/null; then
+            CURRENT_LEN=${'$'}EXPECTED_HEX_LEN
+            CURRENT_HEX=${'$'}EXPECTED_HEX
+            return 0
+          fi
+          return 1
         else
-          echo "No report descriptor verifier available in this shell (od/xxd/busybox missing)." >&2
-          return 0
+          echo "No report descriptor verifier available in this shell (od/xxd/busybox/cmp missing)." >&2
+          return 1
         fi
         if [ -z "${'$'}CURRENT_HEX" ]; then
           return 1
