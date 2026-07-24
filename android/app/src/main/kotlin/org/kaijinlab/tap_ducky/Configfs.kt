@@ -195,7 +195,7 @@ object Configfs {
       echo 2 > functions/$fn/protocol
       echo 1 > functions/$fn/subclass
       echo 4 > functions/$fn/report_length
-      printf '%b' '$desc' > functions/$fn/report_desc
+      printf '$desc' > functions/$fn/report_desc
     """.trimIndent()
   }
 
@@ -206,7 +206,7 @@ object Configfs {
       echo 1 > functions/$fn/protocol
       echo 1 > functions/$fn/subclass
       echo 8 > functions/$fn/report_length
-      printf '%b' '$desc' > functions/$fn/report_desc
+      printf '$desc' > functions/$fn/report_desc
     """.trimIndent()
   }
 

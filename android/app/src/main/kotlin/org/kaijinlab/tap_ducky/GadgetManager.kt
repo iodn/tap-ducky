@@ -1102,6 +1102,13 @@ class GadgetManager(
     return sb.toString()
   }
 
+  private fun toPrintfEsc(bytes: ByteArray): String {
+    return bytes.joinToString(separator = "") { b ->
+      val v = b.toInt() and 0xFF
+      String.format(Locale.US, "\\0%02o", v)
+    }
+  }
+
   private fun writeKeyboardReportsWithDelays(
     path: String,
     reports: List<ByteArray>,
@@ -1120,16 +1127,9 @@ class GadgetManager(
       fi
     """.trimIndent()
 
-    fun toHexEsc(bytes: ByteArray): String {
-      return bytes.joinToString(separator = "") { b ->
-        val v = b.toInt() and 0xFF
-        String.format(Locale.US, "\\x%02x", v)
-      }
-    }
-
     val writes = StringBuilder()
     for (i in reports.indices) {
-      val hex = toHexEsc(reports[i])
+      val hex = toPrintfEsc(reports[i])
       writes.append("printf '%b' '").append(hex).append("' >&").append(HID_KBD_FD).append("\n")
       if (i != reports.lastIndex) {
         val d = delaysUs.getOrNull(i) ?: 0
@@ -1194,10 +1194,7 @@ class GadgetManager(
         log.logError("hid", "Mouse fast-writer failed; fallback to slow path: ${t.message}")
       }
     }
-    val hexEsc = bytes.joinToString(separator = "") { b ->
-      val v = b.toInt() and 0xFF
-      String.format(Locale.US, "\\x%02x", v)
-    }
+    val hexEsc = toPrintfEsc(bytes)
     val script = "printf '%b' '$hexEsc' > ${shQuote(path)}"
     var attempt = 0
     var lastErr: String? = null
@@ -1563,6 +1560,68 @@ class GadgetManager(
     return out
   }
 
+  private fun collectActiveHidReportDiagnostics(): Map<String, Any?> {
+    val gadgetDir = prefs.activeGadgetDir?.replace("\"", "")?.replace("'", "") ?: return mapOf("status" to "no_active_gadget")
+    val quotedGadgetDir = shQuote(gadgetDir)
+    val script = """
+      GADGET_DIR=${quotedGadgetDir}
+      FOUND=0
+      for CFGBASE in /config/usb_gadget /sys/kernel/config/usb_gadget; do
+        G="${'$'}CFGBASE/${'$'}GADGET_DIR"
+        if [ ! -d "${'$'}G" ]; then
+          continue
+        fi
+        FOUND=1
+        for FN in hid.usb0 hid.usb1; do
+          RD="${'$'}G/functions/${'$'}FN/report_desc"
+          [ -f "${'$'}RD" ] || continue
+          LEN=$(wc -c < "${'$'}RD" 2>/dev/null | tr -d '\r')
+          if command -v xxd >/dev/null 2>&1; then
+            HEX=$(xxd -p "${'$'}RD" 2>/dev/null | tr -d '\n\r' | head -c 128)
+          elif command -v od >/dev/null 2>&1; then
+            HEX=$(od -An -tx1 "${'$'}RD" 2>/dev/null | tr -d ' \n\r' | head -c 128)
+          else
+            HEX="unavailable"
+          fi
+          echo "${'$'}CFGBASE:${'$'}FN|LEN=${'$'}LEN|HEAD=${'$'}HEX"
+        done
+      done
+      if [ "${'$'}FOUND" = "0" ]; then
+        echo "status=no_gadget_dir"
+      fi
+    """.trimIndent()
+    val r = root.exec(script, timeoutSec = 4)
+    if (!r.ok) {
+      return mapOf(
+        "status" to "collect_failed",
+        "exitCode" to r.exitCode,
+        "stderr" to r.stderr.trim(),
+      )
+    }
+
+    val result = LinkedHashMap<String, Any?>()
+    for (raw in r.stdout.lineSequence()) {
+      val line = raw.trim()
+      if (line.isEmpty()) continue
+      if (line == "status=no_gadget_dir") {
+        result["status"] = "no_gadget_dir"
+        continue
+      }
+      if (line.startsWith("status=")) {
+        result["status"] = line.substringAfter("status=")
+        continue
+      }
+      val parts = line.split("|")
+      if (parts.size != 3) continue
+      val fn = parts[0]
+      result["$fn.len"] = parts[1].removePrefix("LEN=")
+      result["$fn.headHex"] = parts[2].removePrefix("HEAD=")
+    }
+    if (result.isEmpty()) result["status"] = "missing_report_desc"
+    else if (!result.containsKey("status")) result["status"] = "ok"
+    return result
+  }
+
   fun getDiagnostics(): Map<String, Any?> {
     val out = LinkedHashMap<String, Any?>()
     out["timestampMs"] = System.currentTimeMillis()
@@ -1594,6 +1653,11 @@ class GadgetManager(
       out["udcListError"] = t.toString()
     }
     try {
+      out["activeHidReportDescriptor"] = collectActiveHidReportDiagnostics()
+    } catch (t: Throwable) {
+      out["activeHidReportDescriptorError"] = t.toString()
+    }
+    try {
       val bases = listOf("/config/usb_gadget", "/sys/kernel/config/usb_gadget")
       val existing = ArrayList<String>()
       for (b in bases) {
@@ -1615,10 +1679,17 @@ class GadgetManager(
       out["pathsError"] = t.toString()
     }
     try {
-      val gadgets = root.exec("ls -1 /config/usb_gadget 2>/dev/null || true").stdout
-        .split("\n")
-        .map { it.trim() }
-        .filter { it.isNotEmpty() }
+      val gadgets = ArrayList<String>()
+      val basesForList = listOf("/config/usb_gadget", "/sys/kernel/config/usb_gadget")
+      for (b in basesForList) {
+        val list = root.exec("ls -1 $b 2>/dev/null || true").stdout
+          .split("\n")
+          .map { it.trim() }
+          .filter { it.isNotEmpty() }
+        for (g in list) {
+          gadgets.add("$b/$g")
+        }
+      }
       out["existingGadgetsInConfig"] = gadgets
     } catch (t: Throwable) {
       out["existingGadgetsError"] = t.toString()

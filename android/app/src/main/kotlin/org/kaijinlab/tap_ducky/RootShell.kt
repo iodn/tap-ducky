@@ -84,7 +84,7 @@ class RootShell(private val log: LogBus) {
 
     /**
      * Send a raw single line command into the persistent session (no completion markers, no waiting).
-     * Intended for extremely fast HID writes like: `printf '%b' '\x00\x08\x00\x00' >&4`
+     * Intended for extremely fast HID writes like: `printf '%b' '\000\010\000\000' >&4`
      *
      * If the session is not available, this throws.
      */
@@ -190,8 +190,7 @@ class RootShell(private val log: LogBus) {
      * No waiting, no markers. Best performance.
      */
     fun writeToFdFast(fd: Int, bytes: ByteArray) {
-        val hexEsc = toHexEsc(bytes)
-        // hexEsc contains only \xNN sequences, safe for single quotes.
+        val hexEsc = toPrintfEsc(bytes)
         sendRaw("printf '%b' '$hexEsc' >&$fd", logIt = false)
     }
 
@@ -329,11 +328,11 @@ class RootShell(private val log: LogBus) {
         return "'" + s.replace("'", "'\\''") + "'"
     }
 
-    private fun toHexEsc(bytes: ByteArray): String {
+    private fun toPrintfEsc(bytes: ByteArray): String {
         val sb = StringBuilder(bytes.size * 4)
         for (b in bytes) {
             val v = b.toInt() and 0xFF
-            sb.append(String.format(java.util.Locale.US, "\\x%02x", v))
+            sb.append(String.format(java.util.Locale.US, "\\0%02o", v))
         }
         return sb.toString()
     }
