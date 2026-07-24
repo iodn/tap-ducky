@@ -195,7 +195,7 @@ object Configfs {
       echo 2 > functions/$fn/protocol
       echo 1 > functions/$fn/subclass
       echo 4 > functions/$fn/report_length
-      printf '$desc' > functions/$fn/report_desc
+      printf '%b' '$desc' > functions/$fn/report_desc
     """.trimIndent()
   }
 
@@ -206,7 +206,7 @@ object Configfs {
       echo 1 > functions/$fn/protocol
       echo 1 > functions/$fn/subclass
       echo 8 > functions/$fn/report_length
-      printf '$desc' > functions/$fn/report_desc
+      printf '%b' '$desc' > functions/$fn/report_desc
     """.trimIndent()
   }
 
@@ -220,7 +220,7 @@ object Configfs {
   private fun bytesToPrintfB(bytes: ByteArray): String {
     val sb = StringBuilder()
     for (b in bytes) {
-      sb.append(String.format(Locale.US, "\\x%02x", b.toInt() and 0xFF))
+      sb.append(String.format(Locale.US, "\\0%03o", b.toInt() and 0xFF))
     }
     return sb.toString()
   }
