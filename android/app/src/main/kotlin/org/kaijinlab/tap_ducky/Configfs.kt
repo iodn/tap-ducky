@@ -1,5 +1,6 @@
 package org.kaijinlab.tap_ducky
 
+import android.util.Base64
 import java.util.Locale
 
 object Configfs {
@@ -189,24 +190,52 @@ object Configfs {
   }
 
   private fun buildMouseFunctionScript(fn: String): String {
-    val desc = bytesToPrintfB(HidSpec.MOUSE_REPORT_DESC)
-    return """
-      mkdir -p functions/$fn
-      echo 2 > functions/$fn/protocol
-      echo 1 > functions/$fn/subclass
-      echo 4 > functions/$fn/report_length
-      printf '%b' '$desc' > functions/$fn/report_desc
-    """.trimIndent()
+    return buildHidFunctionScript(
+      fn = fn,
+      protocol = 2,
+      subclass = 1,
+      reportLength = 4,
+      descriptor = HidSpec.MOUSE_REPORT_DESC,
+    )
   }
 
   private fun buildKeyboardFunctionScript(fn: String): String {
-    val desc = bytesToPrintfB(HidSpec.KEYBOARD_REPORT_DESC)
+    return buildHidFunctionScript(
+      fn = fn,
+      protocol = 1,
+      subclass = 1,
+      reportLength = 8,
+      descriptor = HidSpec.KEYBOARD_REPORT_DESC,
+    )
+  }
+
+  private fun buildHidFunctionScript(
+    fn: String,
+    protocol: Int,
+    subclass: Int,
+    reportLength: Int,
+    descriptor: ByteArray
+  ): String {
+    val desc = bytesToPrintfB(descriptor)
+    val fallbackDescB64 = bytesToBase64(descriptor)
+    val expectedFirstByte = String.format(Locale.US, "%02x", descriptor[0].toInt() and 0xFF)
     return """
       mkdir -p functions/$fn
-      echo 1 > functions/$fn/protocol
-      echo 1 > functions/$fn/subclass
-      echo 8 > functions/$fn/report_length
-      printf '%b' '$desc' > functions/$fn/report_desc
+      echo $protocol > functions/$fn/protocol
+      echo $subclass > functions/$fn/subclass
+      echo $reportLength > functions/$fn/report_length
+      printf '$desc' > functions/$fn/report_desc
+      if command -v od >/dev/null 2>&1; then
+        HEAD_BYTE=$(od -An -tx1 -N 1 functions/$fn/report_desc 2>/dev/null | tr -d ' \n\r' | tr 'A-F' 'a-f')
+        if [ "${'$'}HEAD_BYTE" != "$expectedFirstByte" ] && command -v base64 >/dev/null 2>&1; then
+          printf '%s' '$fallbackDescB64' | base64 -d > functions/$fn/report_desc
+          HEAD_BYTE=$(od -An -tx1 -N 1 functions/$fn/report_desc 2>/dev/null | tr -d ' \n\r' | tr 'A-F' 'a-f')
+        fi
+        if [ "${'$'}HEAD_BYTE" != "$expectedFirstByte" ]; then
+          echo "Invalid HID report descriptor for ${fn} (head=${'$'}HEAD_BYTE, expected=$expectedFirstByte)" >&2
+          exit 11
+        fi
+      fi
     """.trimIndent()
   }
 
@@ -223,6 +252,10 @@ object Configfs {
       sb.append(String.format(Locale.US, "\\0%03o", b.toInt() and 0xFF))
     }
     return sb.toString()
+  }
+
+  private fun bytesToBase64(bytes: ByteArray): String {
+    return Base64.encodeToString(bytes, Base64.NO_WRAP)
   }
 
   internal fun shEscape(s: String): String {
