@@ -1575,7 +1575,7 @@ class GadgetManager(
         for FN in hid.usb0 hid.usb1; do
           RD="${'$'}G/functions/${'$'}FN/report_desc"
           [ -f "${'$'}RD" ] || continue
-          LEN=0
+          LEN=$(wc -c < "${'$'}RD" 2>/dev/null | tr -d '\\n\\r' | tr -dc '0-9' || echo 0)
           HEX=
           if command -v xxd >/dev/null 2>&1; then
             HEX=$(xxd -p "${'$'}RD" 2>/dev/null | tr -d '\n\r' | head -c 128 | tr 'A-F' 'a-f')
