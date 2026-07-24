@@ -384,6 +384,16 @@ class GadgetManager(
       return
     }
 
+    val descriptorCheckError = validateActiveHidReportDescriptors(profile, gadgetDir)
+    if (descriptorCheckError != null) {
+      log.logError("gadget", "Activation validation failed: $descriptorCheckError")
+      root.exec(Configfs.buildUnbindAndCleanupScript(gadgetDir), timeoutSec = 12)
+      restoreUsbSnapshotBestEffort(reason = "activation_validation_failed")
+      prefs.clearUsbSnapshot()
+      setError("Activation failed: $descriptorCheckError")
+      return
+    }
+
     val kbdDev = when (profile.roleType.lowercase(Locale.US)) {
       "mouse" -> null
       "keyboard" -> "/dev/hidg0"
@@ -1561,43 +1571,13 @@ class GadgetManager(
   }
 
   private fun collectActiveHidReportDiagnostics(): Map<String, Any?> {
-    val gadgetDir = prefs.activeGadgetDir?.replace("\"", "")?.replace("'", "") ?: return mapOf("status" to "no_active_gadget")
+    return collectHidReportDiagnostics(prefs.activeGadgetDir)
+  }
+
+  private fun collectHidReportDiagnostics(gadgetDirRaw: String?): Map<String, Any?> {
+    val gadgetDir = gadgetDirRaw?.replace("\"", "")?.replace("'", "") ?: return mapOf("status" to "no_active_gadget")
     val quotedGadgetDir = shQuote(gadgetDir)
-    val script = """
-      GADGET_DIR=${quotedGadgetDir}
-      FOUND=0
-      for CFGBASE in /config/usb_gadget /sys/kernel/config/usb_gadget; do
-        G="${'$'}CFGBASE/${'$'}GADGET_DIR"
-        if [ ! -d "${'$'}G" ]; then
-          continue
-        fi
-        FOUND=1
-        for FN in hid.usb0 hid.usb1; do
-          RD="${'$'}G/functions/${'$'}FN/report_desc"
-          [ -f "${'$'}RD" ] || continue
-          LEN=$(wc -c < "${'$'}RD" 2>/dev/null | tr -d '\\n\\r' | tr -dc '0-9' || echo 0)
-          HEX=
-          if command -v xxd >/dev/null 2>&1; then
-            HEX=$(xxd -p "${'$'}RD" 2>/dev/null | tr -d '\n\r' | head -c 128 | tr 'A-F' 'a-f')
-            if [ -n "${'$'}HEX" ]; then
-              LEN=$(( ${'$'}{#HEX} / 2 ))
-            fi
-          elif command -v od >/dev/null 2>&1; then
-            HEX=$(od -An -tx1 "${'$'}RD" 2>/dev/null | tr -d ' \n\r' | head -c 128 | tr 'A-F' 'a-f')
-            if [ -n "${'$'}HEX" ]; then
-              LEN=$(( ${'$'}{#HEX} / 2 ))
-            fi
-          else
-            HEX="unavailable"
-            LEN=0
-          fi
-          echo "${'$'}CFGBASE:${'$'}FN|LEN=${'$'}LEN|HEAD=${'$'}HEX"
-        done
-      done
-      if [ "${'$'}FOUND" = "0" ]; then
-        echo "status=no_gadget_dir"
-      fi
-    """.trimIndent()
+    val script = buildHidReportDiagnosticsScript(quotedGadgetDir)
     val r = root.exec(script, timeoutSec = 4)
     if (!r.ok) {
       return mapOf(
@@ -1628,6 +1608,116 @@ class GadgetManager(
     if (result.isEmpty()) result["status"] = "missing_report_desc"
     else if (!result.containsKey("status")) result["status"] = "ok"
     return result
+  }
+
+  private fun buildHidReportDiagnosticsScript(quotedGadgetDir: String): String {
+    return """
+      GADGET_DIR=$quotedGadgetDir
+      FOUND=0
+      for CFGBASE in /config/usb_gadget /sys/kernel/config/usb_gadget; do
+        G="${'$'}CFGBASE/${'$'}GADGET_DIR"
+        if [ ! -d "${'$'}G" ]; then
+          continue
+        fi
+        FOUND=1
+        for FN in hid.usb0 hid.usb1; do
+          RD="${'$'}G/functions/${'$'}FN/report_desc"
+          [ -f "${'$'}RD" ] || continue
+          LEN=$(wc -c < "${'$'}RD" 2>/dev/null | tr -d '\\n\\r' | tr -dc '0-9' || echo 0)
+          HEX=
+          if command -v xxd >/dev/null 2>&1; then
+            HEX=$(xxd -p "${'$'}RD" 2>/dev/null | tr -d '\\n\\r' | head -c 128 | tr 'A-F' 'a-f')
+            if [ -n "${'$'}HEX" ]; then
+              LEN=$(( ${'$'}{#HEX} / 2 ))
+            fi
+          elif command -v od >/dev/null 2>&1; then
+            HEX=$(od -An -tx1 "${'$'}RD" 2>/dev/null | tr -d ' \\n\\r' | head -c 128 | tr 'A-F' 'a-f')
+            if [ -n "${'$'}HEX" ]; then
+              LEN=$(( ${'$'}{#HEX} / 2 ))
+            fi
+          else
+            HEX="unavailable"
+            LEN=0
+          fi
+          echo "${'$'}CFGBASE:${'$'}FN|LEN=${'$'}LEN|HEAD=${'$'}HEX"
+        done
+      done
+      if [ "${'$'}FOUND" = "0" ]; then
+        echo "status=no_gadget_dir"
+      fi
+    """.trimIndent()
+  }
+
+  private fun expectedHidDescriptorLengths(roleType: String): Map<String, Int> {
+    return when (roleType.lowercase(Locale.US)) {
+      "mouse" -> mapOf("hid.usb0" to HidSpec.MOUSE_REPORT_DESC.size)
+      "keyboard" -> mapOf("hid.usb0" to HidSpec.KEYBOARD_REPORT_DESC.size)
+      else -> mapOf("hid.usb0" to HidSpec.KEYBOARD_REPORT_DESC.size, "hid.usb1" to HidSpec.MOUSE_REPORT_DESC.size)
+    }
+  }
+
+  private fun expectedHidDescriptorHex(roleType: String): Map<String, String> {
+    return when (roleType.lowercase(Locale.US)) {
+      "mouse" -> mapOf("hid.usb0" to bytesToHex(HidSpec.MOUSE_REPORT_DESC))
+      "keyboard" -> mapOf("hid.usb0" to bytesToHex(HidSpec.KEYBOARD_REPORT_DESC))
+      else -> mapOf(
+        "hid.usb0" to bytesToHex(HidSpec.KEYBOARD_REPORT_DESC),
+        "hid.usb1" to bytesToHex(HidSpec.MOUSE_REPORT_DESC),
+      )
+    }
+  }
+
+  private fun parseDescriptorLengthFromDiagnostics(diag: Map<String, Any?>, functionName: String): Int? {
+    val key = diag.keys.firstOrNull { it.endsWith("$functionName.len") } ?: return null
+    return diag[key]?.toString()?.trim()?.toIntOrNull()
+  }
+
+  private fun parseDescriptorHeadFromDiagnostics(diag: Map<String, Any?>, functionName: String): String? {
+    val key = diag.keys.firstOrNull { it.endsWith("$functionName.headHex") } ?: return null
+    return diag[key]?.toString()?.trim()?.lowercase(Locale.US)
+  }
+
+  private fun bytesToHex(bytes: ByteArray): String {
+    val sb = StringBuilder(bytes.size * 2)
+    for (b in bytes) {
+      sb.append(String.format(java.util.Locale.US, "%02x", b.toInt() and 0xFF))
+    }
+    return sb.toString()
+  }
+
+  private fun validateActiveHidReportDescriptors(profile: Configfs.ParsedProfile, gadgetDir: String): String? {
+    val expected = expectedHidDescriptorLengths(profile.roleType)
+    val expectedHex = expectedHidDescriptorHex(profile.roleType)
+    val diag = collectHidReportDiagnostics(gadgetDir)
+    val status = diag["status"]?.toString()
+    if (status == "collect_failed") {
+      return "Could not collect HID report descriptor metadata from gadget"
+    }
+    if (status == "no_active_gadget" || status == "no_gadget_dir") {
+      return "No active HID gadget directory found while validating descriptors"
+    }
+
+    val errors = ArrayList<String>()
+    for ((fn, expectedLen) in expected) {
+      val actual = parseDescriptorLengthFromDiagnostics(diag, fn)
+      if (actual == null) {
+        errors.add("$fn: descriptor missing")
+      } else if (actual != expectedLen) {
+        errors.add("$fn: len=$actual expected=$expectedLen")
+      } else {
+        val expectedHexValue = expectedHex[fn]
+        val actualHead = parseDescriptorHeadFromDiagnostics(diag, fn)
+        if (expectedHexValue != null) {
+          if (actualHead.isNullOrEmpty()) {
+            errors.add("$fn: descriptor readback unavailable")
+          } else if (actualHead != expectedHexValue) {
+            val actualPrefix = actualHead.take(expectedHexValue.length)
+            errors.add("$fn: descriptor mismatch; first bytes $actualPrefix expected $expectedHexValue")
+          }
+        }
+      }
+    }
+    return if (errors.isEmpty()) null else errors.joinToString("; ")
   }
 
   fun getDiagnostics(): Map<String, Any?> {

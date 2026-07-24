@@ -216,12 +216,11 @@ object Configfs {
     reportLength: Int,
     descriptor: ByteArray
   ): String {
-    val desc = bytesToPrintfB(descriptor)
-    val descEsc = bytesToPrintfHex(descriptor)
+    val descEsc = bytesToPrintfB(descriptor)
+    val descHex = bytesToPrintfHex(descriptor)
     val fallbackDescB64 = bytesToBase64(descriptor)
     val expectedLen = descriptor.size
     val expectedHex = bytesToHex(descriptor)
-    val descHex = expectedHex
     val expectedHexLen = expectedHex.length
     return """
       mkdir -p functions/$fn
@@ -259,9 +258,7 @@ object Configfs {
         [ "${'$'}CURRENT_HEX" = "${'$'}EXPECTED_HEX" ] || return 1
         return 0
       }
-      if printf '$descEsc' > functions/$fn/report_desc 2>/dev/null; then
-        :
-      elif command -v base64 >/dev/null 2>&1; then
+      if command -v base64 >/dev/null 2>&1; then
         if ! printf '%s' '$fallbackDescB64' | base64 -d > functions/$fn/report_desc 2>/dev/null && ! printf '%s' '$fallbackDescB64' | base64 --decode > functions/$fn/report_desc 2>/dev/null; then
           echo "Failed to write HID report descriptor for ${fn} and no supported descriptor writer was available" >&2
           exit 11
@@ -274,12 +271,16 @@ object Configfs {
       elif command -v busybox >/dev/null 2>&1; then
         # busybox xxd may not be available on all builds, so this is a best-effort fallback.
         if ! printf '%s' '$descHex' | busybox xxd -r -p > functions/$fn/report_desc 2>/dev/null; then
+          if ! printf '$descEsc' > functions/$fn/report_desc 2>/dev/null; then
+            echo "Failed to write HID report descriptor for ${fn} and no supported descriptor writer was available" >&2
+            exit 11
+          fi
+        fi
+      else
+        if ! printf '$descEsc' > functions/$fn/report_desc 2>/dev/null; then
           echo "Failed to write HID report descriptor for ${fn} and no supported descriptor writer was available" >&2
           exit 11
         fi
-      elif ! printf '$desc' > functions/$fn/report_desc 2>/dev/null; then
-        echo "Failed to write HID report descriptor for ${fn} and no supported descriptor writer was available" >&2
-        exit 11
       fi
 
       DESC_TMP_LEN=$(wc -c < functions/$fn/report_desc 2>/dev/null | tr -d ' \n\r')
