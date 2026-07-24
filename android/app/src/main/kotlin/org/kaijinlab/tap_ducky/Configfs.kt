@@ -226,20 +226,18 @@ object Configfs {
       echo $protocol > functions/$fn/protocol
       echo $subclass > functions/$fn/subclass
       echo $reportLength > functions/$fn/report_length
-      if ! printf '$desc' > functions/$fn/report_desc; then
-        if command -v base64 >/dev/null 2>&1; then
-          if printf '%s' '$fallbackDescB64' | base64 -d > functions/$fn/report_desc 2>/dev/null; then
-            : 
-          elif printf '%s' '$fallbackDescB64' | base64 --decode > functions/$fn/report_desc 2>/dev/null; then
-            : 
-          else
-            echo "Failed to write HID report descriptor via printf and base64 fallback for ${fn}" >&2
-            exit 11
-          fi
-        else
-          echo "Failed to write HID report descriptor for ${fn} and base64 is unavailable" >&2
+      if command -v base64 >/dev/null 2>&1; then
+        if printf '%s' '$fallbackDescB64' | base64 -d > functions/$fn/report_desc 2>/dev/null; then
+          : 
+        elif printf '%s' '$fallbackDescB64' | base64 --decode > functions/$fn/report_desc 2>/dev/null; then
+          : 
+        elif ! printf '$desc' > functions/$fn/report_desc; then
+          echo "Failed to write HID report descriptor via base64 and printf fallback for ${fn}" >&2
           exit 11
         fi
+      elif ! printf '$desc' > functions/$fn/report_desc; then
+        echo "Failed to write HID report descriptor for ${fn} and base64 is unavailable" >&2
+        exit 11
       fi
       if command -v od >/dev/null 2>&1; then
         EXPECTED_LEN=$expectedLen
