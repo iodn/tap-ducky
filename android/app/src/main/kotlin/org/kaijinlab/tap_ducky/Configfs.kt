@@ -218,7 +218,9 @@ object Configfs {
   ): String {
     val desc = bytesToPrintfB(descriptor)
     val fallbackDescB64 = bytesToBase64(descriptor)
-    val expectedFirstByte = String.format(Locale.US, "%02x", descriptor[0].toInt() and 0xFF)
+    val expectedLen = descriptor.size
+    val expectedHex = bytesToHex(descriptor)
+    val expectedHexLen = expectedHex.length
     return """
       mkdir -p functions/$fn
       echo $protocol > functions/$fn/protocol
@@ -226,15 +228,38 @@ object Configfs {
       echo $reportLength > functions/$fn/report_length
       printf '$desc' > functions/$fn/report_desc
       if command -v od >/dev/null 2>&1; then
-        HEAD_BYTE=$(od -An -tx1 -N 1 functions/$fn/report_desc 2>/dev/null | tr -d ' \n\r' | tr 'A-F' 'a-f')
-        if [ "${'$'}HEAD_BYTE" != "$expectedFirstByte" ] && command -v base64 >/dev/null 2>&1; then
-          printf '%s' '$fallbackDescB64' | base64 -d > functions/$fn/report_desc
-          HEAD_BYTE=$(od -An -tx1 -N 1 functions/$fn/report_desc 2>/dev/null | tr -d ' \n\r' | tr 'A-F' 'a-f')
+        EXPECTED_LEN=$expectedLen
+        EXPECTED_HEX=$expectedHex
+        EXPECTED_HEX_LEN=$expectedHexLen
+        CUR_HEX=$(od -An -tx1 -N ${'$'}EXPECTED_LEN functions/$fn/report_desc 2>/dev/null | tr -d ' \n\r' | tr -d ' ' | tr 'A-F' 'a-f')
+        CUR_LEN=$(echo "${'$'}CUR_HEX" | wc -c | tr -d ' \n\r')
+        if [ "${'$'}CUR_LEN" -ne "${'$'}EXPECTED_HEX_LEN" ] && command -v base64 >/dev/null 2>&1; then
+          if printf '%s' '$fallbackDescB64' | base64 -d > functions/$fn/report_desc 2>/dev/null; then
+            : 
+          elif printf '%s' '$fallbackDescB64' | base64 --decode > functions/$fn/report_desc 2>/dev/null; then
+            : 
+          else
+            echo "Failed to decode HID descriptor fallback for ${fn}" >&2
+            exit 11
+          fi
+          CUR_HEX=$(od -An -tx1 -N ${'$'}EXPECTED_LEN functions/$fn/report_desc 2>/dev/null | tr -d ' \n\r' | tr -d ' ' | tr 'A-F' 'a-f')
+          CUR_LEN=$(echo "${'$'}CUR_HEX" | wc -c | tr -d ' \n\r')
         fi
-        if [ "${'$'}HEAD_BYTE" != "$expectedFirstByte" ]; then
-          echo "Invalid HID report descriptor for ${fn} (head=${'$'}HEAD_BYTE, expected=$expectedFirstByte)" >&2
+        if [ "${'$'}CUR_LEN" -ne "${'$'}EXPECTED_HEX_LEN" ] || [ "${'$'}CUR_HEX" != "${'$'}EXPECTED_HEX" ]; then
+          echo "Invalid HID report descriptor for ${fn} (hex_len=${'$'}CUR_LEN, expected_len=${'$'}EXPECTED_HEX_LEN, hex=${'$'}CUR_HEX, expected=${'$'}EXPECTED_HEX)" >&2
           exit 11
         fi
+      elif command -v base64 >/dev/null 2>&1; then
+        # Fallback for shells where od may be unavailable.
+        if printf '%s' '$fallbackDescB64' | base64 -d > functions/$fn/report_desc 2>/dev/null; then
+          : 
+        elif printf '%s' '$fallbackDescB64' | base64 --decode > functions/$fn/report_desc 2>/dev/null; then
+          : 
+        else
+          echo "Failed to decode HID descriptor fallback for ${fn}" >&2
+          exit 11
+        fi
+        # No reliable byte-level verifier available; continue with a successful write.
       fi
     """.trimIndent()
   }
@@ -249,13 +274,21 @@ object Configfs {
   private fun bytesToPrintfB(bytes: ByteArray): String {
     val sb = StringBuilder()
     for (b in bytes) {
-      sb.append(String.format(Locale.US, "\\0%03o", b.toInt() and 0xFF))
+      sb.append(String.format(Locale.US, "\\0%02o", b.toInt() and 0xFF))
     }
     return sb.toString()
   }
 
   private fun bytesToBase64(bytes: ByteArray): String {
     return Base64.encodeToString(bytes, Base64.NO_WRAP)
+  }
+
+  private fun bytesToHex(bytes: ByteArray): String {
+    val sb = StringBuilder(bytes.size * 2)
+    for (b in bytes) {
+      sb.append(String.format(Locale.US, "%02x", b.toInt() and 0xFF))
+    }
+    return sb.toString()
   }
 
   internal fun shEscape(s: String): String {

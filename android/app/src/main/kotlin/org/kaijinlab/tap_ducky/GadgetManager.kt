@@ -1130,7 +1130,7 @@ class GadgetManager(
     val writes = StringBuilder()
     for (i in reports.indices) {
       val hex = toPrintfEsc(reports[i])
-      writes.append("printf '%b' '").append(hex).append("' >&").append(HID_KBD_FD).append("\n")
+      writes.append("printf '").append(hex).append("' >&").append(HID_KBD_FD).append("\n")
       if (i != reports.lastIndex) {
         val d = delaysUs.getOrNull(i) ?: 0
         if (d > 0) {
@@ -1195,7 +1195,7 @@ class GadgetManager(
       }
     }
     val hexEsc = toPrintfEsc(bytes)
-    val script = "printf '%b' '$hexEsc' > ${shQuote(path)}"
+    val script = "printf '$hexEsc' > ${shQuote(path)}"
     var attempt = 0
     var lastErr: String? = null
     while (attempt < 3) {
