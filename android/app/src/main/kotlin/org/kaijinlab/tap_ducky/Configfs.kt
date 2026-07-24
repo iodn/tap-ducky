@@ -217,16 +217,17 @@ object Configfs {
     descriptor: ByteArray
   ): String {
     val desc = bytesToPrintfB(descriptor)
-    val descHex = bytesToPrintfHx(descriptor)
     val fallbackDescB64 = bytesToBase64(descriptor)
     val expectedLen = descriptor.size
     val expectedHex = bytesToHex(descriptor)
+    val descHex = expectedHex
     val expectedHexLen = expectedHex.length
     return """
       mkdir -p functions/$fn
       echo $protocol > functions/$fn/protocol
       echo $subclass > functions/$fn/subclass
       echo $reportLength > functions/$fn/report_length
+      DESC_TMP="/tmp/tapducky_${fn}_desc.bin"
       EXPECTED_LEN=$expectedLen
       EXPECTED_HEX=$expectedHex
       EXPECTED_HEX_LEN=$expectedHexLen
@@ -247,6 +248,7 @@ object Configfs {
             CURRENT_HEX=$(busybox hexdump -v -e '1/1 "%02x"' -n ${'$'}EXPECTED_LEN functions/$fn/report_desc 2>/dev/null | tr -d ' \n\r')
           fi
         else
+          echo "No report descriptor verifier available in this shell (od/xxd/busybox missing)." >&2
           return 0
         fi
         if [ -z "${'$'}CURRENT_HEX" ]; then
@@ -258,29 +260,50 @@ object Configfs {
         return 0
       }
       if command -v base64 >/dev/null 2>&1; then
-        if printf '$descHex' > functions/$fn/report_desc 2>/dev/null && verify_desc; then
-          : 
-        elif printf '%s' '$fallbackDescB64' | base64 -d > functions/$fn/report_desc 2>/dev/null && verify_desc; then
-          : 
-        elif printf '$desc' > functions/$fn/report_desc 2>/dev/null && verify_desc; then
-          : 
-        elif printf '%s' '$fallbackDescB64' | base64 --decode > functions/$fn/report_desc 2>/dev/null && verify_desc; then
-          : 
-        else
-          echo "Failed to write HID report descriptor for ${fn} via base64/printf attempts" >&2
-          exit 11
+        if printf '%s' '$fallbackDescB64' | base64 -d > "${'$'}DESC_TMP" 2>/dev/null; then
+          :
+        elif printf '%s' '$fallbackDescB64' | base64 --decode > "${'$'}DESC_TMP" 2>/dev/null; then
+          :
         fi
-      elif printf '$desc' > functions/$fn/report_desc 2>/dev/null && verify_desc; then
-        : 
-      elif ! printf '$desc' > functions/$fn/report_desc; then
-        echo "Failed to write HID report descriptor for ${fn} and base64 is unavailable" >&2
+      fi
+
+      if [ ! -s "${'$'}DESC_TMP" ] && command -v xxd >/dev/null 2>&1; then
+        printf '%s' '$descHex' | xxd -r -p > "${'$'}DESC_TMP" 2>/dev/null
+      fi
+
+      if [ ! -s "${'$'}DESC_TMP" ] && command -v busybox >/dev/null 2>&1; then
+        # busybox xxd may not be available on all builds, so this is a best-effort fallback.
+        printf '%s' '$descHex' | busybox xxd -r -p > "${'$'}DESC_TMP" 2>/dev/null || true
+      fi
+
+      if [ ! -s "${'$'}DESC_TMP" ] && ! printf '$desc' > "${'$'}DESC_TMP" 2>/dev/null; then
+        echo "Failed to write HID report descriptor for ${fn} and no supported descriptor writer was available" >&2
+        rm -f "${'$'}DESC_TMP"
         exit 11
       fi
-      if command -v od >/dev/null 2>&1 || command -v xxd >/dev/null 2>&1 || command -v busybox >/dev/null 2>&1; then
-        if ! verify_desc; then
-          echo "Invalid HID report descriptor for ${fn} (hex_len=${'$'}CURRENT_LEN, expected_len=${'$'}EXPECTED_HEX_LEN, hex=${'$'}CURRENT_HEX, expected=${'$'}EXPECTED_HEX)" >&2
-          exit 11
-        fi
+
+      if [ ! -s "${'$'}DESC_TMP" ]; then
+        echo "Failed to write HID report descriptor for ${fn}; all writers produced an empty file" >&2
+        rm -f "${'$'}DESC_TMP"
+        exit 11
+      fi
+
+      DESC_TMP_LEN=$(wc -c < "${'$'}DESC_TMP" 2>/dev/null | tr -d ' \n\r')
+      if [ "${'$'}DESC_TMP_LEN" != "$expectedLen" ]; then
+        echo "Unexpected HID report descriptor byte length for ${fn}: ${'$'}DESC_TMP_LEN (expected ${'$'}expectedLen)" >&2
+        rm -f "${'$'}DESC_TMP"
+        exit 11
+      fi
+
+      if ! cat "${'$'}DESC_TMP" > functions/$fn/report_desc 2>/dev/null; then
+        echo "Failed to install HID report descriptor for ${fn}" >&2
+        rm -f "${'$'}DESC_TMP"
+        exit 11
+      fi
+      rm -f "${'$'}DESC_TMP"
+      if ! verify_desc; then
+        echo "Invalid HID report descriptor for ${fn} (hex_len=${'$'}CURRENT_LEN, expected_len=${'$'}EXPECTED_HEX_LEN, hex=${'$'}CURRENT_HEX, expected=${'$'}EXPECTED_HEX)" >&2
+        exit 11
       fi
     """.trimIndent()
   }
@@ -296,14 +319,6 @@ object Configfs {
     val sb = StringBuilder()
     for (b in bytes) {
       sb.append(String.format(Locale.US, "\\%03o", b.toInt() and 0xFF))
-    }
-    return sb.toString()
-  }
-
-  private fun bytesToPrintfHx(bytes: ByteArray): String {
-    val sb = StringBuilder()
-    for (b in bytes) {
-      sb.append(String.format(Locale.US, "\\x%02x", b.toInt() and 0xFF))
     }
     return sb.toString()
   }
