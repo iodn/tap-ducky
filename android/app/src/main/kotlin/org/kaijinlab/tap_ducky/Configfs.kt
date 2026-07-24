@@ -226,7 +226,7 @@ object Configfs {
       echo $protocol > functions/$fn/protocol
       echo $subclass > functions/$fn/subclass
       echo $reportLength > functions/$fn/report_length
-      printf '$desc' > functions/$fn/report_desc
+      printf '%b' '$desc' > functions/$fn/report_desc
       if command -v od >/dev/null 2>&1; then
         EXPECTED_LEN=$expectedLen
         EXPECTED_HEX=$expectedHex
@@ -274,7 +274,7 @@ object Configfs {
   private fun bytesToPrintfB(bytes: ByteArray): String {
     val sb = StringBuilder()
     for (b in bytes) {
-      sb.append(String.format(Locale.US, "\\0%02o", b.toInt() and 0xFF))
+      sb.append(String.format(Locale.US, "\\x%02x", b.toInt() and 0xFF))
     }
     return sb.toString()
   }

@@ -1575,13 +1575,21 @@ class GadgetManager(
         for FN in hid.usb0 hid.usb1; do
           RD="${'$'}G/functions/${'$'}FN/report_desc"
           [ -f "${'$'}RD" ] || continue
-          LEN=$(wc -c < "${'$'}RD" 2>/dev/null | tr -d '\r')
+          LEN=0
+          HEX=
           if command -v xxd >/dev/null 2>&1; then
-            HEX=$(xxd -p "${'$'}RD" 2>/dev/null | tr -d '\n\r' | head -c 128)
+            HEX=$(xxd -p "${'$'}RD" 2>/dev/null | tr -d '\n\r' | head -c 128 | tr 'A-F' 'a-f')
+            if [ -n "${'$'}HEX" ]; then
+              LEN=$(( ${'$'}{#HEX} / 2 ))
+            fi
           elif command -v od >/dev/null 2>&1; then
-            HEX=$(od -An -tx1 "${'$'}RD" 2>/dev/null | tr -d ' \n\r' | head -c 128)
+            HEX=$(od -An -tx1 "${'$'}RD" 2>/dev/null | tr -d ' \n\r' | head -c 128 | tr 'A-F' 'a-f')
+            if [ -n "${'$'}HEX" ]; then
+              LEN=$(( ${'$'}{#HEX} / 2 ))
+            fi
           else
             HEX="unavailable"
+            LEN=0
           fi
           echo "${'$'}CFGBASE:${'$'}FN|LEN=${'$'}LEN|HEAD=${'$'}HEX"
         done

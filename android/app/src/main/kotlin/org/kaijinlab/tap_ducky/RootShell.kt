@@ -191,7 +191,7 @@ class RootShell(private val log: LogBus) {
      */
     fun writeToFdFast(fd: Int, bytes: ByteArray) {
         val hexEsc = toPrintfEsc(bytes)
-        sendRaw("printf '$hexEsc' >&$fd", logIt = false)
+        sendRaw("printf '%b' '$hexEsc' >&$fd", logIt = false)
     }
 
     fun writeKeyboardFast(bytes: ByteArray) {
@@ -332,7 +332,7 @@ class RootShell(private val log: LogBus) {
         val sb = StringBuilder(bytes.size * 4)
         for (b in bytes) {
             val v = b.toInt() and 0xFF
-            sb.append(String.format(java.util.Locale.US, "\\0%02o", v))
+            sb.append(String.format(java.util.Locale.US, "\\x%02x", v))
         }
         return sb.toString()
     }
