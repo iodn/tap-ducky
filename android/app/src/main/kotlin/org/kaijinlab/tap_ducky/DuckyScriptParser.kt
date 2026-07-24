@@ -1,6 +1,7 @@
 package org.kaijinlab.tap_ducky
 
 import java.util.Locale
+import java.util.Calendar
 import java.util.regex.Pattern
 import kotlin.random.Random
 
@@ -1158,7 +1159,6 @@ class DuckyScriptExecutor(
   private fun computeSleepUntilMs(arg: String): Int {
     val trimmed = arg.trim()
     if (trimmed.isEmpty()) return 0
-    val now = java.time.LocalDateTime.now()
     if (trimmed.all { it.isDigit() }) {
       val v = trimmed.toLongOrNull() ?: return 0
       val ms = if (trimmed.length >= 10) {
@@ -1168,17 +1168,26 @@ class DuckyScriptExecutor(
       }
       return ms.coerceAtLeast(0L).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
     }
+    val now = Calendar.getInstance()
     val parts = trimmed.split(":")
     val h = parts.getOrNull(0)?.toIntOrNull()
     val m = parts.getOrNull(1)?.toIntOrNull()
     val s = parts.getOrNull(2)?.toIntOrNull() ?: 0
     if (h == null || m == null) return 0
-    var target = now.withHour(h).withMinute(m).withSecond(s).withNano(0)
-    if (target.isBefore(now)) {
-      target = target.plusDays(1)
+
+    val target = Calendar.getInstance().apply {
+      timeInMillis = now.timeInMillis
+      set(Calendar.HOUR_OF_DAY, h)
+      set(Calendar.MINUTE, m)
+      set(Calendar.SECOND, s)
+      set(Calendar.MILLISECOND, 0)
     }
-    val duration = java.time.Duration.between(now, target).toMillis()
-    return duration.coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+
+    if (target.before(now) || target == now) {
+      target.add(Calendar.DAY_OF_MONTH, 1)
+    }
+    val duration = target.timeInMillis - now.timeInMillis
+    return duration.coerceAtLeast(0L).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
   }
 
   private fun stripOuterParensIfWhole(s: String): String {
@@ -2362,7 +2371,6 @@ class DuckyScriptEstimator(
   private fun computeSleepUntilMs(arg: String): Int {
     val trimmed = arg.trim()
     if (trimmed.isEmpty()) return 0
-    val now = java.time.LocalDateTime.now()
     if (trimmed.all { it.isDigit() }) {
       val v = trimmed.toLongOrNull() ?: return 0
       val ms = if (trimmed.length >= 10) {
@@ -2372,17 +2380,24 @@ class DuckyScriptEstimator(
       }
       return ms.coerceAtLeast(0L).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
     }
+    val now = Calendar.getInstance()
     val parts = trimmed.split(":")
     val h = parts.getOrNull(0)?.toIntOrNull()
     val m = parts.getOrNull(1)?.toIntOrNull()
     val s = parts.getOrNull(2)?.toIntOrNull() ?: 0
     if (h == null || m == null) return 0
-    var target = now.withHour(h).withMinute(m).withSecond(s).withNano(0)
-    if (target.isBefore(now)) {
-      target = target.plusDays(1)
+    val target = Calendar.getInstance().apply {
+      timeInMillis = now.timeInMillis
+      set(Calendar.HOUR_OF_DAY, h)
+      set(Calendar.MINUTE, m)
+      set(Calendar.SECOND, s)
+      set(Calendar.MILLISECOND, 0)
     }
-    val duration = java.time.Duration.between(now, target).toMillis()
-    return duration.coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+    if (target.before(now) || target == now) {
+      target.add(Calendar.DAY_OF_MONTH, 1)
+    }
+    val duration = target.timeInMillis - now.timeInMillis
+    return duration.coerceAtLeast(0L).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
   }
 
   private fun normalizeVarName(name: String): String {

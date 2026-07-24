@@ -295,16 +295,34 @@ class RootShell(private val log: LogBus) {
             tOut.start()
             tErr.start()
 
-            val finished = p.waitFor(timeoutSec, java.util.concurrent.TimeUnit.SECONDS)
+            val waiter = Thread {
+                try {
+                    p.waitFor()
+                } catch (_: Throwable) {
+                }
+            }
+            waiter.start()
+            waiter.join(timeoutSec * 1000L)
+            val finished = !waiter.isAlive
             if (!finished) {
-                p.destroy()
-                p.destroyForcibly()
+                forceDestroyProcess(p)
             }
 
             tOut.join(250)
             tErr.join(250)
 
-            val exit = if (finished) p.exitValue() else -1
+            if (waiter.isAlive) {
+                waiter.join(250L)
+            }
+            val exit = if (finished) {
+                try {
+                    p.exitValue()
+                } catch (_: Throwable) {
+                    -1
+                }
+            } else {
+                -1
+            }
             val dur = System.currentTimeMillis() - start
             val out = outSb.toString()
             val err = if (!finished) "timeout after ${timeoutSec}s\n${errSb}" else errSb.toString()
@@ -335,6 +353,29 @@ class RootShell(private val log: LogBus) {
             sb.append(String.format(java.util.Locale.US, "\\%03o", v))
         }
         return sb.toString()
+    }
+
+    private fun isProcessTerminated(process: Process): Boolean {
+        return try {
+            process.exitValue()
+            true
+        } catch (_: IllegalThreadStateException) {
+            false
+        } catch (_: Throwable) {
+            true
+        }
+    }
+
+    private fun forceDestroyProcess(process: Process) {
+        try {
+            process.destroy()
+        } catch (_: Throwable) {
+        }
+        try {
+            val destroyForcibly = Process::class.java.methods.firstOrNull { it.name == "destroyForcibly" }
+            destroyForcibly?.invoke(process)
+        } catch (_: Throwable) {
+        }
     }
 
     /* ---------------- Persistent su session ---------------- */
@@ -417,12 +458,11 @@ class RootShell(private val log: LogBus) {
             }.apply { isDaemon = true; name = "su-stderr" }.start()
         }
 
-        fun isAlive(): Boolean = try { p.isAlive } catch (_: Throwable) { false }
+        fun isAlive(): Boolean = !isProcessTerminated(p)
 
         fun close() {
             try { stdin.close() } catch (_: Throwable) {}
-            try { p.destroy() } catch (_: Throwable) {}
-            try { p.destroyForcibly() } catch (_: Throwable) {}
+            forceDestroyProcess(p)
         }
 
         fun sendRaw(line: String) {
