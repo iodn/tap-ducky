@@ -1105,7 +1105,7 @@ class GadgetManager(
   private fun toPrintfEsc(bytes: ByteArray): String {
     return bytes.joinToString(separator = "") { b ->
       val v = b.toInt() and 0xFF
-      String.format(Locale.US, "\\0%02o", v)
+      String.format(Locale.US, "\\x%02x", v)
     }
   }
 
@@ -1130,7 +1130,7 @@ class GadgetManager(
     val writes = StringBuilder()
     for (i in reports.indices) {
       val hex = toPrintfEsc(reports[i])
-      writes.append("printf '").append(hex).append("' >&").append(HID_KBD_FD).append("\n")
+      writes.append("printf '%b' '").append(hex).append("' >&").append(HID_KBD_FD).append("\n")
       if (i != reports.lastIndex) {
         val d = delaysUs.getOrNull(i) ?: 0
         if (d > 0) {
@@ -1195,7 +1195,7 @@ class GadgetManager(
       }
     }
     val hexEsc = toPrintfEsc(bytes)
-    val script = "printf '$hexEsc' > ${shQuote(path)}"
+    val script = "printf '%b' '$hexEsc' > ${shQuote(path)}"
     var attempt = 0
     var lastErr: String? = null
     while (attempt < 3) {

@@ -84,7 +84,7 @@ class RootShell(private val log: LogBus) {
 
     /**
      * Send a raw single line command into the persistent session (no completion markers, no waiting).
-     * Intended for extremely fast HID writes like: `printf '\000\010\000\000' >&4`
+     * Intended for extremely fast HID writes like: `printf '%b' '\\x00\\x08\\x00\\x00' >&4`
      *
      * If the session is not available, this throws.
      */
