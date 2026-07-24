@@ -238,11 +238,19 @@ object Configfs {
           CURRENT_HEX=$(od -An -tx1 -N ${'$'}EXPECTED_LEN functions/$fn/report_desc 2>/dev/null | tr -d ' \n\r' | tr -d ' ' | tr 'A-F' 'a-f')
         elif command -v xxd >/dev/null 2>&1; then
           CURRENT_HEX=$(xxd -p -l ${'$'}EXPECTED_LEN functions/$fn/report_desc 2>/dev/null | tr -d '\n\r' | tr 'A-F' 'a-f')
+        elif command -v busybox >/dev/null 2>&1; then
+          CURRENT_HEX=$(busybox od -An -tx1 -N ${'$'}EXPECTED_LEN functions/$fn/report_desc 2>/dev/null | tr -d ' \n\r' | tr -d ' ' | tr 'A-F' 'a-f')
+          if [ -z "${'$'}CURRENT_HEX" ]; then
+            CURRENT_HEX=$(busybox xxd -p -l ${'$'}EXPECTED_LEN functions/$fn/report_desc 2>/dev/null | tr -d '\n\r' | tr 'A-F' 'a-f')
+          fi
+          if [ -z "${'$'}CURRENT_HEX" ]; then
+            CURRENT_HEX=$(busybox hexdump -v -e '1/1 "%02x"' -n ${'$'}EXPECTED_LEN functions/$fn/report_desc 2>/dev/null | tr -d ' \n\r')
+          fi
         else
-          CURRENT_HEX=
+          return 0
         fi
         if [ -z "${'$'}CURRENT_HEX" ]; then
-          return 0
+          return 1
         fi
         CURRENT_LEN=$(echo "${'$'}CURRENT_HEX" | wc -c | tr -d ' \n\r')
         [ "${'$'}CURRENT_LEN" -eq "${'$'}EXPECTED_HEX_LEN" ] || return 1
@@ -250,27 +258,25 @@ object Configfs {
         return 0
       }
       if command -v base64 >/dev/null 2>&1; then
-        if printf '%s' '$fallbackDescB64' | base64 -d > functions/$fn/report_desc 2>/dev/null && verify_desc; then
+        if printf '$descHex' > functions/$fn/report_desc 2>/dev/null && verify_desc; then
           : 
-        elif printf '%s' '$fallbackDescB64' | base64 --decode > functions/$fn/report_desc 2>/dev/null && verify_desc; then
-          : 
-        elif printf '%b' '$descHex' > functions/$fn/report_desc 2>/dev/null && verify_desc; then
+        elif printf '%s' '$fallbackDescB64' | base64 -d > functions/$fn/report_desc 2>/dev/null && verify_desc; then
           : 
         elif printf '$desc' > functions/$fn/report_desc 2>/dev/null && verify_desc; then
+          : 
+        elif printf '%s' '$fallbackDescB64' | base64 --decode > functions/$fn/report_desc 2>/dev/null && verify_desc; then
           : 
         else
           echo "Failed to write HID report descriptor for ${fn} via base64/printf attempts" >&2
           exit 11
         fi
-      elif printf '%b' '$descHex' > functions/$fn/report_desc 2>/dev/null && verify_desc; then
-        : 
       elif printf '$desc' > functions/$fn/report_desc 2>/dev/null && verify_desc; then
         : 
       elif ! printf '$desc' > functions/$fn/report_desc; then
         echo "Failed to write HID report descriptor for ${fn} and base64 is unavailable" >&2
         exit 11
       fi
-      if command -v od >/dev/null 2>&1 || command -v xxd >/dev/null 2>&1; then
+      if command -v od >/dev/null 2>&1 || command -v xxd >/dev/null 2>&1 || command -v busybox >/dev/null 2>&1; then
         if ! verify_desc; then
           echo "Invalid HID report descriptor for ${fn} (hex_len=${'$'}CURRENT_LEN, expected_len=${'$'}EXPECTED_HEX_LEN, hex=${'$'}CURRENT_HEX, expected=${'$'}EXPECTED_HEX)" >&2
           exit 11
