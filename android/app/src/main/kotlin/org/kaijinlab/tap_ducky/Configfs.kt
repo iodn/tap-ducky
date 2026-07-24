@@ -217,7 +217,7 @@ object Configfs {
     descriptor: ByteArray
   ): String {
     val descEsc = bytesToPrintfB(descriptor)
-    val descHex = bytesToPrintfHex(descriptor)
+    val descHex = bytesToHex(descriptor)
     val fallbackDescB64 = bytesToBase64(descriptor)
     val expectedLen = descriptor.size
     val expectedHex = bytesToHex(descriptor)
@@ -258,29 +258,29 @@ object Configfs {
         [ "${'$'}CURRENT_HEX" = "${'$'}EXPECTED_HEX" ] || return 1
         return 0
       }
-      if command -v base64 >/dev/null 2>&1; then
-        if ! printf '%s' '$fallbackDescB64' | base64 -d > functions/$fn/report_desc 2>/dev/null && ! printf '%s' '$fallbackDescB64' | base64 --decode > functions/$fn/report_desc 2>/dev/null; then
-          echo "Failed to write HID report descriptor for ${fn} and no supported descriptor writer was available" >&2
-          exit 11
+      wrote_desc=0
+      if [ "${'$'}wrote_desc" -eq 0 ] && command -v base64 >/dev/null 2>&1; then
+        if printf '%s' '$fallbackDescB64' | base64 -d > functions/$fn/report_desc 2>/dev/null || printf '%s' '$fallbackDescB64' | base64 --decode > functions/$fn/report_desc 2>/dev/null; then
+          wrote_desc=1
         fi
-      elif command -v xxd >/dev/null 2>&1; then
-        if ! printf '%s' '$descHex' | xxd -r -p > functions/$fn/report_desc 2>/dev/null; then
-          echo "Failed to write HID report descriptor for ${fn} and no supported descriptor writer was available" >&2
-          exit 11
+      fi
+      if [ "${'$'}wrote_desc" -eq 0 ] && command -v xxd >/dev/null 2>&1; then
+        if printf '%s' '$descHex' | xxd -r -p > functions/$fn/report_desc 2>/dev/null; then
+          wrote_desc=1
         fi
-      elif command -v busybox >/dev/null 2>&1; then
+      fi
+      if [ "${'$'}wrote_desc" -eq 0 ] && command -v busybox >/dev/null 2>&1; then
         # busybox xxd may not be available on all builds, so this is a best-effort fallback.
-        if ! printf '%s' '$descHex' | busybox xxd -r -p > functions/$fn/report_desc 2>/dev/null; then
-          if ! printf '$descEsc' > functions/$fn/report_desc 2>/dev/null; then
-            echo "Failed to write HID report descriptor for ${fn} and no supported descriptor writer was available" >&2
-            exit 11
-          fi
+        if printf '%s' '$descHex' | busybox xxd -r -p > functions/$fn/report_desc 2>/dev/null; then
+          wrote_desc=1
         fi
-      else
-        if ! printf '$descEsc' > functions/$fn/report_desc 2>/dev/null; then
-          echo "Failed to write HID report descriptor for ${fn} and no supported descriptor writer was available" >&2
-          exit 11
-        fi
+      fi
+      if [ "${'$'}wrote_desc" -eq 0 ] && printf '$descEsc' > functions/$fn/report_desc 2>/dev/null; then
+        wrote_desc=1
+      fi
+      if [ "${'$'}wrote_desc" -eq 0 ]; then
+        echo "Failed to write HID report descriptor for ${fn} and no supported descriptor writer was available" >&2
+        exit 11
       fi
 
       DESC_TMP_LEN=$(wc -c < functions/$fn/report_desc 2>/dev/null | tr -d ' \n\r')
@@ -306,14 +306,6 @@ object Configfs {
     val sb = StringBuilder()
     for (b in bytes) {
       sb.append(String.format(Locale.US, "\\%03o", b.toInt() and 0xFF))
-    }
-    return sb.toString()
-  }
-
-  private fun bytesToPrintfHex(bytes: ByteArray): String {
-    val sb = StringBuilder()
-    for (b in bytes) {
-      sb.append(String.format(Locale.US, "\\x%02x", b.toInt() and 0xFF))
     }
     return sb.toString()
   }
