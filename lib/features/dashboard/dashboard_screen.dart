@@ -1,4 +1,5 @@
 import 'dart:async';
+import '../../l10n/app_localizations.dart';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -105,7 +106,7 @@ class DashboardScreen extends ConsumerWidget {
           title: const Text('TapDucky'),
           actions: [
             IconButton(
-              tooltip: 'Device Info',
+              tooltip: AppLocalizations.of(context)!.deviceInfo,
               onPressed: () => context.push(const DeviceRoute().location),
               icon: const Icon(Icons.phone_android),
             ),
@@ -123,18 +124,18 @@ class DashboardScreen extends ConsumerWidget {
         actions: [
           if (exec.isRunning)
             IconButton(
-              tooltip: 'Panic Stop',
+              tooltip: AppLocalizations.of(context)!.panicStop,
               onPressed: () => ref.read(executionControllerProvider.notifier).panicStop(),
               icon: const Icon(Icons.warning_amber_rounded),
               color: Theme.of(context).colorScheme.error,
             ),
           IconButton(
-            tooltip: 'Logs',
+            tooltip: AppLocalizations.of(context)!.logs,
             onPressed: () => context.push(const LogsRoute().location),
             icon: const Icon(Icons.list_alt),
           ),
           IconButton(
-            tooltip: 'Device',
+            tooltip: AppLocalizations.of(context)!.device,
             onPressed: () => context.push(const DeviceRoute().location),
             icon: const Icon(Icons.phone_android),
           ),
@@ -215,11 +216,11 @@ class DashboardScreen extends ConsumerWidget {
             ),
             const SizedBox(height: 20),
             SectionHeader(
-              title: 'Recent Payloads',
+              title: AppLocalizations.of(context)!.recentPayloads,
               trailing: TextButton.icon(
                 onPressed: () => context.go('${const PayloadsRoute().location}/new'),
                 icon: const Icon(Icons.add),
-                label: const Text('New'),
+                label: Text(AppLocalizations.of(context)!.newItem),
               ),
             ),
             payloadsAsync.when(
@@ -262,7 +263,7 @@ class DashboardScreen extends ConsumerWidget {
                       padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
                       child: TextButton(
                         onPressed: () => context.go(const PayloadsRoute().location),
-                        child: const Text('View all payloads'),
+                        child: Text(AppLocalizations.of(context)!.viewAllPayloads),
                       ),
                     ),
                   ],
@@ -271,7 +272,7 @@ class DashboardScreen extends ConsumerWidget {
             ),
             const SizedBox(height: 20),
             SectionHeader(
-              title: 'Quick Access',
+              title: AppLocalizations.of(context)!.quickAccess,
               trailing: IconButton(
                 onPressed: () => _showQuickActionsSheet(context, ref, exec),
                 icon: const Icon(Icons.more_horiz),
@@ -301,7 +302,7 @@ class DashboardScreen extends ConsumerWidget {
       floatingActionButton: FloatingActionButton.extended(
         onPressed: () => context.go(const ExecuteRoute().location),
         icon: const Icon(Icons.play_arrow),
-        label: const Text('Execute'),
+        label: Text(AppLocalizations.of(context)!.execute),
       ),
     );
   }
@@ -325,8 +326,8 @@ class DashboardScreen extends ConsumerWidget {
             const SizedBox(height: 16),
             ListTile(
               leading: const Icon(Icons.inventory_2),
-              title: const Text('Payload Manager'),
-              subtitle: const Text('Create, edit, import, export'),
+              title: Text(AppLocalizations.of(context)!.payloadManager),
+              subtitle: Text(AppLocalizations.of(context)!.createEditImportExport),
               onTap: () {
                 Navigator.pop(context);
                 context.go(const PayloadsRoute().location);
@@ -334,8 +335,8 @@ class DashboardScreen extends ConsumerWidget {
             ),
             ListTile(
               leading: const Icon(Icons.schedule),
-              title: const Text('Scheduler'),
-              subtitle: const Text('Time windows & triggers'),
+              title: Text(AppLocalizations.of(context)!.scheduler),
+              subtitle: Text(AppLocalizations.of(context)!.timeWindowsTriggers),
               onTap: () {
                 Navigator.pop(context);
                 context.go(const ScheduleRoute().location);
@@ -343,8 +344,8 @@ class DashboardScreen extends ConsumerWidget {
             ),
             ListTile(
               leading: const Icon(Icons.settings),
-              title: const Text('Settings'),
-              subtitle: const Text('Theme, logging, HID config'),
+              title: Text(AppLocalizations.of(context)!.settings),
+              subtitle: Text(AppLocalizations.of(context)!.themeLoggingHidConfig),
               onTap: () {
                 Navigator.pop(context);
                 context.go(const SettingsRoute().location);
@@ -352,8 +353,8 @@ class DashboardScreen extends ConsumerWidget {
             ),
             ListTile(
               leading: const Icon(Icons.list_alt),
-              title: const Text('Logs'),
-              subtitle: const Text('Execution history'),
+              title: Text(AppLocalizations.of(context)!.logs),
+              subtitle: Text(AppLocalizations.of(context)!.executionHistory),
               onTap: () {
                 Navigator.pop(context);
                 context.push(const LogsRoute().location);
@@ -361,8 +362,8 @@ class DashboardScreen extends ConsumerWidget {
             ),
             ListTile(
               leading: const Icon(Icons.phone_android),
-              title: const Text('Device Info'),
-              subtitle: const Text('Diagnostics & compatibility'),
+              title: Text(AppLocalizations.of(context)!.deviceInfo),
+              subtitle: Text(AppLocalizations.of(context)!.diagnosticsCompatibility),
               onTap: () {
                 Navigator.pop(context);
                 context.push(const DeviceRoute().location);
@@ -371,8 +372,8 @@ class DashboardScreen extends ConsumerWidget {
             if (exec.isRunning)
               ListTile(
                 leading: Icon(Icons.warning_amber_rounded, color: Theme.of(context).colorScheme.error),
-                title: const Text('Panic Stop'),
-                subtitle: const Text('Emergency stop and gadget teardown'),
+                title: Text(AppLocalizations.of(context)!.panicStop),
+                subtitle: Text(AppLocalizations.of(context)!.emergencyStopAndTeardown),
                 onTap: () async {
                   Navigator.pop(context);
                   await ref.read(executionControllerProvider.notifier).panicStop();
@@ -519,7 +520,7 @@ class _HeroStatusCard extends ConsumerWidget {
                   FilledButton.icon(
                     onPressed: onStop,
                     icon: const Icon(Icons.stop),
-                    label: const Text('Stop'),
+                    label: Text(AppLocalizations.of(context)!.stop),
                     style: FilledButton.styleFrom(
                       backgroundColor: cs.error,
                       foregroundColor: cs.onError,
@@ -536,7 +537,7 @@ class _HeroStatusCard extends ConsumerWidget {
                 child: OutlinedButton.icon(
                   onPressed: onPanicStop,
                   icon: const Icon(Icons.warning_amber_rounded),
-                  label: const Text('Panic Stop'),
+                  label: Text(AppLocalizations.of(context)!.panicStop),
                   style: OutlinedButton.styleFrom(
                     foregroundColor: cs.error,
                     side: BorderSide(color: cs.error),
@@ -776,7 +777,7 @@ class _PayloadCard extends StatelessWidget {
               IconButton.filledTonal(
                 onPressed: onRun,
                 icon: const Icon(Icons.play_arrow),
-                tooltip: 'Run',
+                tooltip: AppLocalizations.of(context)!.run,
               ),
             ],
           ),
@@ -819,13 +820,13 @@ class _EmptyPayloadsCard extends StatelessWidget {
             FilledButton.icon(
               onPressed: onCreateTap,
               icon: const Icon(Icons.add),
-              label: const Text('Create Payload'),
+              label: Text(AppLocalizations.of(context)!.createPayload),
             ),
             const SizedBox(height: 8),
             OutlinedButton.icon(
               onPressed: onOpenStoreTap,
               icon: const Icon(Icons.cloud_download),
-              label: const Text('Import from GitHub Store'),
+              label: Text(AppLocalizations.of(context)!.importFromGithubStore),
             ),
           ],
         ),

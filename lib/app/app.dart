@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:dynamic_color/dynamic_color.dart';
 
@@ -7,6 +8,7 @@ import '../state/controllers/app_settings_controller.dart';
 import '../state/controllers/dynamic_color_controller.dart';
 import 'router.dart';
 import 'theme.dart';
+import '../l10n/app_localizations.dart';
 
 class TapDuckyApp extends ConsumerWidget {
   const TapDuckyApp({super.key});
@@ -24,6 +26,13 @@ class TapDuckyApp extends ConsumerWidget {
             debugShowCheckedModeBanner: kDebugMode,
             title: 'TapDucky',
             theme: AppTheme.light(dynamicScheme: enabled ? lightDynamic : null),
+            localizationsDelegates: const [
+              AppLocalizations.delegate,
+              GlobalMaterialLocalizations.delegate,
+              GlobalWidgetsLocalizations.delegate,
+              GlobalCupertinoLocalizations.delegate,
+            ],
+            supportedLocales: AppLocalizations.supportedLocales,
             darkTheme: AppTheme.dark(dynamicScheme: enabled ? darkDynamic : null),
             home: const _BootScreen(),
           );
@@ -36,6 +45,13 @@ class TapDuckyApp extends ConsumerWidget {
             debugShowCheckedModeBanner: kDebugMode,
             title: 'TapDucky',
             theme: AppTheme.light(dynamicScheme: enabled ? lightDynamic : null),
+            localizationsDelegates: const [
+              AppLocalizations.delegate,
+              GlobalMaterialLocalizations.delegate,
+              GlobalWidgetsLocalizations.delegate,
+              GlobalCupertinoLocalizations.delegate,
+            ],
+            supportedLocales: AppLocalizations.supportedLocales,
             darkTheme: AppTheme.dark(dynamicScheme: enabled ? darkDynamic : null),
             home: _ErrorScreen(error: e),
           );
@@ -51,7 +67,14 @@ class TapDuckyApp extends ConsumerWidget {
               theme: AppTheme.light(dynamicScheme: enabled ? lightDynamic : null),
               darkTheme: AppTheme.dark(dynamicScheme: enabled ? darkDynamic : null),
               themeMode: settings.themeMode,
-              routerConfig: router,
+              localizationsDelegates: const [
+              AppLocalizations.delegate,
+              GlobalMaterialLocalizations.delegate,
+              GlobalWidgetsLocalizations.delegate,
+              GlobalCupertinoLocalizations.delegate,
+            ],
+            supportedLocales: AppLocalizations.supportedLocales,
+            routerConfig: router,
             );
           },
         );

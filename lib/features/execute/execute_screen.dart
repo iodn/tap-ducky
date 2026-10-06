@@ -1,4 +1,5 @@
 import 'dart:async';
+import '../../l10n/app_localizations.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -55,11 +56,11 @@ class _ExecuteScreenState extends ConsumerState<ExecuteScreen> with SingleTicker
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Execute'),
+        title: Text(AppLocalizations.of(context)!.execute),
         actions: [
           if (exec.isRunning)
             IconButton(
-              tooltip: 'Panic Stop',
+              tooltip: AppLocalizations.of(context)!.panicStop,
               onPressed: () => ref.read(executionControllerProvider.notifier).panicStop(),
               icon: const Icon(Icons.warning_amber_rounded),
               color: Theme.of(context).colorScheme.error,
@@ -72,30 +73,30 @@ class _ExecuteScreenState extends ConsumerState<ExecuteScreen> with SingleTicker
                 label: Text('$recent24h'),
                 isLabelVisible: recent24h > 0,
                 child: IconButton(
-                  tooltip: 'Execution history',
+                  tooltip: AppLocalizations.of(context)!.executionHistory,
                   onPressed: () => context.push(const ExecutionHistoryRoute().location),
                   icon: const Icon(Icons.history),
                 ),
               );
             },
             loading: () => IconButton(
-              tooltip: 'Execution history',
+              tooltip: AppLocalizations.of(context)!.executionHistory,
               onPressed: () => context.push(const ExecutionHistoryRoute().location),
               icon: const Icon(Icons.history),
             ),
             error: (_, __) => IconButton(
-              tooltip: 'Execution history',
+              tooltip: AppLocalizations.of(context)!.executionHistory,
               onPressed: () => context.push(const ExecutionHistoryRoute().location),
               icon: const Icon(Icons.history),
             ),
           ),
           IconButton(
-            tooltip: 'Logs',
+            tooltip: AppLocalizations.of(context)!.logs,
             onPressed: () => context.push(const LogsRoute().location),
             icon: const Icon(Icons.list_alt),
           ),
           IconButton(
-            tooltip: 'Device',
+            tooltip: AppLocalizations.of(context)!.device,
             onPressed: () => context.push(const DeviceRoute().location),
             icon: const Icon(Icons.phone_android),
           ),
@@ -121,8 +122,8 @@ class _ExecuteScreenState extends ConsumerState<ExecuteScreen> with SingleTicker
         data: (payloads) {
           if (payloads.isEmpty) {
             return EmptyState(
-              title: 'No payloads available',
-              subtitle: 'Create or import a payload first.',
+              title: AppLocalizations.of(context)!.noPayloadsAvailable,
+              subtitle: AppLocalizations.of(context)!.createOrImportPayload,
               icon: Icons.inventory_2_outlined,
               action: Column(
                 mainAxisSize: MainAxisSize.min,
@@ -141,7 +142,7 @@ class _ExecuteScreenState extends ConsumerState<ExecuteScreen> with SingleTicker
                     child: OutlinedButton.icon(
                       onPressed: () => context.go(const PayloadsStoreRoute().location),
                       icon: const Icon(Icons.cloud_download),
-                      label: const Text('Import from GitHub Store'),
+                      label: Text(AppLocalizations.of(context)!.importFromGithubStore),
                     ),
                   ),
                 ],
@@ -1289,7 +1290,7 @@ class _ExecutionControlCard extends StatelessWidget {
                   FilledButton.icon(
                     onPressed: onStop,
                     icon: const Icon(Icons.stop),
-                    label: const Text('Stop'),
+                    label: Text(AppLocalizations.of(context)!.stop),
                     style: FilledButton.styleFrom(
                       backgroundColor: cs.error,
                       foregroundColor: cs.onError,
@@ -1306,7 +1307,7 @@ class _ExecutionControlCard extends StatelessWidget {
                 child: OutlinedButton.icon(
                   onPressed: onPanicStop,
                   icon: const Icon(Icons.warning_amber_rounded),
-                  label: const Text('Panic Stop'),
+                  label: Text(AppLocalizations.of(context)!.panicStop),
                   style: OutlinedButton.styleFrom(
                     foregroundColor: cs.error,
                     side: BorderSide(color: cs.error),
@@ -1598,11 +1599,11 @@ class _ConsoleTabState extends ConsumerState<_ConsoleTab> {
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Cancel'),
+            child: Text(AppLocalizations.of(context)!.cancel),
           ),
           FilledButton(
             onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('Save'),
+            child: Text(AppLocalizations.of(context)!.save),
           ),
         ],
       ),

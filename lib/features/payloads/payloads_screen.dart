@@ -1,4 +1,5 @@
 import 'dart:convert';
+import '../../l10n/app_localizations.dart';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -138,7 +139,7 @@ class _PayloadsScreenState extends ConsumerState<PayloadsScreen> {
       appBar: AppBar(
         title: ui.selectionMode
             ? Text('${ui.selectedIds.length} selected')
-            : const Text('Payloads'),
+            : Text(AppLocalizations.of(context)!.payloads),
         leading: ui.selectionMode
             ? IconButton(
                 icon: const Icon(Icons.close),
@@ -171,7 +172,7 @@ class _PayloadsScreenState extends ConsumerState<PayloadsScreen> {
               ]
             : [
                 IconButton(
-                  tooltip: 'Search',
+                  tooltip: AppLocalizations.of(context)!.search,
                   onPressed: () => _showSearchSheet(context),
                   icon: const Icon(Icons.search),
                 ),
@@ -347,7 +348,7 @@ class _PayloadsScreenState extends ConsumerState<PayloadsScreen> {
           : FloatingActionButton.extended(
               onPressed: () => context.go('${const PayloadsRoute().location}/new'),
               icon: const Icon(Icons.add),
-              label: const Text('New Payload'),
+              label: Text(AppLocalizations.of(context)!.newPayload),
             ),
     );
   }
@@ -457,11 +458,11 @@ class _PayloadsScreenState extends ConsumerState<PayloadsScreen> {
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(null),
-            child: const Text('Cancel'),
+            child: Text(AppLocalizations.of(context)!.cancel),
           ),
           FilledButton(
             onPressed: () => Navigator.of(context).pop(ctrl.text),
-            child: const Text('Import'),
+            child: Text(AppLocalizations.of(context)!.importAction),
           ),
         ],
       ),
@@ -544,7 +545,7 @@ class _PayloadsScreenState extends ConsumerState<PayloadsScreen> {
                       ref.read(payloadsUiProvider.notifier).setSearchQuery(_searchCtrl.text);
                       Navigator.pop(context);
                     },
-                    child: const Text('Search'),
+                    child: Text(AppLocalizations.of(context)!.search),
                   ),
                 ),
               ],
@@ -575,7 +576,7 @@ class _TagFilterBar extends ConsumerWidget {
         itemBuilder: (context, i) {
           if (i == 0) {
             return FilterChip(
-              label: const Text('All'),
+              label: Text(AppLocalizations.of(context)!.all),
               selected: selectedTag == null,
               onSelected: (_) => ref.read(payloadsUiProvider.notifier).setTag(null),
             );
@@ -777,7 +778,7 @@ class _PayloadCardState extends State<_PayloadCard> {
                       child: FilledButton.tonalIcon(
                         onPressed: widget.onRun,
                         icon: const Icon(Icons.play_arrow, size: 18),
-                        label: const Text('Run'),
+                        label: Text(AppLocalizations.of(context)!.run),
                         style: FilledButton.styleFrom(
                           padding: const EdgeInsets.symmetric(vertical: 10),
                         ),
@@ -792,13 +793,13 @@ class _PayloadCardState extends State<_PayloadCard> {
                     IconButton.outlined(
                       onPressed: widget.onExport,
                       icon: const Icon(Icons.ios_share, size: 18),
-                      tooltip: 'Export',
+                      tooltip: AppLocalizations.of(context)!.exportAction,
                     ),
                     if (widget.onDelete != null)
                       IconButton.outlined(
                         onPressed: widget.onDelete,
                         icon: Icon(Icons.delete, size: 18, color: cs.error),
-                        tooltip: 'Delete',
+                        tooltip: AppLocalizations.of(context)!.delete,
                       ),
                   ],
                 ),
@@ -912,7 +913,7 @@ class _EmptyStateWizard extends StatelessWidget {
               child: OutlinedButton.icon(
                 onPressed: onOpenStoreTap,
                 icon: const Icon(Icons.cloud_download),
-                label: const Text('Import from GitHub Store'),
+                label: Text(AppLocalizations.of(context)!.importFromGithubStore),
                 style: OutlinedButton.styleFrom(
                   padding: const EdgeInsets.symmetric(vertical: 16),
                 ),
@@ -1026,7 +1027,7 @@ class _EmptyFilterResult extends StatelessWidget {
             FilledButton.icon(
               onPressed: onClear,
               icon: const Icon(Icons.clear_all),
-              label: const Text('Clear Filters'),
+              label: Text(AppLocalizations.of(context)!.clearFilters),
             ),
           ],
         ),
@@ -1075,7 +1076,7 @@ class _SpeedDialFAB extends StatelessWidget {
               controller.reverse();
               onImportTap();
             },
-            tooltip: 'Import',
+            tooltip: AppLocalizations.of(context)!.importAction,
             child: const Icon(Icons.download),
           ),
         ),
@@ -1093,7 +1094,7 @@ class _SpeedDialFAB extends StatelessWidget {
             icon: AnimatedIcons.menu_close,
             progress: controller,
           ),
-          label: const Text('New'),
+          label: Text(AppLocalizations.of(context)!.newItem),
         ),
       ],
     );

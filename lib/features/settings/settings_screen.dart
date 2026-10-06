@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart';
+import '../../l10n/app_localizations.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -57,7 +58,7 @@ class SettingsScreen extends ConsumerWidget {
         if (!context.mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: const Text('No browser available'),
+            content: Text(AppLocalizations.of(context)!.noBrowser),
             backgroundColor: Theme.of(context).colorScheme.error,
             behavior: SnackBarBehavior.floating,
           ),
@@ -84,7 +85,7 @@ class SettingsScreen extends ConsumerWidget {
         title: const Text('Reset all settings?'),
         content: const Text('This will restore all settings to their defaults.'),
         actions: [
-          TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Cancel')),
+          TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: Text(AppLocalizations.of(context)!.cancel)),
           FilledButton(onPressed: () => Navigator.of(ctx).pop(true), child: const Text('Reset')),
         ],
       ),
@@ -93,7 +94,7 @@ class SettingsScreen extends ConsumerWidget {
     await ref.read(appSettingsControllerProvider.notifier).resetAllToDefaults();
     if (!context.mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Settings reset to defaults')),
+      SnackBar(content: Text(AppLocalizations.of(context)!.settingsReset)),
     );
   }
 
@@ -104,10 +105,10 @@ class SettingsScreen extends ConsumerWidget {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Settings'),
+        title: Text(AppLocalizations.of(context)!.settings),
         actions: [
           IconButton(
-            tooltip: 'Device',
+            tooltip: AppLocalizations.of(context)!.device,
             onPressed: () => context.push(const DeviceRoute().location),
             icon: const Icon(Icons.phone_android),
           ),
@@ -144,7 +145,7 @@ class SettingsScreen extends ConsumerWidget {
                   child: TextButton.icon(
                     onPressed: () => _confirmResetAll(context, ref),
                     icon: const Icon(Icons.restart_alt, size: 18),
-                    label: const Text('Reset all settings'),
+                    label: Text(AppLocalizations.of(context)!.resetAllSettings),
                   ),
                 ),
               ),
@@ -202,7 +203,7 @@ class SettingsScreen extends ConsumerWidget {
                     child: FilledButton.icon(
                       onPressed: () => _openDonationSheet(context),
                       icon: const Icon(Icons.favorite_rounded),
-                      label: const Text('Donate'),
+                      label: Text(AppLocalizations.of(context)!.donate),
                       style: FilledButton.styleFrom(
                         padding: const EdgeInsets.symmetric(vertical: 14),
                       ),
@@ -218,7 +219,7 @@ class SettingsScreen extends ConsumerWidget {
                         message: 'Repository link copied',
                       ),
                       icon: const Icon(Icons.star_border_rounded),
-                      label: const Text('Star Repo'),
+                      label: Text(AppLocalizations.of(context)!.starRepo),
                       style: OutlinedButton.styleFrom(
                         padding: const EdgeInsets.symmetric(vertical: 14),
                       ),
@@ -256,8 +257,8 @@ class SettingsScreen extends ConsumerWidget {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16),
       child: SectionCard(
-        title: 'Appearance',
-        subtitle: 'Customize your visual experience',
+        title: AppLocalizations.of(context)!.appearance,
+        subtitle: AppLocalizations.of(context)!.customizeVisualExperience,
         leading: Icon(Icons.palette_outlined, color: cs.primary),
         child: Padding(
           padding: const EdgeInsets.all(12),
@@ -395,8 +396,8 @@ class SettingsScreen extends ConsumerWidget {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16),
       child: SectionCard(
-        title: 'Execution',
-        subtitle: 'Control payload behavior and timing',
+        title: AppLocalizations.of(context)!.execution,
+        subtitle: AppLocalizations.of(context)!.controlPayloadBehavior,
         leading: Icon(Icons.play_arrow, color: cs.primary),
         child: Padding(
           padding: const EdgeInsets.all(14),
@@ -588,8 +589,8 @@ class SettingsScreen extends ConsumerWidget {
                       onChanged: (v) => ref
                           .read(appSettingsControllerProvider.notifier)
                           .setEnableLogging(v),
-                      title: const Text('Enable logging'),
-                      subtitle: const Text('Record execution events and outcomes'),
+                      title: Text(AppLocalizations.of(context)!.enableLogging),
+                      subtitle: Text(AppLocalizations.of(context)!.recordExecutionEvents),
                     ),
                     SwitchListTile(
                       contentPadding: EdgeInsets.zero,
@@ -597,8 +598,8 @@ class SettingsScreen extends ConsumerWidget {
                       onChanged: (v) => ref
                           .read(appSettingsControllerProvider.notifier)
                           .setRandomizeTiming(v),
-                      title: const Text('Randomize timing'),
-                      subtitle: const Text('Adds small jitter to mimic real typing'),
+                      title: Text(AppLocalizations.of(context)!.randomizeTiming),
+                      subtitle: Text(AppLocalizations.of(context)!.randomizeTimingDescription),
                     ),
                     const SizedBox(height: 6),
                     Row(
@@ -692,8 +693,8 @@ class SettingsScreen extends ConsumerWidget {
                       onChanged: (v) => ref
                           .read(appSettingsControllerProvider.notifier)
                           .setKeepScreenOn(v),
-                      title: const Text('Keep screen on'),
-                      subtitle: const Text('Prevents screen from sleeping during execution'),
+                      title: Text(AppLocalizations.of(context)!.keepScreenOn),
+                      subtitle: Text(AppLocalizations.of(context)!.preventsSleeping),
                     ),
                     if (s.keepScreenOn)
                       Padding(
@@ -801,8 +802,8 @@ class SettingsScreen extends ConsumerWidget {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16),
       child: SectionCard(
-        title: 'Payloads Store',
-        subtitle: 'Browse GitHub repositories and import payloads',
+        title: AppLocalizations.of(context)!.payloadsStore,
+        subtitle: AppLocalizations.of(context)!.browseGithubRepos,
         leading: Icon(Icons.storefront, color: cs.primary),
         child: ListTile(
           leading: const Icon(Icons.storefront),
@@ -822,12 +823,12 @@ class SettingsScreen extends ConsumerWidget {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16),
       child: SectionCard(
-        title: 'Advanced',
-        subtitle: 'USB gadget, presets, and hotkeys',
+        title: AppLocalizations.of(context)!.advanced,
+        subtitle: AppLocalizations.of(context)!.usbGadgetPresetsHotkeys,
         leading: Icon(Icons.tune, color: cs.primary),
         child: ListTile(
           leading: const Icon(Icons.tune),
-          title: const Text('Advanced settings'),
+          title: Text(AppLocalizations.of(context)!.advancedSettings),
           subtitle: const Text('Command presets, hotkeys, default VID/PID'),
           trailing: const Icon(Icons.chevron_right),
           onTap: () => context.push(const AdvancedSettingsRoute().location),
@@ -844,14 +845,14 @@ class SettingsScreen extends ConsumerWidget {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16),
       child: SectionCard(
-        title: 'HID Control',
-        subtitle: 'USB gadget session status',
+        title: AppLocalizations.of(context)!.hidControl,
+        subtitle: AppLocalizations.of(context)!.usbGadgetSessionStatus,
         leading: Icon(Icons.usb, color: cs.primary),
         child: Column(
           children: [
             ListTile(
               leading: const Icon(Icons.security),
-              title: const Text('Root available'),
+              title: Text(AppLocalizations.of(context)!.rootAvailable),
               subtitle: Text(hid.rootAvailable ? 'Available' : 'Unavailable'),
               trailing: Icon(
                 hid.rootAvailable ? Icons.check_circle : Icons.error_outline,
@@ -861,7 +862,7 @@ class SettingsScreen extends ConsumerWidget {
             const Divider(height: 1),
             ListTile(
               leading: const Icon(Icons.usb),
-              title: const Text('HID supported'),
+              title: Text(AppLocalizations.of(context)!.hidSupported),
               subtitle: Text(hid.hidSupported ? 'Supported' : 'Unsupported'),
               trailing: Icon(
                 hid.hidSupported ? Icons.check_circle : Icons.error_outline,
@@ -872,7 +873,7 @@ class SettingsScreen extends ConsumerWidget {
             ListTile(
               leading:
                   Icon(hid.sessionArmed ? Icons.lock_open : Icons.lock_outline),
-              title: const Text('HID session'),
+              title: Text(AppLocalizations.of(context)!.hidSession),
               subtitle: Text(hid.sessionArmed ? 'Armed' : 'Disarmed'),
               trailing: Switch(
                 value: hid.sessionArmed,
@@ -904,7 +905,7 @@ class SettingsScreen extends ConsumerWidget {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16),
       child: SectionCard(
-        title: 'About',
+        title: AppLocalizations.of(context)!.about,
         subtitle: 'App information and legal',
         leading: Icon(Icons.info_outline, color: cs.primary),
         child: Column(
@@ -933,8 +934,8 @@ class SettingsScreen extends ConsumerWidget {
             const Divider(height: 1),
             ListTile(
               leading: const Icon(Icons.gavel),
-              title: const Text('Licenses'),
-              subtitle: const Text('Open source licenses'),
+              title: Text(AppLocalizations.of(context)!.licenses),
+              subtitle: Text(AppLocalizations.of(context)!.openSourceLicenses),
               trailing: const Icon(Icons.chevron_right),
               onTap: () {
                 showLicensePage(

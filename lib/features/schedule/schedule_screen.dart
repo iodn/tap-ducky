@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../l10n/app_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../app/router.dart';
@@ -19,7 +20,7 @@ class ScheduleScreen extends ConsumerWidget {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Schedule'),
+        title: Text(AppLocalizations.of(context)!.schedule),
         actions: [
           IconButton(
             tooltip: 'New schedule',
@@ -48,13 +49,13 @@ class ScheduleScreen extends ConsumerWidget {
         data: (tasks) {
           if (tasks.isEmpty) {
             return EmptyState(
-              title: 'No schedules configured',
-              subtitle: 'Create a schedule to automatically run a payload on a timer or trigger.',
+              title: AppLocalizations.of(context)!.noSchedulesConfigured,
+              subtitle: AppLocalizations.of(context)!.createScheduleAutomatically,
               icon: Icons.schedule,
               action: FilledButton.icon(
                 onPressed: () => context.go('${const ScheduleRoute().location}/new'),
                 icon: const Icon(Icons.add),
-                label: const Text('Create schedule'),
+                label: Text(AppLocalizations.of(context)!.createSchedule),
               ),
             );
           }
@@ -115,7 +116,7 @@ class ScheduleScreen extends ConsumerWidget {
       floatingActionButton: FloatingActionButton.extended(
         onPressed: () => context.go('${const ScheduleRoute().location}/new'),
         icon: const Icon(Icons.add),
-        label: const Text('New Schedule'),
+        label: Text(AppLocalizations.of(context)!.newSchedule),
       ),
     );
   }
@@ -433,7 +434,7 @@ class _ScheduleCard extends StatelessWidget {
                         child: OutlinedButton.icon(
                           onPressed: onEdit,
                           icon: const Icon(Icons.edit, size: 16),
-                          label: const Text('Edit'),
+                          label: Text(AppLocalizations.of(context)!.edit),
                           style: OutlinedButton.styleFrom(
                             padding: const EdgeInsets.symmetric(vertical: 10),
                           ),
