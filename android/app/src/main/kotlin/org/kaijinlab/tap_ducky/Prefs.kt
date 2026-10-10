@@ -68,6 +68,12 @@ class Prefs(context: Context) {
       sp.edit().putString(KEY_PREV_BOUND_GADGETS, value).apply()
     }
 
+  var prevStoppedHalServices: String?
+    get() = sp.getString(KEY_PREV_STOPPED_HAL_SERVICES, null)
+    set(value) {
+      sp.edit().putString(KEY_PREV_STOPPED_HAL_SERVICES, value).apply()
+    }
+
   var typingSpeedFactor: Float
     get() = sp.getFloat(KEY_TYPING_SPEED_FACTOR, 1.0f)
     set(value) {
@@ -146,7 +152,8 @@ class Prefs(context: Context) {
     sysUsbState: String?,
     sysUsbConfigfs: String?,
     persistSysUsbConfig: String?,
-    boundGadgets: String?
+    boundGadgets: String?,
+    stoppedHalServices: String?
   ) {
     sp.edit()
       .putString(KEY_PREV_SYS_USB_CONFIG, sysUsbConfig)
@@ -154,6 +161,7 @@ class Prefs(context: Context) {
       .putString(KEY_PREV_SYS_USB_CONFIGFS, sysUsbConfigfs)
       .putString(KEY_PREV_PERSIST_SYS_USB_CONFIG, persistSysUsbConfig)
       .putString(KEY_PREV_BOUND_GADGETS, boundGadgets)
+      .putString(KEY_PREV_STOPPED_HAL_SERVICES, stoppedHalServices)
       .apply()
   }
 
@@ -164,6 +172,7 @@ class Prefs(context: Context) {
       .remove(KEY_PREV_SYS_USB_CONFIGFS)
       .remove(KEY_PREV_PERSIST_SYS_USB_CONFIG)
       .remove(KEY_PREV_BOUND_GADGETS)
+      .remove(KEY_PREV_STOPPED_HAL_SERVICES)
       .apply()
   }
 
@@ -179,6 +188,7 @@ class Prefs(context: Context) {
     private const val KEY_PREV_SYS_USB_CONFIGFS = "prev_sys_usb_configfs"
     private const val KEY_PREV_PERSIST_SYS_USB_CONFIG = "prev_persist_sys_usb_config"
     private const val KEY_PREV_BOUND_GADGETS = "prev_bound_gadgets"
+    private const val KEY_PREV_STOPPED_HAL_SERVICES = "prev_stopped_hal_services"
     private const val KEY_TYPING_SPEED_FACTOR = "typing_speed_factor"
     private const val KEY_RISKY_FAST_MODE = "risky_fast_mode"
     private const val KEY_DIAL_SHORTCUT_BINDINGS = "dial_shortcut_bindings"
