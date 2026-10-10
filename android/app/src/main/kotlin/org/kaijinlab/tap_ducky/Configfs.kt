@@ -16,6 +16,8 @@ object Configfs {
     val maxPowerMa: Int,
   )
 
+  private val serviceNameRegex = Regex("^[A-Za-z0-9._-]+$")
+
   fun buildCreateAndBindScript(p: ParsedProfile, gadgetDir: String): String {
     val baseSelect = """
       set -e
@@ -45,30 +47,43 @@ object Configfs {
       $baseSelect
 
       PREFERRED_UDC=$preferredUdcQuoted
-      UDC_CANDIDATES=""
+      UDC_REAL=""
+      UDC_DUMMY=""
 
-      append_udc_candidate() {
+      # Classifies a UDC name as real or a "dummy_udc*" test controller (the
+      # Linux dummy_hcd/gadget-framework driver, wired to nothing physical).
+      # Real controllers are preferred: getprop sys.usb.controller is not
+      # always trustworthy and has been observed pointing at a dummy UDC on
+      # some devices, which silently "succeeds" binding our HID gadget to a
+      # controller no host is actually attached to.
+      add_udc_candidate() {
         c=${'$'}1
         [ -n "${'$'}c" ] || return 0
-        for e in ${'$'}UDC_CANDIDATES; do
+        for e in ${'$'}UDC_REAL ${'$'}UDC_DUMMY; do
           [ "${'$'}e" = "${'$'}c" ] && return 0
         done
-        UDC_CANDIDATES="${'$'}UDC_CANDIDATES ${'$'}c"
+        case "${'$'}c" in
+          dummy_udc*) UDC_DUMMY="${'$'}UDC_DUMMY ${'$'}c" ;;
+          *) UDC_REAL="${'$'}UDC_REAL ${'$'}c" ;;
+        esac
       }
-
-      if [ -n "${'$'}PREFERRED_UDC" ]; then
-        append_udc_candidate "${'$'}PREFERRED_UDC"
-      fi
-
-      SYS_UDC=${'$'}(getprop sys.usb.controller 2>/dev/null | tr -d '\r')
-      append_udc_candidate "${'$'}SYS_UDC"
 
       for c in ${'$'}(ls /sys/class/udc 2>/dev/null || true); do
         c=${'$'}(echo "${'$'}c" | tr -d '\r')
-        append_udc_candidate "${'$'}c"
+        add_udc_candidate "${'$'}c"
       done
 
-      if [ -z "${'$'}UDC_CANDIDATES" ]; then
+      SYS_UDC=${'$'}(getprop sys.usb.controller 2>/dev/null | tr -d '\r')
+      add_udc_candidate "${'$'}SYS_UDC"
+
+      # Real controllers first, dummy ones only as a last resort. An explicit
+      # preferredUdc always wins, dummy or not: the user asked for it by name.
+      UDC_CANDIDATES="${'$'}UDC_REAL ${'$'}UDC_DUMMY"
+      if [ -n "${'$'}PREFERRED_UDC" ]; then
+        UDC_CANDIDATES="${'$'}PREFERRED_UDC ${'$'}UDC_CANDIDATES"
+      fi
+
+      if [ -z "${'$'}(echo ${'$'}UDC_CANDIDATES)" ]; then
         echo "No UDC found in /sys/class/udc" >&2
         exit 3
       fi
@@ -186,6 +201,58 @@ object Configfs {
         find "${'$'}CFGBASE" -maxdepth 2 -name UDC -type f -exec sh -c 'echo "" > "${'$'}1" 2>/dev/null || true' _ {} \;
       fi
     """.trimIndent() + "\n"
+  }
+
+  /**
+   * Stops any running vendor USB gadget HAL services (names matching *usb*hal*,
+   * e.g. "vendor.usb-hal-1-2", "vendor.usbgadget-hal-1-2") before we touch the
+   * UDC ourselves.
+   *
+   * On many stock kernels these services own the "default" Android gadget
+   * (g1: adb/MTP/etc.) and react to UDC/property changes by re-asserting it,
+   * racing our manual configfs bind: we unbind g1 and bind our HID gadget, the
+   * HAL sees the UDC change and immediately tries to rebind g1 to the same
+   * UDC, and whichever side loses gets a silent failure (e.g. kernel logs
+   * "failed to start g1: -22") while the HID gadget is left bound to nothing
+   * the host can see.
+   *
+   * Echoes the name of each service it stopped, one per line, so the caller
+   * can restart exactly those later via [buildStartUsbHalServicesScript].
+   * No-op (empty output) on devices that don't run such a service.
+   */
+  fun buildStopUsbHalServicesScript(): String {
+    return """
+      getprop \
+        | grep -iE '^\[init\.svc\.[^]]+\]: \[running\]${'$'}' \
+        | grep -i usb \
+        | grep -i hal \
+        | sed -E 's/^\[init\.svc\.([^]]+)\]:.*/\1/' \
+        | while IFS= read -r svc; do
+            [ -n "${'$'}svc" ] || continue
+            setprop ctl.stop "${'$'}svc" 2>/dev/null || true
+            echo "${'$'}svc"
+          done
+    """.trimIndent() + "\n"
+  }
+
+  /**
+   * Restarts USB gadget HAL services previously stopped by
+   * [buildStopUsbHalServicesScript]. Pass its captured stdout back in verbatim
+   * (one service name per line); anything not matching a plain service-name
+   * shape is ignored.
+   */
+  fun buildStartUsbHalServicesScript(stoppedServicesRaw: String): String {
+    val services = stoppedServicesRaw
+      .lineSequence()
+      .map { it.trim() }
+      .filter { it.isNotEmpty() && serviceNameRegex.matches(it) }
+      .distinct()
+      .toList()
+    if (services.isEmpty()) return "true\n"
+    val starts = services.joinToString("\n") { svc ->
+      "setprop ctl.start ${shEscape(svc)} 2>/dev/null || true"
+    }
+    return starts + "\n"
   }
 
   private fun buildMouseFunctionScript(fn: String): String {

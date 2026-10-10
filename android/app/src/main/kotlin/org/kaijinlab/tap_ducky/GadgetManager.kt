@@ -371,6 +371,7 @@ class GadgetManager(
       sysUsbConfigfs = snap.sysUsbConfigfs,
       persistSysUsbConfig = snap.persistSysUsbConfig,
       boundGadgets = snap.boundGadgetsRaw,
+      stoppedHalServices = snap.stoppedHalServicesRaw,
     )
 
     val gadgetDir = "gadgetfs_${profile.id.take(12).lowercase(Locale.US)}"
@@ -1305,6 +1306,7 @@ class GadgetManager(
     val sysUsbConfigfs: String?,
     val persistSysUsbConfig: String?,
     val boundGadgetsRaw: String?,
+    val stoppedHalServicesRaw: String?,
   )
 
   private fun captureUsbSnapshot(): UsbSnapshot {
@@ -1319,18 +1321,30 @@ class GadgetManager(
       .filter { it.isNotBlank() }
       .joinToString("\n")
       .ifBlank { null }
+
+    // Stop any vendor USB gadget HAL service before we touch the UDC, so it can't
+    // race our bind by re-asserting the stock gadget. See buildStopUsbHalServicesScript.
+    val stoppedHal = root.exec(Configfs.buildStopUsbHalServicesScript(), timeoutSec = 10).stdout
+      .lineSequence()
+      .map { it.trim().trim('\r') }
+      .filter { it.isNotBlank() }
+      .joinToString("\n")
+      .ifBlank { null }
+
     val snap = UsbSnapshot(
       sysUsbConfig = getProp("sys.usb.config"),
       sysUsbState = getProp("sys.usb.state"),
       sysUsbConfigfs = getProp("sys.usb.configfs"),
       persistSysUsbConfig = getProp("persist.sys.usb.config"),
       boundGadgetsRaw = bound,
+      stoppedHalServicesRaw = stoppedHal,
     )
     log.log(
       "usb",
       "Snapshot sys.usb.config=${snap.sysUsbConfig ?: "?"} sys.usb.state=${snap.sysUsbState ?: "?"} " +
         "sys.usb.configfs=${snap.sysUsbConfigfs ?: "?"} persist.sys.usb.config=${snap.persistSysUsbConfig ?: "?"} " +
-        "bound=${if (snap.boundGadgetsRaw.isNullOrBlank()) "none" else "yes"}"
+        "bound=${if (snap.boundGadgetsRaw.isNullOrBlank()) "none" else "yes"} " +
+        "stoppedHal=${snap.stoppedHalServicesRaw?.lineSequence()?.toList() ?: emptyList<String>()}"
     )
     return snap
   }
@@ -1362,10 +1376,23 @@ class GadgetManager(
     val prevConfigfs = prefs.prevSysUsbConfigfs?.trim()?.takeIf { it.isNotEmpty() }
     val prevPersist = prefs.prevPersistSysUsbConfig?.trim()?.takeIf { it.isNotEmpty() }
     val prevBound = prefs.prevBoundGadgets?.trim()?.takeIf { it.isNotEmpty() }
-    if (prevConfig == null && prevConfigfs == null && prevPersist == null && prevBound == null) {
+    val prevStoppedHal = prefs.prevStoppedHalServices?.trim()?.takeIf { it.isNotEmpty() }
+    if (prevConfig == null && prevConfigfs == null && prevPersist == null && prevBound == null && prevStoppedHal == null) {
       log.log("usb", "No snapshot to restore ($reason)")
       return
     }
+
+    // Restart any vendor USB gadget HAL service we stopped in captureUsbSnapshot,
+    // before nudging sys.usb.config, so it's actually around to rebuild the gadget.
+    if (prevStoppedHal != null) {
+      val halResult = root.exec(Configfs.buildStartUsbHalServicesScript(prevStoppedHal), timeoutSec = 10)
+      if (!halResult.ok) {
+        log.logError("usb", "Failed to restart USB gadget HAL service(s): ${prevStoppedHal.replace("\n", ",")}")
+      } else {
+        log.log("usb", "Restarted USB gadget HAL service(s): ${prevStoppedHal.replace("\n", ",")}")
+      }
+    }
+
     log.log("usb", "Restoring USB snapshot ($reason) prevConfig=${prevConfig ?: "?"}")
     val script = buildRestoreUsbScript(prevConfig, prevConfigfs, prevPersist, prevBound)
     val r = root.exec(script, timeoutSec = 20)
