@@ -200,6 +200,14 @@ class DigiSparkConverter {
         }
         continue;
       }
+      // DigiMouse click helpers: leftClick(), rightClick(), middleClick()
+      final digiClick = RegExp(r'DigiMouse\.(leftClick|rightClick|middleClick)\(\s*\)\s*;').firstMatch(line);
+      if (digiClick != null) {
+        usedMouseApis = true;
+        final button = digiClick.group(1)!.replaceAll('Click', '').toUpperCase();
+        out.add('MOUSE CLICK $button');
+        continue;
+      }
       // click/press/release
       final mouseClick = RegExp(r'(DigiMouse|Mouse)\.click\(\s*([A-Z_]+)?\s*\)\s*;').firstMatch(line);
       if (mouseClick != null) {

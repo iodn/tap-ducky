@@ -31,4 +31,23 @@ void loop() {
 
     expect(DigiSparkConverter.convert(sketch), isNull);
   });
+
+  test('converts the official DigiMouse click helpers', () {
+    const sketch = '''
+#include "DigiKeyboard.h"
+void loop() {
+  DigiMouse.leftClick();
+  DigiMouse.rightClick();
+  DigiMouse.middleClick();
+}
+''';
+
+    final result = DigiSparkConverter.convert(sketch);
+
+    expect(result, isNotNull);
+    expect(result!.usedMouseApis, isTrue);
+    expect(result.text, contains('MOUSE CLICK LEFT'));
+    expect(result.text, contains('MOUSE CLICK RIGHT'));
+    expect(result.text, contains('MOUSE CLICK MIDDLE'));
+  });
 }
