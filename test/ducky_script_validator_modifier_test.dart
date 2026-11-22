@@ -40,4 +40,16 @@ void main() {
       isFalse,
     );
   });
+
+  test('accepts right-modifier combos that the engine executes', () {
+    for (final script in ['RCTRL l', 'RSHIFT TAB', 'RALT F4', 'RGUI r']) {
+      final result = DuckyScriptValidator().validate(script);
+      expect(result.hasWarnings, isFalse, reason: script);
+      expect(result.hasErrors, isFalse, reason: script);
+    }
+  });
+
+  test('warns when a fallback combo has modifiers but no key', () {
+    expect(DuckyScriptValidator().validate('RCTRL').hasWarnings, isTrue);
+  });
 }

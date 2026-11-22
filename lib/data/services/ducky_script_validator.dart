@@ -924,17 +924,13 @@ class DuckyScriptValidator {
             // Accept hyphen-separated combos, e.g., CTRL-ALT-T or CTRL-ALT t
             final normalized = trimmed.replaceAll('-', ' ');
             final comboParts = normalized.split(RegExp(r'\s+')).where((e) => e.isNotEmpty).toList();
-            final isModifierCombo = comboParts.every((p) {
-              final upper = p.toUpperCase();
-              return _supportedCommands.contains(upper) ||
-                  upper == 'CTRL' ||
-                  upper == 'ALT' ||
-                  upper == 'SHIFT' ||
-                  upper == 'GUI' ||
-                  upper == 'WINDOWS' ||
-                  upper == 'COMMAND' ||
-                  RegExp(r'^[A-Z0-9]$').hasMatch(upper);
-            });
+            final isModifierCombo = comboParts.any(
+                  (p) => !_modifierTokens.contains(p.toUpperCase()),
+                ) &&
+                comboParts.every((p) {
+                  final upper = p.toUpperCase();
+                  return _modifierTokens.contains(upper) || _isComboKey(upper);
+                });
 
             if (isModifierCombo) {
               commandCount++;
