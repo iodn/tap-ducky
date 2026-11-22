@@ -159,6 +159,22 @@ object HidSpec {
             "PAUSE", "BREAK" -> 0x48
             "CAPSLOCK" -> 0x39
             "NUMLOCK" -> 0x53
+            "NUMPAD0", "KP0" -> 0x62
+            "NUMPAD1", "KP1" -> 0x59
+            "NUMPAD2", "KP2" -> 0x5A
+            "NUMPAD3", "KP3" -> 0x5B
+            "NUMPAD4", "KP4" -> 0x5C
+            "NUMPAD5", "KP5" -> 0x5D
+            "NUMPAD6", "KP6" -> 0x5E
+            "NUMPAD7", "KP7" -> 0x5F
+            "NUMPAD8", "KP8" -> 0x60
+            "NUMPAD9", "KP9" -> 0x61
+            "NUMPADDIVIDE", "KPSLASH" -> 0x54
+            "NUMPADMULTIPLY", "KPASTERISK" -> 0x55
+            "NUMPADMINUS", "KPMINUS" -> 0x56
+            "NUMPADPLUS", "KPPLUS" -> 0x57
+            "NUMPADENTER", "KPENTER" -> 0x58
+            "NUMPADPERIOD", "KPDOT" -> 0x63
             "MENU", "APP" -> 0x65
             else -> null
         }
