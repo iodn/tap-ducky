@@ -50,4 +50,21 @@ void loop() {
     expect(result.text, contains('MOUSE CLICK RIGHT'));
     expect(result.text, contains('MOUSE CLICK MIDDLE'));
   });
+
+  test('ignores code inside block comments', () {
+    const sketch = '''
+#include "DigiKeyboard.h"
+/*
+DigiKeyboard.print("ignored");
+*/
+void loop() {
+  DigiKeyboard.print("kept");
+}
+''';
+
+    final result = DigiSparkConverter.convert(sketch);
+
+    expect(result, isNotNull);
+    expect(result!.text, 'STRING kept');
+  });
 }

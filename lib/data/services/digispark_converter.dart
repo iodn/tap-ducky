@@ -71,11 +71,19 @@ class DigiSparkConverter {
     final out = <String>[];
     bool usedMouseApis = false;
 
+    var inBlockComment = false;
     for (var raw in lines) {
       final line = raw.trim();
       if (line.isEmpty) continue;
+      if (inBlockComment) {
+        if (line.contains('*/')) inBlockComment = false;
+        continue;
+      }
       if (line.startsWith('//')) continue;
-      if (line.startsWith('/*')) continue; // naive skip of block comments start
+      if (line.startsWith('/*')) {
+        if (!line.contains('*/')) inBlockComment = true;
+        continue;
+      }
       if (line.startsWith('#')) continue; // preprocessor lines
 
       // delay
