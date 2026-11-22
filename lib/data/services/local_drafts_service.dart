@@ -10,14 +10,27 @@ final localModelStatusProvider = FutureProvider((ref) {
   return ref.watch(localDraftsServiceProvider).status();
 });
 
+typedef LocalModelStatus = ({String state, String? name, int? sizeBytes});
+
 class LocalDraftsService {
   static const _channel = MethodChannel('org.kaijinlab.tap_ducky/local_drafts');
 
-  Future<String> status() async {
+  Future<LocalModelStatus> status() async {
+    const LocalModelStatus unsupported = (
+      state: 'unsupported',
+      name: null,
+      sizeBytes: null,
+    );
     try {
-      return await _channel.invokeMethod<String>('status') ?? 'unsupported';
+      final data = await _channel.invokeMapMethod<String, dynamic>('status');
+      if (data == null) return unsupported;
+      return (
+        state: data['state'] as String? ?? 'unsupported',
+        name: data['name'] as String?,
+        sizeBytes: data['sizeBytes'] as int?,
+      );
     } on MissingPluginException {
-      return 'unsupported';
+      return unsupported;
     }
   }
 

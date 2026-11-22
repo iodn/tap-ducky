@@ -41,10 +41,16 @@ class _LocalDraftSettingsState extends ConsumerState<LocalDraftSettings> {
   @override
   Widget build(BuildContext context) {
     final status = ref.watch(localModelStatusProvider).value;
-    if (status == null || status == 'unsupported') {
+    if (status == null || status.state == 'unsupported') {
       return const SizedBox.shrink();
     }
-    final ready = status == 'ready';
+    final ready = status.state == 'ready';
+    final bytes = status.sizeBytes;
+    final size = bytes == null
+        ? null
+        : bytes >= 1024 * 1024 * 1024
+        ? '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(2)} GiB'
+        : '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MiB';
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
       child: SectionCard(
@@ -56,9 +62,27 @@ class _LocalDraftSettingsState extends ConsumerState<LocalDraftSettings> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text(
-                'Choose a .litertlm model for offline drafting. GGUF files are not supported by LiteRT-LM. TapDucky keeps a local copy on this device.',
-              ),
+              if (ready) ...[
+                Text(
+                  status.name ?? 'Imported model',
+                  style: Theme.of(context).textTheme.titleSmall,
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  [
+                    'LiteRT-LM',
+                    if (size != null) size,
+                    'Stored on this device',
+                  ].join(' · '),
+                ),
+                if (status.name == null)
+                  const Text(
+                    'The original filename was not recorded for this import.',
+                  ),
+              ] else
+                const Text(
+                  'Choose a .litertlm model for offline drafting. GGUF files are not supported by LiteRT-LM. TapDucky keeps a local copy on this device.',
+                ),
               const SizedBox(height: 8),
               Wrap(
                 spacing: 8,

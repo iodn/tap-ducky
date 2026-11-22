@@ -17,7 +17,8 @@ class _LocalDrafts extends LocalDraftsService {
   String? request;
 
   @override
-  Future<String> status() async => modelStatus;
+  Future<LocalModelStatus> status() async =>
+      (state: modelStatus, name: null, sizeBytes: null);
 
   @override
   Future<PayloadDraft> generate(String prompt) async {
@@ -27,6 +28,31 @@ class _LocalDrafts extends LocalDraftsService {
 }
 
 void main() {
+  testWidgets('model settings show the imported filename and size', (
+    tester,
+  ) async {
+    const channel = MethodChannel('org.kaijinlab.tap_ducky/local_drafts');
+    final messenger = tester.binding.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(
+      channel,
+      (_) async => {
+        'state': 'ready',
+        'name': 'gemma-4-E2B-it.litertlm',
+        'sizeBytes': 2588147712,
+      },
+    );
+    addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+    await tester.pumpWidget(
+      const ProviderScope(
+        child: MaterialApp(home: Scaffold(body: LocalDraftSettings())),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('gemma-4-E2B-it.litertlm'), findsOneWidget);
+    expect(find.textContaining('2.41 GiB'), findsOneWidget);
+    expect(find.text('Replace model'), findsOneWidget);
+  });
+
   testWidgets('model setup explains GGUF and shows the picker error', (
     tester,
   ) async {
@@ -35,7 +61,7 @@ void main() {
     const message =
         'GGUF is not supported by LiteRT-LM. Choose a .litertlm model instead.';
     messenger.setMockMethodCallHandler(channel, (call) async {
-      if (call.method == 'status') return 'missing';
+      if (call.method == 'status') return {'state': 'missing'};
       throw PlatformException(code: 'MODEL_FORMAT', message: message);
     });
     addTearDown(() => messenger.setMockMethodCallHandler(channel, null));

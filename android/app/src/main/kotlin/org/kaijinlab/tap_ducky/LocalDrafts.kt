@@ -2,6 +2,7 @@ package org.kaijinlab.tap_ducky
 
 import android.app.Activity
 import android.content.Intent
+import android.content.Context
 import android.os.Build
 import android.provider.OpenableColumns
 import com.google.ai.edge.litertlm.ConversationConfig
@@ -16,6 +17,7 @@ import java.util.concurrent.Executors
 
 internal class LocalDrafts(private val activity: Activity) {
   private val model = File(activity.noBackupFilesDir, "draft-model.litertlm")
+  private val metadata = activity.getSharedPreferences("local_draft_model", Context.MODE_PRIVATE)
   private val worker = Executors.newSingleThreadExecutor()
   private var channel: MethodChannel? = null
   private var pendingPicker: MethodChannel.Result? = null
@@ -27,9 +29,14 @@ internal class LocalDrafts(private val activity: Activity) {
     channel = MethodChannel(messenger, "org.kaijinlab.tap_ducky/local_drafts").apply {
       setMethodCallHandler { call, result ->
         when {
-          call.method == "status" -> result.success(
-            if (!supported) "unsupported" else if (model.isFile) "ready" else "missing",
-          )
+          call.method == "status" -> {
+            val ready = supported && model.isFile
+            result.success(mapOf(
+              "state" to if (!supported) "unsupported" else if (ready) "ready" else "missing",
+              "name" to if (ready) metadata.getString("name", null) else null,
+              "sizeBytes" to if (ready) model.length() else null,
+            ))
+          }
           !supported -> result.error("UNSUPPORTED", "This device cannot run the local model.", null)
           working || pendingPicker != null -> result.error("BUSY", "Wait for the current model operation.", null)
           call.method == "pickModel" -> {
@@ -47,6 +54,7 @@ internal class LocalDrafts(private val activity: Activity) {
           }
           call.method == "removeModel" -> background(result, "Could not remove the model.") {
             check(!model.exists() || model.delete())
+            metadata.edit().remove("name").apply()
             null
           }
           call.method == "generate" -> {
@@ -105,6 +113,7 @@ internal class LocalDrafts(private val activity: Activity) {
           temporary.outputStream().use { target -> source.copyTo(target, 128 * 1024) }
         }
         check(size != null && size > 0 && temporary.renameTo(model))
+        metadata.edit().putString("name", name).apply()
       } finally {
         temporary.delete()
       }

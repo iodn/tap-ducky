@@ -295,7 +295,7 @@ class _PayloadEditorScreenState extends ConsumerState<PayloadEditorScreen> {
               const SizedBox(height: 16),
               SectionHeader(
                 title: 'Script',
-                trailing: !_isBuiltin && ref.watch(localModelStatusProvider).value == 'ready'
+                trailing: !_isBuiltin && ref.watch(localModelStatusProvider).value?.state == 'ready'
                     ? TextButton(onPressed: _showLocalDraft, child: const Text('Draft with AI'))
                     : null,
               ),
