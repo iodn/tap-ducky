@@ -573,22 +573,34 @@ class GadgetManager(
     log.log("test", "Keyboard test sent (${trimmed.length} chars)")
   }
 
-  fun typeString(text: String, delayMs: Int = 0, extraModifiers: Int = 0) {
+  fun typeString(
+    text: String,
+    delayMs: Int = 0,
+    extraModifiers: Int = 0,
+    shouldCancel: (() -> Boolean)? = null,
+  ) {
     val current = statusRef.get()
     if (current.state != "ACTIVE") throw IllegalStateException("Gadget is not active")
     val path = prefs.activeKeyboardDev ?: throw IllegalStateException("Keyboard HID device not available")
     if (delayMs > 0) {
-      typeTextWithDelay(path, text, delayMs, extraModifiers)
+      typeTextWithDelay(path, text, delayMs, extraModifiers, shouldCancel)
     } else {
-      typeText(path, text, extraModifiers)
+      typeText(path, text, extraModifiers, shouldCancel)
     }
     log.log("type", "String sent (len=${text.length}, delay=${delayMs}ms per char)")
   }
 
-  private fun typeTextWithDelay(path: String, text: String, delayMs: Int, extraModifiers: Int) {
+  private fun typeTextWithDelay(
+    path: String,
+    text: String,
+    delayMs: Int,
+    extraModifiers: Int,
+    shouldCancel: (() -> Boolean)?,
+  ) {
     val interUs = scaledInterKeyDelayUs()
     val downUs = scaledDownHoldUs(baseKeyDownHoldUs)
     for (ch in text) {
+      if (shouldCancel?.invoke() == true) return
       val stroke = keyboardMapper.getStrokeForChar(ch)
       if (stroke != null) {
         val reports = ArrayList<ByteArray>(5)
@@ -599,9 +611,16 @@ class GadgetManager(
           reports = reports,
           delaysUs = strokeDelays(reports.size, interUs, downUs)
         )
-        if (delayMs > 0) Thread.sleep(delayMs.toLong())
+        if (delayMs > 0 && !sleepCancellable(delayMs.toLong(), shouldCancel)) return
       } else {
-        handleUnsupportedChar(path, ch, delayMs, withPerCharDelay = true, extraModifiers)
+        handleUnsupportedChar(
+          path,
+          ch,
+          delayMs,
+          withPerCharDelay = true,
+          extraModifiers = extraModifiers,
+          shouldCancel = shouldCancel,
+        )
       }
     }
   }
@@ -962,6 +981,21 @@ class GadgetManager(
     writeKeyboardReportsWithDelays(path, reports = listOf(report), delaysUs = emptyList())
   }
 
+  private fun sleepCancellable(ms: Long, shouldCancel: (() -> Boolean)?): Boolean {
+    if (ms <= 0) return shouldCancel?.invoke() != true
+    if (shouldCancel == null) {
+      Thread.sleep(ms)
+      return true
+    }
+    val end = android.os.SystemClock.elapsedRealtime() + ms
+    while (android.os.SystemClock.elapsedRealtime() < end) {
+      if (shouldCancel()) return false
+      val remaining = end - android.os.SystemClock.elapsedRealtime()
+      Thread.sleep(min(remaining, 50L).coerceAtLeast(1L))
+    }
+    return !shouldCancel()
+  }
+
   private fun waitForActive(graceMs: Long): Boolean {
     val start = System.currentTimeMillis()
     while (System.currentTimeMillis() - start < graceMs) {
@@ -1042,16 +1076,22 @@ class GadgetManager(
     )
   }
 
-  private fun typeText(path: String, text: String, extraModifiers: Int = 0) {
+  private fun typeText(
+    path: String,
+    text: String,
+    extraModifiers: Int = 0,
+    shouldCancel: (() -> Boolean)? = null,
+  ) {
     var idx = 0
     var charsSinceFlush = 0
     while (idx < text.length) {
+      if (shouldCancel?.invoke() == true) return
       val end = min(text.length, idx + maxTypedCharsPerBatch)
       val chunk = text.substring(idx, end)
       typeTextChunk(path, chunk, extraModifiers)
       charsSinceFlush += chunk.length
       if (charsSinceFlush >= flushEveryChars) {
-        Thread.sleep(flushDelayMs)
+        if (!sleepCancellable(flushDelayMs.toLong(), shouldCancel)) return
         charsSinceFlush = 0
       }
       idx = end
@@ -1187,8 +1227,10 @@ class GadgetManager(
     ch: Char,
     delayMs: Int,
     withPerCharDelay: Boolean,
-    extraModifiers: Int = 0
+    extraModifiers: Int = 0,
+    shouldCancel: (() -> Boolean)? = null,
   ) {
+    if (shouldCancel?.invoke() == true) return
     val composedStrokes = ArrayList<KeyStroke>(2)
     if (addComposedUnicodeStrokes(ch, composedStrokes)) {
       val reports = ArrayList<ByteArray>(1 + composedStrokes.size * 4)
@@ -1201,7 +1243,8 @@ class GadgetManager(
         reports = reports,
         delaysUs = strokeDelays(reports.size, scaledInterKeyDelayUs(), scaledDownHoldUs(baseKeyDownHoldUs))
       )
-      if (withPerCharDelay && delayMs > 0) Thread.sleep(delayMs.toLong())
+      if (withPerCharDelay && delayMs > 0 &&
+        !sleepCancellable(delayMs.toLong(), shouldCancel)) return
       return
     }
 
@@ -1215,6 +1258,7 @@ class GadgetManager(
         val ascii = transliterateToAscii(ch)
         val out = if (ascii.isEmpty()) "?" else ascii
         for (c in out) {
+          if (shouldCancel?.invoke() == true) return
           val stroke = keyboardMapper.getStrokeForChar(c)
           if (stroke != null) {
             val reports = ArrayList<ByteArray>(5)
@@ -1225,7 +1269,8 @@ class GadgetManager(
               reports = reports,
               delaysUs = strokeDelays(reports.size, scaledInterKeyDelayUs(), scaledDownHoldUs(baseKeyDownHoldUs))
             )
-            if (withPerCharDelay && delayMs > 0) Thread.sleep(delayMs.toLong())
+            if (withPerCharDelay && delayMs > 0 &&
+              !sleepCancellable(delayMs.toLong(), shouldCancel)) return
           }
         }
       }

@@ -1289,13 +1289,13 @@ class DuckyScriptExecutor(
     when (cmd.type) {
       CommandType.STRING -> {
         val text = cmd.args.getOrNull(0) ?: ""
-        if (text.isNotEmpty()) manager.typeString(text, 0, activeModifierMask())
+        if (text.isNotEmpty()) manager.typeString(text, 0, activeModifierMask(), shouldCancel = shouldCancel)
         setExitCode(0)
       }
 
       CommandType.STRINGLN -> {
         val text = cmd.args.getOrNull(0) ?: ""
-        manager.typeString(text, 0, activeModifierMask())
+        manager.typeString(text, 0, activeModifierMask(), shouldCancel = shouldCancel)
         sendKeyWithInjectedMods("ENTER")
         setExitCode(0)
       }
@@ -1304,7 +1304,7 @@ class DuckyScriptExecutor(
         val delayMs = cmd.args.getOrNull(0)?.toIntOrNull() ?: 0
         val adjustedDelayMs = timing.scaleMs(delayMs)
         val text = cmd.args.getOrNull(1) ?: ""
-        manager.typeString(text, adjustedDelayMs, activeModifierMask())
+        manager.typeString(text, adjustedDelayMs, activeModifierMask(), shouldCancel = shouldCancel)
         setExitCode(0)
       }
 
@@ -1415,37 +1415,37 @@ class DuckyScriptExecutor(
 
       CommandType.RANDOM_LOWERCASE_LETTER -> {
         val count = cmd.args.firstOrNull()?.toIntOrNull() ?: 1
-        manager.typeString(randomFrom("abcdefghijklmnopqrstuvwxyz", count), 0, activeModifierMask())
+        manager.typeString(randomFrom("abcdefghijklmnopqrstuvwxyz", count), 0, activeModifierMask(), shouldCancel = shouldCancel)
         setExitCode(0)
       }
 
       CommandType.RANDOM_UPPERCASE_LETTER -> {
         val count = cmd.args.firstOrNull()?.toIntOrNull() ?: 1
-        manager.typeString(randomFrom("ABCDEFGHIJKLMNOPQRSTUVWXYZ", count), 0, activeModifierMask())
+        manager.typeString(randomFrom("ABCDEFGHIJKLMNOPQRSTUVWXYZ", count), 0, activeModifierMask(), shouldCancel = shouldCancel)
         setExitCode(0)
       }
 
       CommandType.RANDOM_LETTER -> {
         val count = cmd.args.firstOrNull()?.toIntOrNull() ?: 1
-        manager.typeString(randomFrom("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ", count), 0, activeModifierMask())
+        manager.typeString(randomFrom("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ", count), 0, activeModifierMask(), shouldCancel = shouldCancel)
         setExitCode(0)
       }
 
       CommandType.RANDOM_NUMBER -> {
         val count = cmd.args.firstOrNull()?.toIntOrNull() ?: 1
-        manager.typeString(randomFrom("0123456789", count), 0, activeModifierMask())
+        manager.typeString(randomFrom("0123456789", count), 0, activeModifierMask(), shouldCancel = shouldCancel)
         setExitCode(0)
       }
 
       CommandType.RANDOM_SPECIAL -> {
         val count = cmd.args.firstOrNull()?.toIntOrNull() ?: 1
-        manager.typeString(randomFrom("!@#$%^&*()-_=+[]{};:'\",.<>/?\\|`~", count), 0, activeModifierMask())
+        manager.typeString(randomFrom("!@#$%^&*()-_=+[]{};:'\",.<>/?\\|`~", count), 0, activeModifierMask(), shouldCancel = shouldCancel)
         setExitCode(0)
       }
 
       CommandType.RANDOM_CHAR -> {
         val count = cmd.args.firstOrNull()?.toIntOrNull() ?: 1
-        manager.typeString(randomFrom("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*()-_=+[]{};:'\",.<>/?\\|`~", count), 0, activeModifierMask())
+        manager.typeString(randomFrom("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*()-_=+[]{};:'\",.<>/?\\|`~", count), 0, activeModifierMask(), shouldCancel = shouldCancel)
         setExitCode(0)
       }
 
