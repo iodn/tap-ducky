@@ -617,10 +617,10 @@ private class TimingController(
 ) {
   private val maxMs = 5 * 60 * 1000
 
-  fun scaleMs(rawMs: Int): Int {
+  fun scaleMs(rawMs: Int, reportClamp: Boolean = true): Int {
     val scaled = (rawMs * delayMultiplier).toLong()
     val clamped = scaled.coerceIn(0, maxMs.toLong()).toInt()
-    if (scaled != clamped.toLong()) {
+    if (reportClamp && scaled != clamped.toLong()) {
       log.log("ducky", "Delay clamped from ${scaled}ms to ${clamped}ms")
     }
     return clamped
@@ -858,7 +858,7 @@ class DuckyScriptExecutor(
           currentLine = cmd.lineNumber
           if (requiresHost(cmd.type)) {
             if (!manager.isHostConnected()) {
-              val ok = waitForPredicateCancellable(timeoutMs = 10_000L) { manager.isHostConnected() }
+              val ok = waitForPredicateCancellable(10_000L, "Waiting for USB host") { manager.isHostConnected() }
               if (!ok) {
                 throw GadgetManager.HidWriteException("HOST_DISCONNECTED", "Host not connected")
               }
@@ -867,7 +867,7 @@ class DuckyScriptExecutor(
           executeCommand(cmd)
           markStep(cmd)
           if (defaultDelay > 0) {
-            sleepMsCancellable(defaultDelay)
+            sleepMsCancellable(timing.scaleMs(defaultDelay).toLong(), "Default script pause")
           }
         }
       }
@@ -879,21 +879,32 @@ class DuckyScriptExecutor(
     if (shouldCancel()) throw CancelSignal()
   }
 
-  private fun sleepMsCancellable(rawMs: Int) {
-    val totalMs = timing.scaleMs(rawMs).toLong()
+  private fun reportWait(message: String, waitMs: Long) {
+    emitExec(mapOf(
+      "type" to "wait",
+      "executionId" to executionId,
+      "lineNumber" to currentLine,
+      "message" to message,
+      "waitMs" to waitMs,
+    ))
+  }
+
+  private fun sleepMsCancellable(totalMs: Long, label: String) {
     if (totalMs <= 0L) return
-    var remaining = totalMs
-    while (remaining > 0L) {
+    if (totalMs >= 1000L) reportWait(label, totalMs)
+    val deadline = android.os.SystemClock.elapsedRealtime() + totalMs
+    while (true) {
       throwIfCancelled()
-      val chunk = minOf(cancelPollMs, remaining)
-      Thread.sleep(chunk)
-      remaining -= chunk
+      val remaining = deadline - android.os.SystemClock.elapsedRealtime()
+      if (remaining <= 0L) break
+      Thread.sleep(minOf(cancelPollMs, remaining))
     }
     throwIfCancelled()
   }
 
   private fun waitForPredicateCancellable(
     timeoutMs: Long,
+    label: String,
     pollMs: Long = 200L,
     predicate: () -> Boolean,
   ): Boolean {
@@ -901,13 +912,13 @@ class DuckyScriptExecutor(
     val timeout = timeoutMs.coerceAtLeast(0L)
     if (timeout == 0L) return predicate()
 
-    val start = System.currentTimeMillis()
-    while (System.currentTimeMillis() - start < timeout) {
+    reportWait(label, timeout)
+    val deadline = android.os.SystemClock.elapsedRealtime() + timeout
+    while (true) {
       throwIfCancelled()
-      val elapsed = System.currentTimeMillis() - start
-      val remaining = (timeout - elapsed).coerceAtLeast(0L)
-      val sleepChunk = minOf(pollMs.coerceAtLeast(50L), remaining)
-      if (sleepChunk > 0L) Thread.sleep(sleepChunk)
+      val remaining = deadline - android.os.SystemClock.elapsedRealtime()
+      if (remaining <= 0L) break
+      Thread.sleep(minOf(pollMs.coerceAtLeast(50L), remaining))
       if (predicate()) return true
     }
     throwIfCancelled()
@@ -949,13 +960,13 @@ class DuckyScriptExecutor(
         "STRINGLN (${t.length} chars)"
       }
       CommandType.STRING_DELAY -> {
-        val d = cmd.args.getOrNull(0) ?: "0"
+        val d = timing.scaleMs(cmd.args.getOrNull(0)?.toIntOrNull() ?: 0, reportClamp = false)
         val t = cmd.args.getOrNull(1) ?: ""
-        "STRING_DELAY ${d}ms (${t.length} chars)"
+        "STRING_DELAY ${d}ms per char (${t.length} chars)"
       }
-      CommandType.DELAY -> "DELAY ${cmd.args.getOrNull(0) ?: "0"}ms"
+      CommandType.DELAY -> "DELAY ${timing.scaleMs(cmd.args.getOrNull(0)?.toIntOrNull() ?: 0, reportClamp = false)}ms"
       CommandType.DEFAULTDELAY,
-      CommandType.DEFAULT_DELAY -> "DEFAULT_DELAY ${cmd.args.getOrNull(0) ?: "0"}ms"
+      CommandType.DEFAULT_DELAY -> "DEFAULT_DELAY ${timing.scaleMs(defaultDelay, reportClamp = false)}ms"
       CommandType.MODIFIER_COMBO -> "COMBO ${cmd.args.getOrNull(0) ?: ""}".trim()
       CommandType.MOUSE_CLICK -> "MOUSE CLICK ${cmd.args.joinToString(" ")}".trim()
       CommandType.MOUSE_HOLD -> "MOUSE HOLD ${cmd.args.joinToString(" ")}".trim()
@@ -1297,26 +1308,29 @@ class DuckyScriptExecutor(
 
       CommandType.DELAY -> {
         val ms = cmd.args.firstOrNull()?.toIntOrNull() ?: 0
-        sleepMsCancellable(ms)
+        sleepMsCancellable(timing.scaleMs(ms).toLong(), "Script pause")
         setExitCode(0)
       }
 
       CommandType.SLEEP_UNTIL -> {
         val arg = cmd.args.firstOrNull().orEmpty()
         val ms = computeSleepUntilMs(arg)
-        if (ms > 0) sleepMsCancellable(ms)
+        val relative = arg.trim().let { it.length < 10 && it.all(Char::isDigit) }
+        val durationMs = if (relative) timing.scaleMs(ms) else ms
+        sleepMsCancellable(durationMs.toLong(), "Scheduled wait")
         setExitCode(0)
       }
 
       CommandType.WAIT_FOR -> {
         val target = cmd.args.firstOrNull()?.uppercase(Locale.US) ?: ""
         val timeoutMs = cmd.args.getOrNull(1)?.toIntOrNull() ?: 15000
+        val label = "Waiting for $target"
         val ok = when (target) {
-          "HOST_CONNECTED", "HOST" -> waitForPredicateCancellable(timeoutMs.toLong()) { manager.isHostConnected() }
-          "UDC_CONFIGURED", "UDC" -> waitForPredicateCancellable(timeoutMs.toLong()) { manager.isUdcConfigured() }
-          "KEYBOARD_READY", "KBD_READY" -> waitForPredicateCancellable(timeoutMs.toLong()) { manager.isKeyboardWriterReady() }
-          "MOUSE_READY" -> waitForPredicateCancellable(timeoutMs.toLong()) { manager.isMouseWriterReady() }
-          "SESSION_ARMED", "ACTIVE" -> waitForPredicateCancellable(timeoutMs.toLong()) { manager.isActive() }
+          "HOST_CONNECTED", "HOST" -> waitForPredicateCancellable(timeoutMs.toLong(), label) { manager.isHostConnected() }
+          "UDC_CONFIGURED", "UDC" -> waitForPredicateCancellable(timeoutMs.toLong(), label) { manager.isUdcConfigured() }
+          "KEYBOARD_READY", "KBD_READY" -> waitForPredicateCancellable(timeoutMs.toLong(), label) { manager.isKeyboardWriterReady() }
+          "MOUSE_READY" -> waitForPredicateCancellable(timeoutMs.toLong(), label) { manager.isMouseWriterReady() }
+          "SESSION_ARMED", "ACTIVE" -> waitForPredicateCancellable(timeoutMs.toLong(), label) { manager.isActive() }
           "" -> true
           else -> throw IllegalArgumentException("WAIT_FOR unsupported target: $target")
         }

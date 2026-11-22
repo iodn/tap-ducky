@@ -90,6 +90,8 @@ class ExecutionController extends Notifier<ExecutionState> {
   StreamSubscription<Map<String, dynamic>>? _execSub;
   String? _activeExecutionId;
   Timer? _timeoutTimer;
+  final _timeoutClock = Stopwatch();
+  Duration _timeoutBudget = Duration.zero;
   Timer? _panicTimer;
   Timer? _autoPanicTimer;
 
@@ -195,7 +197,7 @@ class ExecutionController extends Notifier<ExecutionState> {
       stopRequested: false,
       panicAvailable: false,
     );
-    final detail = durationMs == null ? message : '$message (${durationMs} ms on device)';
+    final detail = durationMs == null ? message : '$message ($durationMs ms on device)';
     _pushTail(_mkTail(
       executionId: executionId,
       level: level,
@@ -349,8 +351,15 @@ class ExecutionController extends Notifier<ExecutionState> {
     required bool enableLogging,
     required String? payloadId,
     required String? payloadName,
+    bool extendOnly = false,
   }) {
+    if (extendOnly && _timeoutTimer?.isActive == true &&
+        timeout <= _timeoutBudget - _timeoutClock.elapsed) return;
     _timeoutTimer?.cancel();
+    _timeoutBudget = timeout;
+    _timeoutClock
+      ..reset()
+      ..start();
     _timeoutTimer = Timer(timeout, () async {
       if (_activeExecutionId != executionId) return;
       if (!state.isRunning || state.stopRequested) return;
@@ -384,6 +393,36 @@ class ExecutionController extends Notifier<ExecutionState> {
         ));
       }
     });
+  }
+
+  void _noteNativeWait(
+    String executionId,
+    Map<String, dynamic> event,
+    bool enableLogging, {
+    Payload? payload,
+  }) {
+    if (_activeExecutionId != executionId || state.stopRequested) return;
+    final waitMs = event['waitMs'];
+    if (waitMs is! int || waitMs <= 0) return;
+    final label = event['message']?.toString() ?? 'Waiting';
+    final line = event['lineNumber'];
+    state = state.copyWith(status: label);
+    _pushTail(_mkTail(
+      executionId: executionId,
+      level: 'info',
+      message: '${line is int ? 'Line $line: ' : ''}$label (up to $waitMs ms)',
+      success: true,
+      payloadId: payload?.id,
+      payloadName: payload?.name,
+    ));
+    _startTimeoutTimer(
+      executionId: executionId,
+      timeout: Duration(milliseconds: waitMs, seconds: 90),
+      enableLogging: enableLogging,
+      payloadId: payload?.id,
+      payloadName: payload?.name,
+      extendOnly: true,
+    );
   }
 
   void _startPanicGraceTimer(String executionId) {
@@ -503,7 +542,9 @@ class ExecutionController extends Notifier<ExecutionState> {
         return;
       }
 
-      if (type == 'error' || type == 'done') {
+      if (type == 'wait') {
+        _noteNativeWait(executionId, evt, enableLogging);
+      } else if (type == 'error' || type == 'done') {
         await _finishFromNative(executionId, evt, startedAt, enableLogging);
       }
     });
@@ -667,7 +708,9 @@ class ExecutionController extends Notifier<ExecutionState> {
         return;
       }
 
-      if (type == 'error' || type == 'done') {
+      if (type == 'wait') {
+        _noteNativeWait(executionId, evt, enableLogging, payload: payload);
+      } else if (type == 'error' || type == 'done') {
         await _finishFromNative(executionId, evt, startedAt, enableLogging, payload: payload);
       }
     });

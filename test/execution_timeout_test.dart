@@ -122,6 +122,39 @@ void main() {
     expect(completed.tail.last.meta?['durationMs'], '101');
   });
 
+  testWidgets('watchdog allows the wait announced by Android', (tester) async {
+    final events = StreamController<Map<String, dynamic>>.broadcast();
+    addTearDown(events.close);
+    final service = _SilentGadget(events: events);
+    final container = await _createContainer(service);
+    final controller = container.read(executionControllerProvider.notifier);
+
+    await controller.sendRawCommand('WAIT_FOR HOST_CONNECTED 300000');
+    events.add({
+      'type': 'wait',
+      'executionId': service.startedId,
+      'lineNumber': 1,
+      'message': 'Waiting for HOST_CONNECTED',
+      'waitMs': 300000,
+    });
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 100));
+
+    expect(service.cancelledIds, isEmpty);
+    final running = container.read(executionControllerProvider);
+    expect(running.status, 'Waiting for HOST_CONNECTED');
+    expect(running.tail.last.message, contains('Line 1'));
+    await tester.pump(const Duration(seconds: 291));
+    expect(service.cancelledIds, [service.startedId]);
+    events.add({
+      'type': 'done',
+      'executionId': service.startedId,
+      'cancelled': true,
+    });
+    await tester.pump();
+    expect(container.read(executionControllerProvider).isRunning, isFalse);
+  });
+
   testWidgets('timeout keeps execution busy until stop escalates', (tester) async {
     final service = _SilentGadget();
     final container = await _createContainer(service);
