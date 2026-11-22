@@ -354,6 +354,7 @@ class GadgetManager(
 
   fun activate(profileMap: Map<*, *>) {
     val profile = parseProfile(profileMap)
+    if (statusRef.get().state in listOf("ACTIVE", "ACTIVATING")) return
     if (!checkRoot()) {
       setError("Root not available (su denied).")
       return
@@ -364,45 +365,64 @@ class GadgetManager(
     }
 
     setState("ACTIVATING", profile.id, "Creating gadget…")
+    val pendingDir = prefs.pendingGadgetDir ?: prefs.activeGadgetDir
+    if (pendingDir != null && !recoverUsbSession(pendingDir, "before_activation")) {
+      setError("Could not recover the previous USB session. Check the USB logs and retry.")
+      return
+    }
+    var gadgetDir = "gadgetfs_${profile.id.take(12).lowercase(Locale.US)}"
     val snap = captureUsbSnapshot()
-    prefs.setUsbSnapshot(
+    val saved = prefs.setUsbSnapshot(
       sysUsbConfig = snap.sysUsbConfig,
       sysUsbState = snap.sysUsbState,
       sysUsbConfigfs = snap.sysUsbConfigfs,
       persistSysUsbConfig = snap.persistSysUsbConfig,
       boundGadgets = snap.boundGadgetsRaw,
+      gadgetDir = gadgetDir,
     )
-
-    val gadgetDir = "gadgetfs_${profile.id.take(12).lowercase(Locale.US)}"
+    if (!saved) {
+      setError("Could not save the previous USB mode. Activation was skipped.")
+      return
+    }
     val script = Configfs.buildCreateAndBindScript(profile, gadgetDir)
-    val r = root.exec(script, timeoutSec = 30)
+    var r = root.exec(script, timeoutSec = 30)
+    val stock = snap.boundGadgetsRaw?.lineSequence()?.singleOrNull()?.split(':', limit = 2)
+    val stockDir = stock?.getOrNull(0)?.takeIf { it.matches(Regex("[A-Za-z0-9_-]+")) }
+    val stockUdc = stock?.getOrNull(1)?.takeIf {
+      it.isNotBlank() && (profile.preferredUdc.isNullOrBlank() || profile.preferredUdc == it)
+    }
+    if (r.exitCode == Configfs.GADGET_CREATION_FAILED && r.stderr.contains("Out of memory", ignoreCase = true) &&
+      stockDir != null && stockUdc != null && prefs.setSharedGadgetDir(stockDir)) {
+      gadgetDir = stockDir
+      log.log("usb", "New gadget allocation failed; adding HID to the existing stock configuration")
+      r = root.exec(Configfs.buildAttachToStockScript(profile, stockDir, stockUdc), timeoutSec = 30)
+    }
     if (!r.ok) {
-      log.logError("gadget", "Activation failed; attempting USB restore")
-      restoreUsbSnapshotBestEffort(reason = "activation_failed")
-      prefs.clearUsbSnapshot()
-      setError("Activation failed (exit=${r.exitCode}). ${r.stderr.trim().ifEmpty { r.stdout.trim() }}")
+      log.logError("gadget", "Activation failed; cleaning up the incomplete gadget")
+      val replacedBoundGadget = snap.boundGadgetsRaw.orEmpty().lineSequence()
+        .any { it.substringBefore(':') == gadgetDir }
+      val preBindFailure = r.exitCode in listOf(Configfs.HID_ALLOCATION_FAILED, Configfs.GADGET_CREATION_FAILED)
+      val recovered = recoverUsbSession(gadgetDir, "activation_failed", restore = !preBindFailure || replacedBoundGadget)
+      val detail = r.stderr.trim().ifEmpty { r.stdout.trim() }
+      setError("Activation failed (exit=${r.exitCode}). $detail${recoveryHint(recovered)}")
       return
     }
 
     val descriptorCheckError = validateActiveHidReportDescriptors(profile, gadgetDir)
     if (descriptorCheckError != null) {
       log.logError("gadget", "Activation validation failed: $descriptorCheckError")
-      root.exec(Configfs.buildUnbindAndCleanupScript(gadgetDir), timeoutSec = 12)
-      restoreUsbSnapshotBestEffort(reason = "activation_validation_failed")
-      prefs.clearUsbSnapshot()
-      setError("Activation failed: $descriptorCheckError")
+      val recovered = recoverUsbSession(gadgetDir, "activation_validation_failed")
+      setError("Activation failed: $descriptorCheckError${recoveryHint(recovered)}")
       return
     }
 
-    val kbdDev = when (profile.roleType.lowercase(Locale.US)) {
-      "mouse" -> null
-      "keyboard" -> "/dev/hidg0"
-      else -> "/dev/hidg0"
-    }
-    val mouseDev = when (profile.roleType.lowercase(Locale.US)) {
-      "mouse" -> "/dev/hidg0"
+    val firstHid = resolveHidDevice(r.stdout, "hid.usb0", legacyMinor = 0)
+    val role = profile.roleType.lowercase(Locale.US)
+    val kbdDev = firstHid.takeUnless { role == "mouse" }
+    val mouseDev = when (role) {
+      "mouse" -> firstHid
       "keyboard" -> null
-      else -> "/dev/hidg1"
+      else -> resolveHidDevice(r.stdout, "hid.usb1", legacyMinor = 1)
     }
 
     prefs.setActive(profile.id, profile.roleType, gadgetDir, kbdDev, mouseDev)
@@ -413,6 +433,13 @@ class GadgetManager(
     setState("ACTIVE", profile.id, null)
     log.log("gadget", "Active profile: ${profile.id} (${profile.roleType})")
     startUdcPolling()
+  }
+
+  private fun resolveHidDevice(stdout: String, function: String, legacyMinor: Int): String {
+    val minor = stdout.lineSequence()
+      .firstOrNull { it.startsWith("$function=") }
+      ?.substringAfter(':')?.trim()?.toIntOrNull()?.takeIf { it >= 0 }
+    return "/dev/hidg${minor ?: legacyMinor}"
   }
 
   fun retryOpenHidWriters() {
@@ -429,55 +456,48 @@ class GadgetManager(
 
   fun deactivate() {
     val current = statusRef.get()
-    if (current.state == "IDLE") return
     if (current.state == "ACTIVATING") return
-
-    setState("ACTIVATING", current.activeProfileId, "Deactivating…")
-    stopUdcPolling()
-    try {
-      releaseAllKeysBestEffort()
-    } catch (_: Throwable) {
-    }
-    closeHidWritersBestEffort()
-    val gadgetDir = prefs.activeGadgetDir
-    if (!gadgetDir.isNullOrBlank()) {
-      root.exec(Configfs.buildUnbindAndCleanupScript(gadgetDir), timeoutSec = 20)
-    } else {
-      root.exec(Configfs.buildPanicStopScript(), timeoutSec = 20)
-    }
-    stopForeground()
-    restoreUsbSnapshotBestEffort(reason = "deactivate")
-    prefs.clearActive()
-    prefs.clearUsbSnapshot()
-    hostConfigurationRequestCount = 0
-    lastHostLikelyConnected = false
-    setState("IDLE", null, null)
-    log.log("gadget", "Deactivated")
+    stopUsbSession("Deactivating…", "deactivate")
   }
 
   fun panicStop() {
-    setState("ACTIVATING", null, "Panic stop…")
+    stopUsbSession("Panic stop…", "panic_stop")
+  }
+
+  private fun stopUsbSession(message: String, reason: String) {
+    val gadgetDir = prefs.activeGadgetDir ?: prefs.pendingGadgetDir ?: return
+    setState("ACTIVATING", null, message)
     stopUdcPolling()
     try {
       releaseAllKeysBestEffort()
     } catch (_: Throwable) {
     }
     closeHidWritersBestEffort()
-    val gadgetDir = prefs.activeGadgetDir
-    if (!gadgetDir.isNullOrBlank()) {
-      root.exec(Configfs.buildUnbindAndCleanupScript(gadgetDir), timeoutSec = 20)
-    } else {
-      root.exec(Configfs.buildPanicStopScript(), timeoutSec = 20)
-    }
     stopForeground()
-    restoreUsbSnapshotBestEffort(reason = "panic_stop")
-    prefs.clearActive()
-    prefs.clearUsbSnapshot()
     hostConfigurationRequestCount = 0
     lastHostLikelyConnected = false
-    setState("IDLE", null, null)
-    log.log("gadget", "Panic stop complete")
+    if (recoverUsbSession(gadgetDir, reason)) {
+      setState("IDLE", null, null)
+    } else {
+      setError("USB recovery incomplete. The previous mode is saved. Retry Panic Stop or Arm Session.")
+    }
   }
+
+  private fun recoverUsbSession(gadgetDir: String, reason: String, restore: Boolean = true): Boolean {
+    val shared = prefs.pendingSharedGadget && gadgetDir == prefs.pendingGadgetDir
+    val cleanup = root.exec(Configfs.buildUnbindAndCleanupScript(gadgetDir, shared), timeoutSec = 12)
+    if (!cleanup.ok) {
+      log.logError("gadget", "Gadget cleanup failed ($reason): ${cleanup.stderr.trim()}")
+      return false
+    }
+    if (restore && !restoreUsbSnapshotBestEffort(reason)) return false
+    prefs.clearActive()
+    prefs.clearUsbSnapshot()
+    return true
+  }
+
+  private fun recoveryHint(recovered: Boolean): String =
+    if (recovered) "" else " USB recovery is incomplete. Retry Panic Stop or Arm Session."
 
   fun testMouseMove(dx: Int, dy: Int, wheel: Int, buttons: Int) {
     val current = statusRef.get()
@@ -1250,11 +1270,18 @@ class GadgetManager(
   }
 
   private fun isGadgetDirBound(gadgetDir: String): Boolean {
-    val safe = gadgetDir.replace("\"", "").replace("'", "")
+    val shared = prefs.pendingSharedGadget && gadgetDir == prefs.pendingGadgetDir
     val script = """
       CFGBASE=/config/usb_gadget
       [ -d "${'$'}CFGBASE" ] || CFGBASE=/sys/kernel/config/usb_gadget
-      test -f "${'$'}CFGBASE/$safe/UDC" && test -s "${'$'}CFGBASE/$safe/UDC"
+      G="${'$'}CFGBASE/"${shQuote(gadgetDir)}
+      [ -n "${'$'}(cat "${'$'}G/UDC" 2>/dev/null)" ] || exit 1
+      if [ "$shared" = "true" ]; then
+        for link in "${'$'}G"/configs/*/hid.tapducky0; do
+          [ -L "${'$'}link" ] && exit 0
+        done
+        exit 1
+      fi
     """.trimIndent()
     val r = root.exec(script, timeoutSec = 5)
     return r.ok
@@ -1364,23 +1391,25 @@ class GadgetManager(
     """.trimIndent()
   }
 
-  private fun restoreUsbSnapshotBestEffort(reason: String) {
+  private fun restoreUsbSnapshotBestEffort(reason: String): Boolean {
     val prevConfig = prefs.prevSysUsbConfig?.trim()?.takeIf { it.isNotEmpty() }
     val prevConfigfs = prefs.prevSysUsbConfigfs?.trim()?.takeIf { it.isNotEmpty() }
     val prevPersist = prefs.prevPersistSysUsbConfig?.trim()?.takeIf { it.isNotEmpty() }
     val prevBound = prefs.prevBoundGadgets?.trim()?.takeIf { it.isNotEmpty() }
     if (prevConfig == null && prevConfigfs == null && prevPersist == null && prevBound == null) {
       log.log("usb", "No snapshot to restore ($reason)")
-      return
+      return true
     }
     log.log("usb", "Restoring USB snapshot ($reason) prevConfig=${prevConfig ?: "?"}")
     val script = buildRestoreUsbScript(prevConfig, prevConfigfs, prevPersist, prevBound)
     val r = root.exec(script, timeoutSec = 20)
     if (!r.ok) {
-      log.logError("usb", "USB restore script returned exit=${r.exitCode}")
+      val detail = r.stderr.trim().ifEmpty { "exit=${r.exitCode}" }
+      log.logError("usb", "USB restore incomplete: $detail")
     } else {
       log.log("usb", "USB restore script completed")
     }
+    return r.ok
   }
 
   private fun buildRestoreUsbScript(
@@ -1404,17 +1433,23 @@ class GadgetManager(
         if [ ! -d "${'$'}CFGBASE" ]; then
           CFGBASE="/sys/kernel/config/usb_gadget"
         fi
-        if [ -d "${'$'}CFGBASE" ]; then
-          while IFS= read -r line; do
-            g=${'$'}(echo "${'$'}line" | cut -d: -f1)
-            u=${'$'}(echo "${'$'}line" | cut -d: -f2-)
-            if [ -n "${'$'}g" ] && [ -n "${'$'}u" ] && [ -f "${'$'}CFGBASE/${'$'}g/UDC" ]; then
-              (echo "${'$'}u" > "${'$'}CFGBASE/${'$'}g/UDC") 2>/dev/null || true
-            fi
-          done <<'EOF_BOUND'
+        while IFS=: read -r g u; do
+          udc_file="${'$'}CFGBASE/${'$'}g/UDC"
+          i=0
+          if [ -f "${'$'}udc_file" ]; then
+            while [ "${'$'}(cat "${'$'}udc_file" 2>/dev/null)" != "${'$'}u" ] && [ "${'$'}i" -lt 30 ]; do
+              (printf '%s\n' "${'$'}u" > "${'$'}udc_file") 2>/dev/null || true
+              i=${'$'}((i+1))
+              sleep 0.1
+            done
+          fi
+          if [ "${'$'}(cat "${'$'}udc_file" 2>/dev/null)" != "${'$'}u" ]; then
+            echo "Could not restore USB binding ${'$'}g to ${'$'}u" >&2
+            restore_failed=1
+          fi
+        done <<'EOF_BOUND'
         $entries
         EOF_BOUND
-        fi
       """.trimIndent()
     } else {
       "true"
@@ -1425,34 +1460,36 @@ class GadgetManager(
       PREV_CFG=${shQuote(cfg)}
       PREV_CFGFS=${shQuote(cfgfs)}
       PREV_PERSIST=${shQuote(pcfg)}
+      restore_failed=0
 
-      if [ -n "${'$'}PREV_CFGFS" ]; then
-        setprop sys.usb.configfs "${'$'}PREV_CFGFS" 2>/dev/null || true
-      fi
-
-      if [ -n "${'$'}PREV_PERSIST" ]; then
-        setprop persist.sys.usb.config "${'$'}PREV_PERSIST" 2>/dev/null || true
-      fi
-
-      if [ -n "${'$'}PREV_CFG" ]; then
-        setprop sys.usb.config none 2>/dev/null || true
-        sleep 0.1
-        setprop sys.usb.config "${'$'}PREV_CFG" 2>/dev/null || true
-
-        i=0
-        while [ ${'$'}i -lt 80 ]; do
-          cur=${'$'}(getprop sys.usb.state 2>/dev/null | tr -d '\r')
-          if [ "${'$'}cur" = "${'$'}PREV_CFG" ]; then
-            break
+      restore_prop() {
+        if [ -n "${'$'}2" ] && [ "${'$'}(getprop "${'$'}1")" != "${'$'}2" ]; then
+          if ! setprop "${'$'}1" "${'$'}2" || [ "${'$'}(getprop "${'$'}1")" != "${'$'}2" ]; then
+            echo "Could not restore ${'$'}1 to ${'$'}2" >&2
+            restore_failed=1
           fi
-          sleep 0.1
-          i=${'$'}((i+1))
-        done
-      fi
+        fi
+      }
+
+      restore_prop sys.usb.configfs "${'$'}PREV_CFGFS"
+      restore_prop persist.sys.usb.config "${'$'}PREV_PERSIST"
+      restore_prop sys.usb.config "${'$'}PREV_CFG"
 
       $rebindBlock
 
-      exit 0
+      if [ -n "${'$'}PREV_CFG" ]; then
+        i=0
+        while [ "${'$'}(getprop sys.usb.state)" != "${'$'}PREV_CFG" ] && [ "${'$'}i" -lt 80 ]; do
+          sleep 0.1
+          i=${'$'}((i+1))
+        done
+        if [ "${'$'}(getprop sys.usb.state)" != "${'$'}PREV_CFG" ]; then
+          echo "USB state did not return to ${'$'}PREV_CFG" >&2
+          restore_failed=1
+        fi
+      fi
+
+      exit "${'$'}restore_failed"
     """.trimIndent()
   }
 
@@ -1577,7 +1614,8 @@ class GadgetManager(
   private fun collectHidReportDiagnostics(gadgetDirRaw: String?): Map<String, Any?> {
     val gadgetDir = gadgetDirRaw?.replace("\"", "")?.replace("'", "") ?: return mapOf("status" to "no_active_gadget")
     val quotedGadgetDir = shQuote(gadgetDir)
-    val script = buildHidReportDiagnosticsScript(quotedGadgetDir)
+    val shared = prefs.pendingSharedGadget && gadgetDir == prefs.pendingGadgetDir
+    val script = buildHidReportDiagnosticsScript(quotedGadgetDir, shared)
     val r = root.exec(script, timeoutSec = 4)
     if (!r.ok) {
       return mapOf(
@@ -1610,7 +1648,7 @@ class GadgetManager(
     return result
   }
 
-  private fun buildHidReportDiagnosticsScript(quotedGadgetDir: String): String {
+  private fun buildHidReportDiagnosticsScript(quotedGadgetDir: String, shared: Boolean): String {
     return """
       GADGET_DIR=$quotedGadgetDir
       FOUND=0
@@ -1621,24 +1659,20 @@ class GadgetManager(
         fi
         FOUND=1
         for FN in hid.usb0 hid.usb1; do
-          RD="${'$'}G/functions/${'$'}FN/report_desc"
+          INSTANCE="${'$'}FN"
+          if [ "$shared" = "true" ]; then
+            INSTANCE="hid.tapducky${'$'}{FN#hid.usb}"
+          fi
+          RD="${'$'}G/functions/${'$'}INSTANCE/report_desc"
           [ -f "${'$'}RD" ] || continue
-          LEN=$(wc -c < "${'$'}RD" 2>/dev/null | tr -d '\\n\\r' | tr -dc '0-9' || echo 0)
+          LEN=0
           HEX=
           if command -v xxd >/dev/null 2>&1; then
-            HEX=$(xxd -p "${'$'}RD" 2>/dev/null | tr -d '\\n\\r' | head -c 128 | tr 'A-F' 'a-f')
-            if [ -n "${'$'}HEX" ]; then
-              LEN=$(( ${'$'}{#HEX} / 2 ))
-            fi
+            HEX=$(xxd -p "${'$'}RD" 2>/dev/null | tr -cd '0-9a-fA-F' | tr 'A-F' 'a-f')
           elif command -v od >/dev/null 2>&1; then
-            HEX=$(od -An -tx1 "${'$'}RD" 2>/dev/null | tr -d ' \\n\\r' | head -c 128 | tr 'A-F' 'a-f')
-            if [ -n "${'$'}HEX" ]; then
-              LEN=$(( ${'$'}{#HEX} / 2 ))
-            fi
-          else
-            HEX="unavailable"
-            LEN=0
+            HEX=$(od -An -v -tx1 "${'$'}RD" 2>/dev/null | tr -cd '0-9a-fA-F' | tr 'A-F' 'a-f')
           fi
+          LEN=$(( ${'$'}{#HEX} / 2 ))
           echo "${'$'}CFGBASE:${'$'}FN|LEN=${'$'}LEN|HEAD=${'$'}HEX"
         done
       done

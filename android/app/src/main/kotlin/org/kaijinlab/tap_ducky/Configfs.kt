@@ -4,6 +4,8 @@ import android.util.Base64
 import java.util.Locale
 
 object Configfs {
+  const val HID_ALLOCATION_FAILED = 23
+  const val GADGET_CREATION_FAILED = 24
   data class ParsedProfile(
     val id: String,
     val name: String,
@@ -20,11 +22,16 @@ object Configfs {
   fun buildCreateAndBindScript(p: ParsedProfile, gadgetDir: String): String {
     val baseSelect = """
       set -e
-      CFGBASE="/config/usb_gadget"
-      if [ ! -d "${'$'}CFGBASE" ]; then
-        CFGBASE="/sys/kernel/config/usb_gadget"
-      fi
-      if [ ! -d "${'$'}CFGBASE" ]; then
+      CFGBASE_CANDIDATES="/config/usb_gadget /sys/kernel/config/usb_gadget"
+      CFGBASE=""
+
+      for b in ${'$'}CFGBASE_CANDIDATES; do
+        [ -d "${'$'}b" ] || continue
+        CFGBASE="${'$'}b"
+        break
+      done
+
+      if [ -z "${'$'}CFGBASE" ]; then
         echo "configfs usb_gadget not found" >&2
         exit 2
       fi
@@ -62,11 +69,10 @@ object Configfs {
       fi
 
       SYS_UDC=${'$'}(getprop sys.usb.controller 2>/dev/null | tr -d '\r')
-      append_udc_candidate "${'$'}SYS_UDC"
-
-      for c in ${'$'}(ls /sys/class/udc 2>/dev/null || true); do
-        c=${'$'}(echo "${'$'}c" | tr -d '\r')
-        append_udc_candidate "${'$'}c"
+      for c in "${'$'}SYS_UDC" /sys/class/udc/*; do
+        c=${'$'}{c##*/}
+        case "${'$'}c" in dummy_udc*) continue ;; esac
+        [ -d "/sys/class/udc/${'$'}c" ] && append_udc_candidate "${'$'}c"
       done
 
       if [ -z "${'$'}UDC_CANDIDATES" ]; then
@@ -79,7 +85,7 @@ object Configfs {
         echo "Gadget already exists: ${'$'}G" >&2
         (echo "" > "${'$'}G/UDC") 2>/dev/null || true
       else
-        mkdir -p "${'$'}G"
+        mkdir "${'$'}G" || exit $GADGET_CREATION_FAILED
       fi
 
       cd "${'$'}G"
@@ -88,8 +94,12 @@ object Configfs {
       # Otherwise switching Mouse <-> Keyboard <-> Composite can leave stale hid.usb*
       # directories and config symlinks behind.
       mkdir -p "configs/$cfg" 2>/dev/null || true
-      rm -f "configs/$cfg"/* 2>/dev/null || true
-      rm -rf functions/* 2>/dev/null || true
+      for link in configs/$cfg/*; do
+        if [ -L "${'$'}link" ]; then rm "${'$'}link"; fi
+      done
+      for fn in functions/*; do
+        if [ -d "${'$'}fn" ]; then rmdir "${'$'}fn"; fi
+      done
 
       echo $idVendor > idVendor
       echo $idProduct > idProduct
@@ -113,16 +123,30 @@ object Configfs {
     }
 
     val link = """
-      # Link functions into config
-      for f in ${'$'}(ls -1 functions 2>/dev/null); do
-        if [ ! -e "configs/$cfg/${'$'}f" ]; then
-          ln -s "functions/${'$'}f" "configs/$cfg/${'$'}f"
+      # Link functions into config using absolute paths to avoid shell context issues.
+      for fn in ${expectedFunctionNames(p.roleType).joinToString(" ")}; do
+        fn_src="${'$'}G/functions/${'$'}fn"
+        fn_dst="${'$'}G/configs/$cfg/${'$'}fn"
+        if [ ! -d "${'$'}fn_src" ] && [ ! -f "${'$'}fn_src" ]; then
+          echo "Missing function directory/file: ${'$'}fn_src" >&2
+          exit 21
         fi
+
+        rm -f "${'$'}fn_dst"
+        ln -s "${'$'}fn_src" "${'$'}fn_dst"
       done
     """.trimIndent()
 
     val bind = """
       BOUND_UDC=""
+      for fn in ${expectedFunctionNames(p.roleType).joinToString(" ")}; do
+        fn_link="${'$'}G/configs/$cfg/${'$'}fn"
+        if [ ! -L "${'$'}fn_link" ]; then
+          echo "Missing config link for ${'$'}fn_link" >&2
+          exit 22
+        fi
+      done
+
       for UDC_NAME in ${'$'}UDC_CANDIDATES; do
         [ -d "/sys/class/udc/${'$'}UDC_NAME" ] || continue
 
@@ -153,41 +177,121 @@ object Configfs {
       fi
 
       echo "Bound to UDC: ${'$'}BOUND_UDC"
+      for fn in ${expectedFunctionNames(p.roleType).joinToString(" ")}; do
+        if [ -r "functions/${'$'}fn/dev" ]; then
+          printf '%s=%s\n' "${'$'}fn" "${'$'}(cat "functions/${'$'}fn/dev")"
+        fi
+      done
     """.trimIndent()
 
     return listOf(create, functions, link, bind).joinToString("\n\n") + "\n"
   }
 
-  fun buildUnbindAndCleanupScript(gadgetDir: String): String {
+  fun buildUnbindAndCleanupScript(gadgetDir: String, shared: Boolean = false): String {
+    if (shared) return buildStockCleanupScript(gadgetDir)
     val gadget = sanitizeGadgetName(gadgetDir)
     return """
       set -e
-      CFGBASE="/config/usb_gadget"
-      if [ ! -d "${'$'}CFGBASE" ]; then
-        CFGBASE="/sys/kernel/config/usb_gadget"
-      fi
-      G="${'$'}CFGBASE/$gadget"
-      if [ ! -d "${'$'}G" ]; then
+      G=""
+      for b in /config/usb_gadget /sys/kernel/config/usb_gadget; do
+        if [ -d "${'$'}b/$gadget" ]; then
+          G="${'$'}b/$gadget"
+          break
+        fi
+      done
+      if [ -z "${'$'}G" ]; then
         exit 0
       fi
       (echo "" > "${'$'}G/UDC") 2>/dev/null || true
-      rm -f "${'$'}G/configs/c.1"/* 2>/dev/null || true
-      rm -rf "${'$'}G" 2>/dev/null || true
+      for link in "${'$'}G/configs/c.1"/*; do
+        if [ -L "${'$'}link" ]; then rm "${'$'}link"; fi
+      done
+      for fn in "${'$'}G/functions"/*; do
+        if [ -d "${'$'}fn" ]; then rmdir "${'$'}fn"; fi
+      done
+      for dir in configs/c.1/strings/0x409 configs/c.1 strings/0x409; do
+        if [ -d "${'$'}G/${'$'}dir" ]; then rmdir "${'$'}G/${'$'}dir"; fi
+      done
+      rmdir "${'$'}G"
     """.trimIndent() + "\n"
   }
 
-  fun buildPanicStopScript(): String {
+  fun buildAttachToStockScript(profile: ParsedProfile, gadgetDir: String, udc: String): String {
+    val composite = profile.roleType.lowercase(Locale.US) !in listOf("keyboard", "mouse")
+    val names = if (composite) {
+      "hid.tapducky0 hid.tapducky1"
+    } else {
+      "hid.tapducky0"
+    }
+    val functions = if (profile.roleType.equals("mouse", ignoreCase = true)) {
+      buildMouseFunctionScript("hid.tapducky0")
+    } else {
+      listOfNotNull(
+        buildKeyboardFunctionScript("hid.tapducky0"),
+        if (composite) buildMouseFunctionScript("hid.tapducky1") else null,
+      ).joinToString("\n")
+    }
     return """
       set -e
-      CFGBASE="/config/usb_gadget"
-      if [ ! -d "${'$'}CFGBASE" ]; then
-        CFGBASE="/sys/kernel/config/usb_gadget"
+      ${stockGadgetLocation(gadgetDir)}
+      UDC_NAME=${shEscape(udc)}
+      [ "${'$'}(cat UDC)" = "${'$'}UDC_NAME" ] || exit 25
+      $requireDetachedStockHost
+      set -- configs/*
+      if [ "${'$'}#" -ne 1 ] || [ ! -d "${'$'}1" ]; then
+        echo "Stock USB gadget must have exactly one configuration" >&2
+        exit 25
       fi
-      if [ -d "${'$'}CFGBASE" ]; then
-        find "${'$'}CFGBASE" -maxdepth 2 -name UDC -type f -exec sh -c 'echo "" > "${'$'}1" 2>/dev/null || true' _ {} \;
+      CFG="${'$'}1"
+      if [ ! -d functions/ffs.adb ]; then
+        echo "Could not identify an Android stock USB gadget to extend" >&2
+        exit 25
       fi
+      $functions
+      printf '\n' > UDC
+      for fn in $names; do
+        ln -s "${'$'}G/functions/${'$'}fn" "${'$'}CFG/${'$'}fn"
+      done
+      printf '%s\n' "${'$'}UDC_NAME" > UDC
+      [ "${'$'}(cat UDC)" = "${'$'}UDC_NAME" ] || exit 25
+      for fn in $names; do
+        dev=${'$'}(cat "functions/${'$'}fn/dev")
+        printf 'hid.usb%s=%s\n' "${'$'}{fn#hid.tapducky}" "${'$'}dev"
+      done
     """.trimIndent() + "\n"
   }
+
+  private fun stockGadgetLocation(gadgetDir: String): String = """
+    NAME=${shEscape(sanitizeGadgetName(gadgetDir))}
+    G="/config/usb_gadget/${'$'}NAME"
+    [ -d "${'$'}G" ] || G="/sys/kernel/config/usb_gadget/${'$'}NAME"
+    cd "${'$'}G"
+  """.trimIndent()
+
+  private val requireDetachedStockHost = """
+    HOST_STATE=${'$'}(cat "/sys/class/udc/${'$'}UDC_NAME/state" 2>/dev/null || true)
+    if [ "${'$'}HOST_STATE" != "not attached" ]; then
+      echo "Unplug the USB data cable before switching the Android USB configuration, then retry." >&2
+      exit 25
+    fi
+  """.trimIndent()
+
+  private fun buildStockCleanupScript(gadgetDir: String): String = """
+    set -e
+    ${stockGadgetLocation(gadgetDir)}
+    for link in configs/*/hid.tapducky0 configs/*/hid.tapducky1; do
+      [ -L "${'$'}link" ] || continue
+      UDC_NAME=${'$'}(cat UDC)
+      if [ -n "${'$'}UDC_NAME" ]; then
+        $requireDetachedStockHost
+        printf '\n' > UDC
+      fi
+      rm "${'$'}link"
+    done
+    for fn in functions/hid.tapducky0 functions/hid.tapducky1; do
+      if [ -d "${'$'}fn" ]; then rmdir "${'$'}fn"; fi
+    done
+  """.trimIndent() + "\n"
 
   private fun buildMouseFunctionScript(fn: String): String {
     return buildHidFunctionScript(
@@ -224,7 +328,10 @@ object Configfs {
     val expectedHex = bytesToHex(descriptor)
     val expectedHexLen = expectedHex.length
     return """
-      mkdir -p functions/$fn
+      if ! mkdir functions/$fn; then
+        echo "Cannot allocate USB HID function $fn. If the error is 'No such device', end any other USB HID gadget session and retry. The kernel may have no free HID slots or may lack HID gadget support." >&2
+        exit $HID_ALLOCATION_FAILED
+      fi
       echo $protocol > functions/$fn/protocol
       echo $subclass > functions/$fn/subclass
       echo $reportLength > functions/$fn/report_length
@@ -254,7 +361,7 @@ object Configfs {
         if [ -z "${'$'}CURRENT_HEX" ]; then
           return 1
         fi
-        CURRENT_LEN=$(echo "${'$'}CURRENT_HEX" | wc -c | tr -d ' \n\r')
+        CURRENT_LEN=${'$'}{#CURRENT_HEX}
         [ "${'$'}CURRENT_LEN" -eq "${'$'}EXPECTED_HEX_LEN" ] || return 1
         [ "${'$'}CURRENT_HEX" = "${'$'}EXPECTED_HEX" ] || return 1
         return 0
@@ -306,7 +413,7 @@ object Configfs {
         fi
       fi
       if [ "${'$'}wrote_desc" -eq 0 ]; then
-        echo "Failed to write HID report descriptor for ${fn} and no supported descriptor writer was available" >&2
+        echo "Could not write and verify HID report descriptor for $fn (hex_len=${'$'}CURRENT_LEN, expected_len=${'$'}EXPECTED_HEX_LEN)" >&2
         exit 11
       fi
 
@@ -322,6 +429,14 @@ object Configfs {
       buildKeyboardFunctionScript("hid.usb0"),
       buildMouseFunctionScript("hid.usb1")
     ).joinToString("\n\n")
+  }
+
+  private fun expectedFunctionNames(roleType: String): List<String> {
+    return when (roleType.lowercase(Locale.US)) {
+      "mouse" -> listOf("hid.usb0")
+      "keyboard" -> listOf("hid.usb0")
+      else -> listOf("hid.usb0", "hid.usb1")
+    }
   }
 
   private fun bytesToPrintfB(bytes: ByteArray): String {

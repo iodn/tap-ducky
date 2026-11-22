@@ -68,6 +68,17 @@ class Prefs(context: Context) {
       sp.edit().putString(KEY_PREV_BOUND_GADGETS, value).apply()
     }
 
+  val pendingGadgetDir: String?
+    get() = sp.getString(KEY_PENDING_GADGET_DIR, null)
+
+  val pendingSharedGadget: Boolean
+    get() = sp.getBoolean(KEY_PENDING_SHARED_GADGET, false)
+
+  fun setSharedGadgetDir(gadgetDir: String): Boolean = sp.edit()
+    .putString(KEY_PENDING_GADGET_DIR, gadgetDir)
+    .putBoolean(KEY_PENDING_SHARED_GADGET, true)
+    .commit()
+
   var typingSpeedFactor: Float
     get() = sp.getFloat(KEY_TYPING_SPEED_FACTOR, 1.0f)
     set(value) {
@@ -146,15 +157,18 @@ class Prefs(context: Context) {
     sysUsbState: String?,
     sysUsbConfigfs: String?,
     persistSysUsbConfig: String?,
-    boundGadgets: String?
-  ) {
-    sp.edit()
+    boundGadgets: String?,
+    gadgetDir: String
+  ): Boolean {
+    return sp.edit()
       .putString(KEY_PREV_SYS_USB_CONFIG, sysUsbConfig)
       .putString(KEY_PREV_SYS_USB_STATE, sysUsbState)
       .putString(KEY_PREV_SYS_USB_CONFIGFS, sysUsbConfigfs)
       .putString(KEY_PREV_PERSIST_SYS_USB_CONFIG, persistSysUsbConfig)
       .putString(KEY_PREV_BOUND_GADGETS, boundGadgets)
-      .apply()
+      .putString(KEY_PENDING_GADGET_DIR, gadgetDir)
+      .remove(KEY_PENDING_SHARED_GADGET)
+      .commit()
   }
 
   fun clearUsbSnapshot() {
@@ -164,6 +178,8 @@ class Prefs(context: Context) {
       .remove(KEY_PREV_SYS_USB_CONFIGFS)
       .remove(KEY_PREV_PERSIST_SYS_USB_CONFIG)
       .remove(KEY_PREV_BOUND_GADGETS)
+      .remove(KEY_PENDING_GADGET_DIR)
+      .remove(KEY_PENDING_SHARED_GADGET)
       .apply()
   }
 
@@ -179,6 +195,8 @@ class Prefs(context: Context) {
     private const val KEY_PREV_SYS_USB_CONFIGFS = "prev_sys_usb_configfs"
     private const val KEY_PREV_PERSIST_SYS_USB_CONFIG = "prev_persist_sys_usb_config"
     private const val KEY_PREV_BOUND_GADGETS = "prev_bound_gadgets"
+    private const val KEY_PENDING_GADGET_DIR = "pending_gadget_dir"
+    private const val KEY_PENDING_SHARED_GADGET = "pending_shared_gadget"
     private const val KEY_TYPING_SPEED_FACTOR = "typing_speed_factor"
     private const val KEY_RISKY_FAST_MODE = "risky_fast_mode"
     private const val KEY_DIAL_SHORTCUT_BINDINGS = "dial_shortcut_bindings"

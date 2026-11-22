@@ -554,7 +554,7 @@ class _HeroStatusCard extends ConsumerWidget {
   String _getStatusSubtitle() {
     if (!hid.rootAvailable) return 'Root access required';
     if (!hid.hidSupported) return 'USB gadget not supported';
-    if (!hid.sessionArmed) return 'Tap to activate USB gadget';
+    if (!hid.sessionArmed) return hid.message ?? 'Tap to activate USB gadget';
     if (!hid.deviceConnected) return 'Connect USB cable to target';
     if (exec.isRunning) return 'Payload in progress';
     return 'System operational';
