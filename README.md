@@ -63,7 +63,7 @@ Note: A rooted device with Linux USB gadget (ConfigFS) support is required. Use 
 - Execute & Test
   - Validate before run; prompt for parameter values; run or cancel with execution IDs.
   - Quick HID tests: keyboard key press, mouse move, and Ctrl+Alt+Del.
-  - Engine-based runtime estimate (matches actual timing model).
+  - Engine-based script estimate, excluding host readiness and scheduled waits.
   - Wakelock control to keep sessions active during execution.
 
 - Scheduler & Triggers
@@ -169,7 +169,7 @@ Capability matrix (selected):
 Note: The validator surfaces syntax issues, unknown commands, and structure errors before execution. See the Payload Editor for in-UI validation results with line numbers.
 
 Execution timing highlights:
-- Separate execution delay multiplier and typing speed factor (with optional risky fast mode).
+- Separate multipliers for script pauses and USB key-report timing. Key pacing is set on the phone, not in the host OS.
 - Periodic flush during long STRING runs to reduce host keybuffer overruns.
 - Host-aware backoff and grace window for transient HID disconnects.
 - Hardware-aware estimate calibration when micro-sleep is unavailable.

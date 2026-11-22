@@ -959,7 +959,8 @@ class _StatusBanner extends StatelessWidget {
           ),
           if (exec.isRunning)
             Text(
-              '${(exec.progress * 100).toStringAsFixed(0)}%',
+              '~${(exec.progress * 100).toStringAsFixed(0)}%',
+              semanticsLabel: 'Approximate command progress: ${(exec.progress * 100).round()} percent',
               style: TextStyle(
                 fontWeight: FontWeight.w700,
                 color: color,

@@ -477,7 +477,8 @@ class _HeroStatusCard extends ConsumerWidget {
                         style: const TextStyle(fontWeight: FontWeight.w600),
                       ),
                       Text(
-                        '${(exec.progress * 100).clamp(0, 100).toStringAsFixed(0)}%',
+                        '~${(exec.progress * 100).clamp(0, 100).toStringAsFixed(0)}%',
+                        semanticsLabel: 'Approximate command progress: ${(exec.progress * 100).clamp(0, 100).round()} percent',
                         style: TextStyle(
                           fontWeight: FontWeight.w600,
                           color: cs.primary,
