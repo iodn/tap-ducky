@@ -276,17 +276,10 @@ class ExecutionController extends Notifier<ExecutionState> {
     _timeoutTimer?.cancel();
     _timeoutTimer = Timer(timeout, () async {
       if (_activeExecutionId != executionId) return;
-      if (!state.isRunning) return;
+      if (!state.isRunning || state.stopRequested) return;
 
-      final finishedAt = DateTime.now();
-      state = state.copyWith(
-        isRunning: false,
-        status: 'Timed out',
-        finishedAt: finishedAt,
-        success: false,
-        stopRequested: false,
-        panicAvailable: false,
-      );
+      final timedOutAt = DateTime.now();
+      unawaited(_requestStop('Timed out. Stopping…'));
 
       _pushTail(_mkTail(
         executionId: executionId,
@@ -301,7 +294,7 @@ class ExecutionController extends Notifier<ExecutionState> {
       if (enableLogging) {
         await _emitAndPersist(LogEntry(
           id: '$executionId-timeout',
-          timestamp: finishedAt,
+          timestamp: timedOutAt,
           level: 'error',
           message: 'Execution timed out',
           success: false,
@@ -309,22 +302,10 @@ class ExecutionController extends Notifier<ExecutionState> {
           payloadName: payloadName,
           meta: {
             'executionId': executionId,
-            'finishedAt': finishedAt.toIso8601String(),
             'timeoutMs': timeout.inMilliseconds.toString(),
           },
         ));
       }
-
-      await _execSub?.cancel();
-      _execSub = null;
-      _activeExecutionId = null;
-
-      _timeoutTimer?.cancel();
-      _timeoutTimer = null;
-      _panicTimer?.cancel();
-      _panicTimer = null;
-      _autoPanicTimer?.cancel();
-      _autoPanicTimer = null;
     });
   }
 
@@ -996,19 +977,31 @@ class ExecutionController extends Notifier<ExecutionState> {
     }
   }
 
-  Future<void> stop() async {
-    if (!state.isRunning) return;
+  Future<void> stop() => _requestStop('Stopping…');
+
+  Future<void> _requestStop(String status) async {
+    if (!state.isRunning || state.stopRequested) return;
     final id = _activeExecutionId;
     if (id == null) return;
     final service = ref.read(platformGadgetServiceProvider);
     state = state.copyWith(
-      status: 'Stopping…',
+      status: status,
       stopRequested: true,
       panicAvailable: false,
     );
     _startPanicGraceTimer(id);
     _startAutoPanicTimer(id);
-    await service.cancelExecution(id);
+    try {
+      await service.cancelExecution(id);
+    } catch (_) {
+      if (_activeExecutionId != id || !state.isRunning) return;
+      _pushTail(_mkTail(
+        executionId: id,
+        level: 'warn',
+        message: 'Graceful cancellation failed. Panic Stop will run if execution continues.',
+        success: false,
+      ));
+    }
   }
 
   Future<void> panicStop() async {
