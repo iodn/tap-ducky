@@ -15,6 +15,7 @@ class MainActivity : FlutterActivity() {
   private val scriptExecutor = Executors.newSingleThreadExecutor()
   private lateinit var logBus: LogBus
   private lateinit var manager: GadgetManager
+  private val localDrafts by lazy { LocalDrafts(this) }
 
   @Volatile
   private var keysSink: EventChannel.EventSink? = null
@@ -27,6 +28,7 @@ class MainActivity : FlutterActivity() {
     manager = backend.manager
 
     val messenger = flutterEngine.dartExecutor.binaryMessenger
+    localDrafts.register(messenger)
 
     MethodChannel(messenger, CHANNEL_METHODS).setMethodCallHandler { call, result ->
       when (call.method) {
@@ -227,6 +229,17 @@ class MainActivity : FlutterActivity() {
         mainHandler.post { result.error("ERR", t.message, null) }
       }
     }
+  }
+
+  override fun onActivityResult(requestCode: Int, resultCode: Int, data: android.content.Intent?) {
+    if (!localDrafts.onActivityResult(requestCode, resultCode, data)) {
+      super.onActivityResult(requestCode, resultCode, data)
+    }
+  }
+
+  override fun onDestroy() {
+    localDrafts.close()
+    super.onDestroy()
   }
 
   companion object {

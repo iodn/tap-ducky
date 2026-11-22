@@ -9,12 +9,14 @@ import 'package:uuid/uuid.dart';
 import '../../app/router.dart';
 import '../../data/models/payload.dart';
 import '../../data/services/ducky_script_validator.dart';
+import '../../data/services/local_drafts_service.dart';
 import '../../data/services/platform_gadget_service.dart';
 import '../../state/controllers/app_settings_controller.dart';
 import '../../state/controllers/payloads_controller.dart';
 import '../../state/providers.dart';
 import '../../widgets/confirm_dialog.dart';
 import '../../widgets/section_header.dart';
+import 'local_draft_dialog.dart';
 
 const _uuid = Uuid();
 
@@ -82,6 +84,24 @@ class _PayloadEditorScreenState extends ConsumerState<PayloadEditorScreen> {
         _showValidation = _scriptCtrl.text.trim().isNotEmpty;
       });
       _requestEngineEstimate(_scriptCtrl.text);
+    });
+  }
+
+  Future<void> _showLocalDraft() async {
+    final draft = await showDialog<PayloadDraft>(
+      context: context,
+      builder: (context) => LocalDraftDialog(
+        service: ref.read(localDraftsServiceProvider),
+        replacing: [_nameCtrl, _descCtrl, _tagsCtrl, _scriptCtrl].any((controller) => controller.text.isNotEmpty),
+      ),
+    );
+    if (!mounted || draft == null) return;
+    setState(() {
+      _nameCtrl.text = draft.title;
+      _descCtrl.text = draft.description;
+      _tagsCtrl.text = draft.tags.join(', ');
+      _scriptCtrl.text = draft.script;
+      _hasChanges = true;
     });
   }
 
@@ -272,7 +292,12 @@ class _PayloadEditorScreenState extends ConsumerState<PayloadEditorScreen> {
                 ),
               ),
               const SizedBox(height: 16),
-              const SectionHeader(title: 'Script'),
+              SectionHeader(
+                title: 'Script',
+                trailing: !_isBuiltin && ref.watch(localModelStatusProvider).value == 'ready'
+                    ? TextButton(onPressed: _showLocalDraft, child: const Text('Draft with AI'))
+                    : null,
+              ),
               if (_showValidation)
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 16),

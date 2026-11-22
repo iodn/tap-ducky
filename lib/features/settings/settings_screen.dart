@@ -12,6 +12,7 @@ import 'about_screen.dart';
 import 'widgets/donation_sheet.dart';
 import 'widgets/section_card.dart';
 import 'widgets/dynamic_colors_tile.dart';
+import 'widgets/local_draft_settings.dart';
 import 'widgets/support_pill.dart';
 
 class SettingsScreen extends ConsumerWidget {
@@ -126,6 +127,7 @@ class SettingsScreen extends ConsumerWidget {
               _buildAppearanceSection(context, ref, s.themeMode),
               const SizedBox(height: 10),
               _buildExecutionSection(context, ref, s, clampedMultiplier),
+              const LocalDraftSettings(),
               const SizedBox(height: 10),
               _buildStealthSection(context),
               const SizedBox(height: 10),
