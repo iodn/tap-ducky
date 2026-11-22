@@ -183,7 +183,10 @@ class DigiSparkConverter {
         final dy = int.tryParse(mouseMove.group(3)! ) ?? 0;
         final wheel = mouseMove.group(4) != null ? int.tryParse(mouseMove.group(4)!) ?? 0 : 0;
         if (dx != 0 || dy != 0) out.add('MOUSE MOVE $dx $dy');
-        if (wheel != 0) out.add('MOUSE SCROLL $wheel');
+        if (wheel != 0) {
+          final direction = wheel > 0 ? 'UP' : 'DOWN';
+          out.add('MOUSE SCROLL $direction ${wheel.abs()}');
+        }
         continue;
       }
       // scroll dedicated forms
@@ -191,7 +194,10 @@ class DigiSparkConverter {
       if (wheelScroll != null) {
         usedMouseApis = true;
         final amt = int.tryParse(wheelScroll.group(2)! ) ?? 0;
-        out.add('MOUSE SCROLL $amt');
+        if (amt != 0) {
+          final direction = amt > 0 ? 'UP' : 'DOWN';
+          out.add('MOUSE SCROLL $direction ${amt.abs()}');
+        }
         continue;
       }
       // click/press/release
