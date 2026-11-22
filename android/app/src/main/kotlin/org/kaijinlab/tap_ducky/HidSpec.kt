@@ -142,6 +142,18 @@ object HidSpec {
             "F10" -> 0x43
             "F11" -> 0x44
             "F12" -> 0x45
+            "F13" -> 0x68
+            "F14" -> 0x69
+            "F15" -> 0x6A
+            "F16" -> 0x6B
+            "F17" -> 0x6C
+            "F18" -> 0x6D
+            "F19" -> 0x6E
+            "F20" -> 0x6F
+            "F21" -> 0x70
+            "F22" -> 0x71
+            "F23" -> 0x72
+            "F24" -> 0x73
             "PRINTSCREEN", "PRTSCN" -> 0x46
             "SCROLLLOCK" -> 0x47
             "PAUSE", "BREAK" -> 0x48
