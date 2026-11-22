@@ -46,7 +46,8 @@ class _PayloadEditorScreenState extends ConsumerState<PayloadEditorScreen> {
   Timer? _estimateDebounce;
   bool _showValidation = false;
   int? _engineEstimateMs;
-  String _lastEstimateKey = '';
+  int _estimateRevision = 0;
+  String _observedScript = '';
 
   double _currentDelayMultiplier() {
     final settings = ref.read(appSettingsControllerProvider).value;
@@ -59,6 +60,7 @@ class _PayloadEditorScreenState extends ConsumerState<PayloadEditorScreen> {
   void initState() {
     super.initState();
     _loadPayload();
+    _observedScript = _scriptCtrl.text;
     _scriptCtrl.addListener(_onScriptChanged);
   }
 
@@ -75,6 +77,11 @@ class _PayloadEditorScreenState extends ConsumerState<PayloadEditorScreen> {
   }
 
   void _onScriptChanged() {
+    if (_scriptCtrl.text == _observedScript) return;
+    _observedScript = _scriptCtrl.text;
+    _estimateRevision++;
+    _estimateDebounce?.cancel();
+    setState(() => _engineEstimateMs = null);
     _validationDebounce?.cancel();
     _validationDebounce = Timer(const Duration(milliseconds: 500), () {
       if (!mounted) return;
@@ -129,17 +136,11 @@ class _PayloadEditorScreenState extends ConsumerState<PayloadEditorScreen> {
   }
 
   void _requestEngineEstimate(String script) {
-    final trimmed = script.trim();
-    if (trimmed.isEmpty) {
-      setState(() => _engineEstimateMs = null);
-      return;
-    }
-    final mul = _currentDelayMultiplier();
-    final key = '${trimmed.hashCode}::$mul';
-    if (key == _lastEstimateKey) return;
-    _lastEstimateKey = key;
-
+    final revision = ++_estimateRevision;
     _estimateDebounce?.cancel();
+    if (script.trim().isEmpty || _validationResult.hasErrors ||
+        RegExp(r'\$\{[\w-]+\}').hasMatch(script)) return;
+    final mul = _currentDelayMultiplier();
     _estimateDebounce = Timer(const Duration(milliseconds: 600), () async {
       final service = ref.read(platformGadgetServiceProvider);
       try {
@@ -147,10 +148,10 @@ class _PayloadEditorScreenState extends ConsumerState<PayloadEditorScreen> {
           script: script,
           delayMultiplier: mul,
         );
-        if (!mounted) return;
+        if (!mounted || revision != _estimateRevision) return;
         setState(() => _engineEstimateMs = ms);
       } catch (_) {
-        if (!mounted) return;
+        if (!mounted || revision != _estimateRevision) return;
         setState(() => _engineEstimateMs = null);
       }
     });
@@ -304,6 +305,7 @@ class _PayloadEditorScreenState extends ConsumerState<PayloadEditorScreen> {
                   child: _ValidationSummaryCard(
                     result: _validationResult,
                     engineEstimateMs: _engineEstimateMs,
+                    showEstimate: _validationDebounce?.isActive != true,
                     formatDuration: _formatDuration,
                     onTap: () => _showValidationDialog(context),
                   ),
@@ -447,6 +449,7 @@ class _PayloadEditorScreenState extends ConsumerState<PayloadEditorScreen> {
   }
 
   void _showValidationDialog(BuildContext context) {
+    if (_validationDebounce?.isActive == true) return;
     showDialog(
       context: context,
       builder: (context) => _ValidationDialog(
@@ -651,12 +654,14 @@ class _ValidationSummaryCard extends StatelessWidget {
   const _ValidationSummaryCard({
     required this.result,
     required this.engineEstimateMs,
+    required this.showEstimate,
     required this.formatDuration,
     required this.onTap,
   });
 
   final ValidationResult result;
   final int? engineEstimateMs;
+  final bool showEstimate;
   final String Function(int) formatDuration;
   final VoidCallback onTap;
 
@@ -715,23 +720,32 @@ class _ValidationSummaryCard extends StatelessWidget {
                 ],
               ),
               const SizedBox(height: 12),
-              Row(
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
                 children: [
                   _StatChip(
                     icon: Icons.code,
                     label: '${result.commandCount} commands',
                     color: fgColor,
                   ),
-                  const SizedBox(width: 8),
-                  _StatChip(
-                    icon: Icons.timer,
-                    label: engineEstimateMs != null
-                        ? '~${formatDuration(engineEstimateMs!)}'
-                        : '~${result.estimatedDurationFormatted}',
-                    color: fgColor,
-                  ),
+                  if (showEstimate && !result.hasErrors)
+                    _StatChip(
+                      icon: Icons.timer,
+                      label: engineEstimateMs != null
+                          ? '~${formatDuration(engineEstimateMs!)}'
+                          : 'Roughly ${result.estimatedDurationFormatted}',
+                      color: fgColor,
+                    ),
                 ],
               ),
+              if (showEstimate && !result.hasErrors) ...[
+                const SizedBox(height: 4),
+                Text(
+                  'Excludes host and scheduled waits.',
+                  style: TextStyle(fontSize: 12, color: fgColor),
+                ),
+              ],
               if (result.hasErrors || result.hasWarnings) ...[
                 const SizedBox(height: 12),
                 Row(
@@ -855,16 +869,15 @@ class _ValidationDialog extends StatelessWidget {
                     ],
                   ),
                   const SizedBox(height: 8),
-                  Row(
-                    children: [
-                      Icon(Icons.timer, size: 16, color: cs.primary),
-                      const SizedBox(width: 8),
-                      Text(
-                        'Estimated duration: ~${engineEstimateMs != null ? formatDuration(engineEstimateMs!) : result.estimatedDurationFormatted}',
-                        style: const TextStyle(fontWeight: FontWeight.w600),
-                      ),
-                    ],
-                  ),
+                  if (!result.hasErrors) ...[
+                    Text(
+                      engineEstimateMs != null
+                          ? 'Estimated script time: ~${formatDuration(engineEstimateMs!)}'
+                          : 'Rough estimate: ${result.estimatedDurationFormatted}',
+                      style: const TextStyle(fontWeight: FontWeight.w600),
+                    ),
+                    const Text('Excludes host and scheduled waits.'),
+                  ],
                   const SizedBox(height: 4),
                   Text(
                     'Total delays: ${(result.totalDelayMs / 1000).toStringAsFixed(1)}s',

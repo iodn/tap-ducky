@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import '../../app/router.dart';
 import '../../data/models/execution_group.dart';
 import '../../data/models/payload.dart';
+import '../../data/services/ducky_script.dart';
 import '../../data/services/ducky_script_validator.dart';
 import '../../state/controllers/advanced_settings_controller.dart';
 import '../../state/controllers/app_settings_controller.dart';
@@ -182,9 +183,18 @@ class _ExecuteScreenState extends ConsumerState<ExecuteScreen> with SingleTicker
                       paramControllers: _paramCtrls,
                     ),
                     const SizedBox(height: 16),
-                    _ExecutionSpeedCard(
-                      payload: payload,
-                      validator: _validator,
+                    ListenableBuilder(
+                      listenable: Listenable.merge(_paramCtrls.values.toList()),
+                      builder: (context, _) {
+                        final params = _collectParams(payload);
+                        final missing = payload.parameters.any(
+                          (p) => p.required && (params[p.key]?.trim().isEmpty ?? true),
+                        );
+                        return _ExecutionSpeedCard(
+                          script: missing ? null : DuckyScript.resolvePlaceholders(payload.script, params),
+                          validator: _validator,
+                        );
+                      },
                     ),
                     const SizedBox(height: 16),
                     _ExecutionControlCard(
@@ -249,11 +259,11 @@ class _ExecuteScreenState extends ConsumerState<ExecuteScreen> with SingleTicker
 
 class _ExecutionSpeedCard extends ConsumerStatefulWidget {
   const _ExecutionSpeedCard({
-    required this.payload,
+    required this.script,
     required this.validator,
   });
 
-  final Payload payload;
+  final String? script;
   final DuckyScriptValidator validator;
 
   @override
@@ -263,8 +273,7 @@ class _ExecutionSpeedCard extends ConsumerStatefulWidget {
 class _ExecutionSpeedCardState extends ConsumerState<_ExecutionSpeedCard> {
   Timer? _estimateDebounce;
   int? _engineEstimateMs;
-  int? _engineBaseEstimateMs;
-  String _estimateKey = '';
+  Object? _estimateKey;
   int _estimateToken = 0;
 
   @override
@@ -273,31 +282,23 @@ class _ExecutionSpeedCardState extends ConsumerState<_ExecutionSpeedCard> {
     super.dispose();
   }
 
-  void _refreshEngineEstimate(String script, double multiplier) {
-    final key = '${script.hashCode}::$multiplier';
+  void _refreshEngineEstimate(String? script, double multiplier, Object key) {
     if (key == _estimateKey) return;
     _estimateKey = key;
+    _engineEstimateMs = null;
     _estimateDebounce?.cancel();
+    final token = ++_estimateToken;
+    if (script == null) return;
     _estimateDebounce = Timer(const Duration(milliseconds: 400), () async {
-      final token = ++_estimateToken;
       final service = ref.read(platformGadgetServiceProvider);
       try {
-        final results = await Future.wait<int>([
-          service.estimateDuckyScriptDurationMs(script: script, delayMultiplier: 1.0),
-          service.estimateDuckyScriptDurationMs(script: script, delayMultiplier: multiplier),
-        ]);
+        final ms = await service.estimateDuckyScriptDurationMs(
+          script: script,
+          delayMultiplier: multiplier,
+        );
         if (!mounted || token != _estimateToken) return;
-        setState(() {
-          _engineBaseEstimateMs = results[0];
-          _engineEstimateMs = results[1];
-        });
-      } catch (_) {
-        if (!mounted || token != _estimateToken) return;
-        setState(() {
-          _engineBaseEstimateMs = null;
-          _engineEstimateMs = null;
-        });
-      }
+        setState(() => _engineEstimateMs = ms);
+      } catch (_) {} // The validator provides a rough estimate if Android cannot.
     });
   }
 
@@ -305,6 +306,7 @@ class _ExecutionSpeedCardState extends ConsumerState<_ExecutionSpeedCard> {
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     final settingsAsync = ref.watch(appSettingsControllerProvider);
+    final layout = ref.watch(advancedSettingsControllerProvider).value?.keyboardLayoutBackendId;
 
     return settingsAsync.when(
       loading: () => const Card(
@@ -316,11 +318,17 @@ class _ExecutionSpeedCardState extends ConsumerState<_ExecutionSpeedCard> {
       error: (_, __) => const SizedBox.shrink(),
       data: (settings) {
         final currentMultiplier = settings.delayMultiplier;
-        final validationResult = widget.validator.validate(widget.payload.script);
-        _refreshEngineEstimate(widget.payload.script, currentMultiplier);
-
-        final baseDurationMs = _engineBaseEstimateMs ?? validationResult.estimatedDurationMs;
-        final adjustedDurationMs = _engineEstimateMs ?? (baseDurationMs * currentMultiplier).round();
+        final script = widget.script;
+        final candidate = script == null || RegExp(r'\$\{[\w-]+\}').hasMatch(script)
+            ? null
+            : script;
+        final validation = candidate == null ? null : widget.validator.validate(candidate, delayMultiplier: currentMultiplier);
+        final estimateScript = validation?.hasErrors == false ? candidate : null;
+        _refreshEngineEstimate(estimateScript, currentMultiplier, (
+          estimateScript, currentMultiplier, settings.typingSpeedFactor,
+          settings.unicodeFallbackMode, settings.riskyFastMode, layout,
+        ));
+        final estimateMs = _engineEstimateMs ?? (estimateScript == null ? null : validation?.estimatedDurationMs);
 
         return Card(
           child: Padding(
@@ -334,7 +342,7 @@ class _ExecutionSpeedCardState extends ConsumerState<_ExecutionSpeedCard> {
                     const SizedBox(width: 8),
                     const Expanded(
                       child: Text(
-                        'Execution Speed',
+                        'Script delay multiplier',
                         style: TextStyle(
                           fontSize: 16,
                           fontWeight: FontWeight.w700,
@@ -354,7 +362,7 @@ class _ExecutionSpeedCardState extends ConsumerState<_ExecutionSpeedCard> {
                       icon: Icons.bolt,
                       currentMultiplier: currentMultiplier,
                       onTap: () => ref.read(appSettingsControllerProvider.notifier).setDelayMultiplier(0.1),
-                      tooltip: 'Ultra fast may be unreliable on some hosts.',
+                      tooltip: 'Short pauses may not give the host app enough time to respond.',
                     ),
                     _SpeedPresetChip(
                       label: 'Fast',
@@ -387,7 +395,7 @@ class _ExecutionSpeedCardState extends ConsumerState<_ExecutionSpeedCard> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            'Speed Multiplier',
+                            'Pause multiplier',
                             style: TextStyle(
                               fontSize: 13,
                               fontWeight: FontWeight.w600,
@@ -428,7 +436,7 @@ class _ExecutionSpeedCardState extends ConsumerState<_ExecutionSpeedCard> {
                   },
                 ),
                 Text(
-                  'Execution speed scales script delays. Typing speed is set in Settings.',
+                  '0.5× halves script pauses. USB key timing is separate in Settings.',
                   style: TextStyle(fontSize: 11, color: cs.onSurfaceVariant),
                 ),
                 const SizedBox(height: 12),
@@ -447,7 +455,7 @@ class _ExecutionSpeedCardState extends ConsumerState<_ExecutionSpeedCard> {
                           const SizedBox(width: 8),
                           Expanded(
                             child: Text(
-                              'Estimated Duration',
+                              _engineEstimateMs == null ? 'Rough script estimate' : 'Estimated script time',
                               style: TextStyle(
                                 fontSize: 12,
                                 fontWeight: FontWeight.w600,
@@ -458,68 +466,17 @@ class _ExecutionSpeedCardState extends ConsumerState<_ExecutionSpeedCard> {
                         ],
                       ),
                       const SizedBox(height: 8),
-                      if (currentMultiplier == 1.0) ...[
-                        Text(
-                          '~${_formatDuration(baseDurationMs)}',
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w700,
-                            color: cs.primary,
-                          ),
+                      Text(
+                        estimateMs == null ? 'Unavailable until the script and inputs are valid.' : '~${_formatDuration(estimateMs)}',
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w700,
+                          color: cs.primary,
                         ),
-                      ] else ...[
-                        Row(
-                          children: [
-                            Text(
-                              'Original: ',
-                              style: TextStyle(
-                                fontSize: 13,
-                                color: cs.onSurfaceVariant,
-                              ),
-                            ),
-                            Text(
-                              '~${_formatDuration(baseDurationMs)}',
-                              style: TextStyle(
-                                fontSize: 13,
-                                decoration: TextDecoration.lineThrough,
-                                color: cs.onSurfaceVariant,
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 4),
-                        Row(
-                          children: [
-                            Text(
-                              'Adjusted: ',
-                              style: TextStyle(
-                                fontSize: 13,
-                                color: cs.onSurfaceVariant,
-                              ),
-                            ),
-                            Text(
-                              '~${_formatDuration(adjustedDurationMs)}',
-                              style: TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.w700,
-                                color: cs.primary,
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            Text(
-                              '(${currentMultiplier.toStringAsFixed(2)}×)',
-                              style: TextStyle(
-                                fontSize: 13,
-                                fontWeight: FontWeight.w600,
-                                color: cs.primary,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ],
+                      ),
                       const SizedBox(height: 8),
                       Text(
-                        'Based on ${validationResult.commandCount} commands and ${(validationResult.totalDelayMs / 1000).toStringAsFixed(1)}s of delays',
+                        'Excludes host and scheduled waits. USB and host response may vary.',
                         style: TextStyle(
                           fontSize: 11,
                           color: cs.onSurfaceVariant,
@@ -542,7 +499,7 @@ class _ExecutionSpeedCardState extends ConsumerState<_ExecutionSpeedCard> {
                       const SizedBox(width: 8),
                       Expanded(
                         child: Text(
-                          'Use slower speeds (2×-4×) for unreliable targets or debugging. Faster speeds (0.25×-0.5×) for quick testing.',
+                          'If the host app needs more time between actions, lengthen script pauses. If keys are missed, increase key timing in Settings.',
                           style: TextStyle(
                             fontSize: 11,
                             color: cs.onSurfaceVariant,

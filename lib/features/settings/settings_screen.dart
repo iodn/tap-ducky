@@ -43,7 +43,6 @@ class SettingsScreen extends ConsumerWidget {
     await controller.setEnableLogging(true);
     await controller.setDelayMultiplier(1.0);
     await controller.setTypingSpeedFactor(1.0);
-    await controller.setRandomizeTiming(true);
     await controller.setHidGraceWindowMs(1500);
     await controller.setUnicodeFallbackMode('warn');
     await controller.setRiskyFastMode(false);
@@ -421,7 +420,7 @@ class SettingsScreen extends ConsumerWidget {
                 ],
               ),
               Text(
-                'Adjust script delays and raw key press timing.',
+                'Adjust script pauses and the timing of USB key reports.',
                 style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant),
               ),
               const SizedBox(height: 12),
@@ -429,7 +428,7 @@ class SettingsScreen extends ConsumerWidget {
                 children: [
                   const Expanded(
                     child: Text(
-                      'Execution speed',
+                      'Script delay multiplier',
                       style: TextStyle(fontWeight: FontWeight.w700),
                     ),
                   ),
@@ -469,7 +468,7 @@ class SettingsScreen extends ConsumerWidget {
                 children: [
                   const Expanded(
                     child: Text(
-                      'Typing speed',
+                      'Key timing multiplier',
                       style: TextStyle(fontWeight: FontWeight.w700),
                     ),
                   ),
@@ -505,7 +504,7 @@ class SettingsScreen extends ConsumerWidget {
                 ],
               ),
               Text(
-                'Lower is faster. Controls raw key press timing (STRING typing).',
+                'Lower values send key reports closer together. USB and the host app limit actual speed; this does not change host key repeat.',
                 style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant),
               ),
               const SizedBox(height: 12),
@@ -520,7 +519,7 @@ class SettingsScreen extends ConsumerWidget {
                     onSelected: () => ref
                         .read(appSettingsControllerProvider.notifier)
                         .setDelayMultiplier(0.1),
-                    tooltip: 'Ultra fast may be unreliable on some hosts.',
+                    tooltip: 'Short pauses may not give the host app enough time to respond.',
                   ),
                   _SpeedPresetChip(
                     label: 'Very Fast',
@@ -592,15 +591,6 @@ class SettingsScreen extends ConsumerWidget {
                           .setEnableLogging(v),
                       title: const Text('Enable logging'),
                       subtitle: const Text('Record execution events and outcomes'),
-                    ),
-                    SwitchListTile(
-                      contentPadding: EdgeInsets.zero,
-                      value: s.randomizeTiming,
-                      onChanged: (v) => ref
-                          .read(appSettingsControllerProvider.notifier)
-                          .setRandomizeTiming(v),
-                      title: const Text('Randomize timing'),
-                      subtitle: const Text('Adds small jitter to mimic real typing'),
                     ),
                     const SizedBox(height: 6),
                     Row(

@@ -1835,9 +1835,16 @@ class DuckyScriptEstimator(
   private val evaluator = ExpressionEvaluator()
   private val timing = TimingController(log, delayMultiplier)
   private var elapsedMs: Long = 0
+  private var remainingWork = 20_000
 
   private class ReturnSignal(val value: Int) : RuntimeException()
+  private class EstimateLimit : RuntimeException("Script estimate exceeded its work limit")
   private data class FunctionDef(val params: List<String>, val body: List<DuckyCommand>)
+
+  private fun chargeWork(count: Int = 1) {
+    if (count > remainingWork) throw EstimateLimit()
+    remainingWork -= count
+  }
 
   fun estimate(script: String): Long {
     if (!globalVariables.containsKey("$?")) globalVariables["$?"] = 0
@@ -1845,6 +1852,7 @@ class DuckyScriptEstimator(
     val commands = parser.parse(script)
     defaultDelay = 0
     elapsedMs = 0
+    remainingWork = 20_000
 
     val processed = preprocessCommands(commands)
     try {
@@ -1861,6 +1869,7 @@ class DuckyScriptEstimator(
     var lastAdded: DuckyCommand? = null
     var i = 0
     while (i < commands.size) {
+      chargeWork()
       val cmd = commands[i]
       when (cmd.type) {
         CommandType.FUNCTION -> {
@@ -1880,6 +1889,7 @@ class DuckyScriptEstimator(
           val times = count.coerceAtLeast(1)
           val last = lastAdded
           if (last != null) {
+            chargeWork(times)
             repeat(times) {
               result.add(last)
               lastAdded = last
@@ -1900,6 +1910,7 @@ class DuckyScriptEstimator(
   private fun executeRange(commands: List<DuckyCommand>, start: Int, endExclusive: Int) {
     var i = start
     while (i < endExclusive) {
+      chargeWork()
       val cmd = commands[i]
       when (cmd.type) {
         CommandType.IF -> {
@@ -1912,13 +1923,8 @@ class DuckyScriptEstimator(
         CommandType.WHILE -> {
           val endWhile = findMatchingEndWhile(commands, i, endExclusive)
           val condition = normalizeCondition(cmd.args.firstOrNull() ?: "")
-          var guard = 0
           while (evaluateCondition(condition)) {
-            guard++
-            if (guard > 10000) {
-              log.logError("ducky", "Estimate aborted: WHILE loop exceeded 10000 iterations")
-              break
-            }
+            chargeWork()
             executeRange(commands, i + 1, endWhile)
           }
           i = endWhile + 1
@@ -1931,6 +1937,8 @@ class DuckyScriptEstimator(
             val tryEnd = catchIndex ?: endTry
             executeRange(commands, i + 1, tryEnd)
           } catch (e: ReturnSignal) {
+            throw e
+          } catch (e: EstimateLimit) {
             throw e
           } catch (_: Exception) {
             if (catchIndex != null) {
@@ -2110,18 +2118,8 @@ class DuckyScriptEstimator(
         setExitCode(0)
       }
 
-      CommandType.SLEEP_UNTIL -> {
-        val arg = cmd.args.firstOrNull().orEmpty()
-        val ms = computeSleepUntilMs(arg)
-        if (ms > 0) elapsedMs += timing.scaleMs(ms).toLong()
-        setExitCode(0)
-      }
-
-      CommandType.WAIT_FOR -> {
-        val timeoutMs = cmd.args.getOrNull(1)?.toIntOrNull() ?: 15000
-        elapsedMs += timeoutMs.coerceAtLeast(0).toLong()
-        setExitCode(0)
-      }
+      CommandType.SLEEP_UNTIL,
+      CommandType.WAIT_FOR -> setExitCode(0)
 
       CommandType.DEFAULTDELAY,
       CommandType.DEFAULT_DELAY -> {
@@ -2332,38 +2330,6 @@ class DuckyScriptEstimator(
     }
     if (targetKey == null) return false
     return HidSpec.keyCodeFor(targetKey) != null
-  }
-
-  private fun computeSleepUntilMs(arg: String): Int {
-    val trimmed = arg.trim()
-    if (trimmed.isEmpty()) return 0
-    if (trimmed.all { it.isDigit() }) {
-      val v = trimmed.toLongOrNull() ?: return 0
-      val ms = if (trimmed.length >= 10) {
-        v - System.currentTimeMillis()
-      } else {
-        v
-      }
-      return ms.coerceAtLeast(0L).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
-    }
-    val now = Calendar.getInstance()
-    val parts = trimmed.split(":")
-    val h = parts.getOrNull(0)?.toIntOrNull()
-    val m = parts.getOrNull(1)?.toIntOrNull()
-    val s = parts.getOrNull(2)?.toIntOrNull() ?: 0
-    if (h == null || m == null) return 0
-    val target = Calendar.getInstance().apply {
-      timeInMillis = now.timeInMillis
-      set(Calendar.HOUR_OF_DAY, h)
-      set(Calendar.MINUTE, m)
-      set(Calendar.SECOND, s)
-      set(Calendar.MILLISECOND, 0)
-    }
-    if (target.before(now) || target == now) {
-      target.add(Calendar.DAY_OF_MONTH, 1)
-    }
-    val duration = target.timeInMillis - now.timeInMillis
-    return duration.coerceAtLeast(0L).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
   }
 
   private fun normalizeVarName(name: String): String {

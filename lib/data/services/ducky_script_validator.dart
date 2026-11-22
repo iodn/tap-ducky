@@ -354,8 +354,8 @@ class DuckyScriptValidator {
 
     int scaledMs(int ms) {
       if (ms <= 0) return 0;
-      final v = (ms * (delayMultiplier <= 0 ? 1.0 : delayMultiplier)).round();
-      return max(0, v);
+      final v = (ms * (delayMultiplier <= 0 ? 1.0 : delayMultiplier)).truncate();
+      return v.clamp(0, 300000);
     }
 
     int approxTextLen(String text) {
@@ -382,7 +382,7 @@ class DuckyScriptValidator {
       int extraOverheadMs = 0,
     }) {
       final keys = keyCount + (addEnter ? 1 : 0) + extraKeyCount;
-      final kMs = scaledMs(keys * _baseKeyMs);
+      final kMs = keys * _baseKeyMs;
       keyTimeMs += kMs;
 
       final perCharDelayScaled = scaledMs(perCharDelayMs);
@@ -392,7 +392,7 @@ class DuckyScriptValidator {
       final extraDelayScaled = scaledMs(extraDelayMs);
       totalDelayMs += extraDelayScaled;
 
-      final oMs = scaledMs(_commandOverheadMs + extraOverheadMs);
+      final oMs = _commandOverheadMs + extraOverheadMs;
       overheadMs += oMs;
 
       lastCommandTotalMs = kMs + dMs + extraDelayScaled + oMs;
@@ -616,13 +616,6 @@ class DuckyScriptValidator {
               ));
             }
           }
-          if (parts.length >= 3) {
-            final ms = int.tryParse(parts[2]);
-            if (ms != null) {
-              commitCommand(keyCount: 0, perCharDelayMs: 0, charCount: 0, extraDelayMs: max(0, ms));
-              break;
-            }
-          }
           commitCommand(keyCount: 0, perCharDelayMs: 0, charCount: 0);
           break;
 
@@ -810,9 +803,9 @@ class DuckyScriptValidator {
               message: 'MOUSE requires an action (CLICK, MOVE, SCROLL, etc.)',
             ));
           }
-          final kMs = scaledMs(_baseMouseMs);
+          final kMs = _baseMouseMs;
           keyTimeMs += kMs;
-          final oMs = scaledMs(_commandOverheadMs);
+          final oMs = _commandOverheadMs;
           overheadMs += oMs;
           lastCommandTotalMs = kMs + oMs;
           addDefaultDelayIfAny();
