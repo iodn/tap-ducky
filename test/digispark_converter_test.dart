@@ -82,4 +82,20 @@ void loop() {
     expect(result, isNotNull);
     expect(result!.text, 'STRING a\nSHIFT B');
   });
+
+  test('maps sendKeyPress to HOLD and its zero release to RELEASE', () {
+    const sketch = '''
+#include "DigiKeyboard.h"
+void loop() {
+  DigiKeyboard.sendKeyPress(KEY_A);
+  DigiKeyboard.delay(100);
+  DigiKeyboard.sendKeyPress(0);
+}
+''';
+
+    final result = DigiSparkConverter.convert(sketch);
+
+    expect(result, isNotNull);
+    expect(result!.text, 'HOLD A\nDELAY 100\nRELEASE A');
+  });
 }

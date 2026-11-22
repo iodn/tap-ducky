@@ -70,6 +70,7 @@ class DigiSparkConverter {
     final lines = input.replaceAll('\r', '').split('\n');
     final out = <String>[];
     bool usedMouseApis = false;
+    String? heldKey;
 
     var inBlockComment = false;
     for (var raw in lines) {
@@ -135,6 +136,16 @@ class DigiSparkConverter {
         final combo = <String>[];
         final method = strokeMatch.group(1)!;
 
+        // DigiKeyboard releases with sendKeyPress(0), not a separate function.
+        if ((method == 'sendKeyPress' || method == 'pressKey') &&
+            (keyToken == '0' || keyToken.toLowerCase() == '0x00')) {
+          if (heldKey != null) {
+            out.add('RELEASE $heldKey');
+            heldKey = null;
+          }
+          continue;
+        }
+
         // map modifiers
         for (final m in mods) {
           final mm = _modMap[m] ?? _modMap[m.replaceAll('(', '').replaceAll(')', '')];
@@ -167,11 +178,21 @@ class DigiSparkConverter {
 
         if (keyStr != null) {
           final parts = [...combo, keyStr];
-          if (method == 'pressKey') {
-            out.add('HOLD ${parts.join(' ')}');
+          final keys = parts.join(' ');
+          if (method == 'pressKey' || method == 'sendKeyPress') {
+            if (heldKey != null && heldKey != keys) {
+              out.add('RELEASE $heldKey');
+            }
+            out.add('HOLD $keys');
+            heldKey = keys;
           } else if (method == 'releaseKey') {
-            out.add('RELEASE ${parts.join(' ')}');
+            out.add('RELEASE $keys');
+            if (heldKey == keys) heldKey = null;
           } else if (combo.isEmpty) {
+            if (heldKey != null) {
+              out.add('RELEASE $heldKey');
+              heldKey = null;
+            }
             // single key
             if (typedLetter != null) {
               out.add('STRING $typedLetter');
@@ -183,7 +204,11 @@ class DigiSparkConverter {
               out.add(keyStr);
             }
           } else {
-            out.add(parts.join(' '));
+            if (heldKey != null) {
+              out.add('RELEASE $heldKey');
+              heldKey = null;
+            }
+            out.add(keys);
           }
         }
         continue;
