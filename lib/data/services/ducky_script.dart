@@ -18,9 +18,9 @@ class DuckyStep {
 
 class DuckyScript {
   static String resolvePlaceholders(String input, Map<String, String> values) {
-    return input.replaceAllMapped(RegExp(r'\$\{([a-zA-Z0-9_\-]+)\}'), (m) {
-      final k = m.group(1)!;
-      return values[k] ?? m.group(0)!;
+    return input.replaceAllMapped(RegExp(r'\{\{([^{}]+)\}\}|\$\{([^{}]+)\}'), (match) {
+      final key = (match.group(1) ?? match.group(2)!).trim();
+      return values[key] ?? match.group(0)!;
     });
   }
 
