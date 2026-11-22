@@ -27,7 +27,7 @@ class _ArmedHid extends HidStatusController {
 
 class _SilentGadget extends PlatformGadgetService {
   @override
-  late final execStream = const Stream<Map<String, dynamic>>.empty();
+  Stream<Map<String, dynamic>> get execStream => const Stream.empty();
 
   String? startedId;
   final startedScripts = <String>[];
