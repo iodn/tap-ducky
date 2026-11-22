@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tap_ducky/data/services/local_drafts_service.dart';
 import 'package:tap_ducky/features/payloads/payload_editor_screen.dart';
+import 'package:tap_ducky/features/settings/widgets/local_draft_settings.dart';
 
 const _greeting =
     '''{"title":"Hello world","description":"Types a greeting twenty times.",
@@ -25,6 +27,33 @@ class _LocalDrafts extends LocalDraftsService {
 }
 
 void main() {
+  testWidgets('model setup explains GGUF and shows the picker error', (
+    tester,
+  ) async {
+    const channel = MethodChannel('org.kaijinlab.tap_ducky/local_drafts');
+    final messenger = tester.binding.defaultBinaryMessenger;
+    const message =
+        'GGUF is not supported by LiteRT-LM. Choose a .litertlm model instead.';
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      if (call.method == 'status') return 'missing';
+      throw PlatformException(code: 'MODEL_FORMAT', message: message);
+    });
+    addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+
+    await tester.pumpWidget(
+      const ProviderScope(
+        child: MaterialApp(home: Scaffold(body: LocalDraftSettings())),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Get Qwen2 0.5B'), findsNothing);
+    expect(find.textContaining('GGUF files are not supported'), findsOneWidget);
+    await tester.tap(find.text('Choose model'));
+    await tester.pumpAndSettle();
+    expect(find.text(message), findsOneWidget);
+  });
+
   test('model output becomes a bounded typing script', () {
     final result = PayloadDraft.fromResponse('```json\n$_greeting\n```');
     expect(result.title, 'Hello world');

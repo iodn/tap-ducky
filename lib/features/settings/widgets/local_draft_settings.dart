@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 import '../../../data/services/local_drafts_service.dart';
 import 'section_card.dart';
@@ -39,19 +38,6 @@ class _LocalDraftSettingsState extends ConsumerState<LocalDraftSettings> {
     }
   }
 
-  Future<void> _openModelPage() async {
-    final opened = await launchUrl(
-      Uri.https(
-        'huggingface.co',
-        '/litert-community/Qwen2-0.5B-Instruct/blob/main/Qwen2_0.5B_Instruct.litertlm',
-      ),
-      mode: LaunchMode.externalApplication,
-    );
-    if (!opened && mounted) {
-      setState(() => _error = 'Could not open the model page.');
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     final status = ref.watch(localModelStatusProvider).value;
@@ -71,7 +57,7 @@ class _LocalDraftSettingsState extends ConsumerState<LocalDraftSettings> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               const Text(
-                'Download a .litertlm model and select its file here. TapDucky keeps a local copy and uses it to draft typing scripts in the payload editor.',
+                'Choose a .litertlm model for offline drafting. GGUF files are not supported by LiteRT-LM. TapDucky keeps a local copy on this device.',
               ),
               const SizedBox(height: 8),
               Wrap(
@@ -85,11 +71,6 @@ class _LocalDraftSettingsState extends ConsumerState<LocalDraftSettings> {
                     TextButton(
                       onPressed: _busy ? null : () => _changeModel(true),
                       child: const Text('Remove local copy'),
-                    )
-                  else
-                    TextButton(
-                      onPressed: _busy ? null : _openModelPage,
-                      child: const Text('Get Qwen2 0.5B'),
                     ),
                 ],
               ),

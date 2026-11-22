@@ -93,7 +93,12 @@ internal class LocalDrafts(private val activity: Activity) {
       val name = resolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use {
         if (it.moveToFirst()) it.getString(0) else null
       }
-      require(name?.endsWith(".litertlm", ignoreCase = true) == true)
+      if (name?.endsWith(".gguf", ignoreCase = true) == true) {
+        throw ModelFormatException("GGUF is not supported by LiteRT-LM. Choose a .litertlm model instead.")
+      }
+      if (name?.endsWith(".litertlm", ignoreCase = true) != true) {
+        throw ModelFormatException("Choose a model file ending in .litertlm.")
+      }
       val temporary = File.createTempFile("draft-model-", ".tmp", model.parentFile)
       try {
         val size = resolver.openInputStream(uri)?.use { source ->
@@ -114,7 +119,13 @@ internal class LocalDrafts(private val activity: Activity) {
       val outcome = runCatching(work)
       activity.runOnUiThread {
         working = false
-        outcome.fold(result::success) { result.error("LOCAL_MODEL", error, null) }
+        outcome.fold(result::success) {
+          if (it is ModelFormatException) {
+            result.error("MODEL_FORMAT", it.message, null)
+          } else {
+            result.error("LOCAL_MODEL", error, null)
+          }
+        }
       }
     }
   }
@@ -125,6 +136,8 @@ internal class LocalDrafts(private val activity: Activity) {
     pendingPicker = null
     worker.shutdown()
   }
+
+  private class ModelFormatException(message: String) : IllegalArgumentException(message)
 
   private companion object {
     const val PICK_MODEL = 7351
