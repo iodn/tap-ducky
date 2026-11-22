@@ -796,19 +796,7 @@ class DuckyScriptValidator {
               suggestion: 'Example: REPEAT 5',
             ));
           } else if (lastCommandTotalMs > 0) {
-            final repeated = lastCommandTotalMs * count;
-            final repeatedScaled = scaledMs(repeated);
-            final ratio = delayMultiplier <= 0 ? 1.0 : delayMultiplier;
-            final estimatedUnscaled = (repeatedScaled / ratio).round();
-
-            final alreadyAccountedDefaultDelay = 0;
-
-            totalDelayMs += 0;
-            keyTimeMs += 0;
-            overheadMs += 0;
-
-            final add = repeatedScaled - alreadyAccountedDefaultDelay;
-            overheadMs += add;
+            overheadMs += lastCommandTotalMs * count;
           }
           break;
 
