@@ -11,7 +11,6 @@ import '../../data/models/payload.dart';
 import '../../state/controllers/execution_controller.dart';
 import '../../state/controllers/hid_status_controller.dart';
 import '../../state/controllers/payloads_controller.dart';
-import '../../state/providers.dart';
 import '../../widgets/confirm_dialog.dart';
 
 @immutable
@@ -224,28 +223,6 @@ class _PayloadsScreenState extends ConsumerState<PayloadsScreen> {
         ),
         data: (items) {
           if (items.isEmpty) {
-            WidgetsBinding.instance.addPostFrameCallback((_) {
-              final storage = ref.read(prefsStorageProvider).maybeWhen(data: (s) => s, orElse: () => null);
-              if (storage != null) {
-                final flag = storage.getString('tapducky.ui.tip.import_store_shown') ?? '';
-                if (flag != '1' && mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      behavior: SnackBarBehavior.floating,
-                      showCloseIcon: true,
-                      content: const Text('Tip: Import payloads from the GitHub Store'),
-                      action: SnackBarAction(
-                        label: 'Open',
-                        onPressed: () => context.go(const PayloadsStoreRoute().location),
-                      ),
-                      duration: const Duration(seconds: 5),
-                    ),
-                  );
-                  storage.setString('tapducky.ui.tip.import_store_shown', '1');
-                }
-              }
-            });
-
             return _EmptyStateWizard(
               onCreateTap: () => context.go('${const PayloadsRoute().location}/new'),
               onImportTap: () => _importFromClipboard(context),
@@ -823,64 +800,18 @@ class _EmptyStateWizard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-
     return Center(
       child: SingleChildScrollView(
         padding: const EdgeInsets.all(24),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Container(
-              padding: const EdgeInsets.all(24),
-              decoration: BoxDecoration(
-                color: cs.primaryContainer.withOpacity(0.3),
-                shape: BoxShape.circle,
-              ),
-              child: Icon(Icons.inventory_2, size: 64, color: cs.primary),
-            ),
-            const SizedBox(height: 24),
             Text(
-              'Your Script Library',
-              style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+              'No payloads yet',
+              textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.titleLarge?.copyWith(
                     fontWeight: FontWeight.w600,
                   ),
-            ),
-            const SizedBox(height: 12),
-            Text(
-              'Create, organize, and execute your custom HID payloads',
-              style: TextStyle(color: cs.onSurfaceVariant),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 32),
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(20),
-                child: Column(
-                  children: const [
-                    _WizardStep(
-                      number: '1',
-                      title: 'Create a Payload',
-                      description: 'Write DuckyScript commands or use templates',
-                      icon: Icons.edit_note,
-                    ),
-                    SizedBox(height: 16),
-                    _WizardStep(
-                      number: '2',
-                      title: 'Organize with Tags',
-                      description: 'Group payloads by category or purpose',
-                      icon: Icons.label,
-                    ),
-                    SizedBox(height: 16),
-                    _WizardStep(
-                      number: '3',
-                      title: 'Execute & Share',
-                      description: 'Run on target or export to share',
-                      icon: Icons.rocket_launch,
-                    ),
-                  ],
-                ),
-              ),
             ),
             const SizedBox(height: 24),
             SizedBox(
@@ -888,7 +819,7 @@ class _EmptyStateWizard extends StatelessWidget {
               child: FilledButton.icon(
                 onPressed: onCreateTap,
                 icon: const Icon(Icons.add),
-                label: const Text('Create Your First Payload'),
+                label: const Text('Create Payload'),
                 style: FilledButton.styleFrom(
                   padding: const EdgeInsets.symmetric(vertical: 16),
                 ),
@@ -900,7 +831,7 @@ class _EmptyStateWizard extends StatelessWidget {
               child: OutlinedButton.icon(
                 onPressed: onImportTap,
                 icon: const Icon(Icons.download),
-                label: const Text('Import Existing Payloads'),
+                label: const Text('Import from Clipboard'),
                 style: OutlinedButton.styleFrom(
                   padding: const EdgeInsets.symmetric(vertical: 16),
                 ),
@@ -912,7 +843,7 @@ class _EmptyStateWizard extends StatelessWidget {
               child: OutlinedButton.icon(
                 onPressed: onOpenStoreTap,
                 icon: const Icon(Icons.cloud_download),
-                label: const Text('Import from GitHub Store'),
+                label: const Text('Browse GitHub Store'),
                 style: OutlinedButton.styleFrom(
                   padding: const EdgeInsets.symmetric(vertical: 16),
                 ),
@@ -921,64 +852,6 @@ class _EmptyStateWizard extends StatelessWidget {
           ],
         ),
       ),
-    );
-  }
-}
-
-class _WizardStep extends StatelessWidget {
-  const _WizardStep({
-    required this.number,
-    required this.title,
-    required this.description,
-    required this.icon,
-  });
-
-  final String number;
-  final String title;
-  final String description;
-  final IconData icon;
-
-  @override
-  Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-
-    return Row(
-      children: [
-        Container(
-          width: 40,
-          height: 40,
-          decoration: BoxDecoration(
-            color: cs.primaryContainer,
-            shape: BoxShape.circle,
-          ),
-          child: Center(
-            child: Icon(icon, size: 20, color: cs.onPrimaryContainer),
-          ),
-        ),
-        const SizedBox(width: 16),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                title,
-                style: const TextStyle(
-                  fontWeight: FontWeight.w600,
-                  fontSize: 15,
-                ),
-              ),
-              const SizedBox(height: 2),
-              Text(
-                description,
-                style: TextStyle(
-                  fontSize: 13,
-                  color: cs.onSurfaceVariant,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ],
     );
   }
 }
