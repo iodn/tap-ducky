@@ -33,15 +33,23 @@ class AppTheme {
   }
 
   static ThemeData dark({ColorScheme? dynamicScheme}) {
-    final base = dynamicScheme != null
-        ? ThemeData(useMaterial3: true, colorScheme: dynamicScheme)
-        : ThemeData(
-            useMaterial3: true,
-            colorSchemeSeed: const Color(0xFF6A5CFF),
-            brightness: Brightness.dark,
-          );
-    final cs = base.colorScheme;
+    final scheme = dynamicScheme ?? ColorScheme.fromSeed(
+      seedColor: const Color(0xFF6A5CFF),
+      brightness: Brightness.dark,
+    );
+    final cs = scheme.copyWith(
+      surface: Colors.black,
+      surfaceDim: Colors.black,
+      surfaceBright: const Color(0xFF2C2C2C),
+      surfaceContainerLowest: Colors.black,
+      surfaceContainerLow: const Color(0xFF101010),
+      surfaceContainer: const Color(0xFF151515),
+      surfaceContainerHigh: const Color(0xFF1B1B1B),
+      surfaceContainerHighest: const Color(0xFF242424),
+    );
+    final base = ThemeData(useMaterial3: true, colorScheme: cs);
     return base.copyWith(
+      scaffoldBackgroundColor: Colors.black,
       visualDensity: VisualDensity.standard,
       dividerTheme: DividerThemeData(color: cs.outlineVariant.withOpacity(0.5), thickness: 1),
       inputDecorationTheme: base.inputDecorationTheme.copyWith(
@@ -56,9 +64,14 @@ class AppTheme {
           side: BorderSide(color: cs.outlineVariant.withOpacity(0.5)),
         ),
       ),
-      appBarTheme: base.appBarTheme.copyWith(surfaceTintColor: Colors.transparent),
+      appBarTheme: base.appBarTheme.copyWith(
+        backgroundColor: Colors.black,
+        surfaceTintColor: Colors.transparent,
+      ),
       navigationBarTheme: const NavigationBarThemeData(
         height: 72,
+        backgroundColor: Colors.black,
+        surfaceTintColor: Colors.transparent,
       ),
     );
   }
