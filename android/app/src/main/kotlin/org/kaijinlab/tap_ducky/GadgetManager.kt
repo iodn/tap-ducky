@@ -565,27 +565,27 @@ class GadgetManager(
     log.log("test", "Keyboard test sent (${trimmed.length} chars)")
   }
 
-  fun typeString(text: String, delayMs: Int = 0) {
+  fun typeString(text: String, delayMs: Int = 0, extraModifiers: Int = 0) {
     val current = statusRef.get()
     if (current.state != "ACTIVE") throw IllegalStateException("Gadget is not active")
     val path = prefs.activeKeyboardDev ?: throw IllegalStateException("Keyboard HID device not available")
     if (delayMs > 0) {
-      typeTextWithDelay(path, text, delayMs)
+      typeTextWithDelay(path, text, delayMs, extraModifiers)
     } else {
-      typeText(path, text)
+      typeText(path, text, extraModifiers)
     }
     log.log("type", "String sent (len=${text.length}, delay=${delayMs}ms per char)")
   }
 
-  private fun typeTextWithDelay(path: String, text: String, delayMs: Int) {
+  private fun typeTextWithDelay(path: String, text: String, delayMs: Int, extraModifiers: Int) {
     val interUs = scaledInterKeyDelayUs()
     val downUs = scaledDownHoldUs(baseKeyDownHoldUs)
     for (ch in text) {
       val stroke = keyboardMapper.getStrokeForChar(ch)
       if (stroke != null) {
         val reports = ArrayList<ByteArray>(5)
-        reports.add(keyboardReport(0x00, 0x00))
-        addStrokeReports(reports, stroke)
+        reports.add(keyboardReport(extraModifiers, 0x00))
+        addStrokeReports(reports, stroke, extraModifiers)
         writeKeyboardReportsWithDelays(
           path,
           reports = reports,
@@ -593,7 +593,7 @@ class GadgetManager(
         )
         if (delayMs > 0) Thread.sleep(delayMs.toLong())
       } else {
-        handleUnsupportedChar(path, ch, delayMs, withPerCharDelay = true)
+        handleUnsupportedChar(path, ch, delayMs, withPerCharDelay = true, extraModifiers)
       }
     }
   }
@@ -987,13 +987,13 @@ class GadgetManager(
     )
   }
 
-  private fun typeText(path: String, text: String) {
+  private fun typeText(path: String, text: String, extraModifiers: Int = 0) {
     var idx = 0
     var charsSinceFlush = 0
     while (idx < text.length) {
       val end = min(text.length, idx + maxTypedCharsPerBatch)
       val chunk = text.substring(idx, end)
-      typeTextChunk(path, chunk)
+      typeTextChunk(path, chunk, extraModifiers)
       charsSinceFlush += chunk.length
       if (charsSinceFlush >= flushEveryChars) {
         Thread.sleep(flushDelayMs)
@@ -1003,7 +1003,7 @@ class GadgetManager(
     }
   }
 
-  private fun typeTextChunk(path: String, chunk: String) {
+  private fun typeTextChunk(path: String, chunk: String, extraModifiers: Int) {
     val strokes = ArrayList<KeyStroke>(chunk.length)
     for (ch in chunk) {
       val s = keyboardMapper.getStrokeForChar(ch)
@@ -1021,19 +1021,20 @@ class GadgetManager(
     val downUs = scaledDownHoldUs(baseKeyDownHoldUs)
 
     val reports = ArrayList<ByteArray>(1 + strokes.size * 4)
-    reports.add(keyboardReport(0x00, 0x00))
+    reports.add(keyboardReport(extraModifiers, 0x00))
     for (stroke in strokes) {
-      addStrokeReports(reports, stroke)
+      addStrokeReports(reports, stroke, extraModifiers)
     }
     writeKeyboardReportsWithDelays(path, reports, strokeDelays(reports.size, interUs, downUs))
   }
 
-  private fun addStrokeReports(reports: MutableList<ByteArray>, stroke: KeyStroke) {
-    reports.add(keyboardReport(stroke.modifiers, stroke.keyCode))
-    reports.add(keyboardReport(0x00, 0x00))
+  private fun addStrokeReports(reports: MutableList<ByteArray>, stroke: KeyStroke, extraModifiers: Int = 0) {
+    val mods = stroke.modifiers or extraModifiers
+    reports.add(keyboardReport(mods, stroke.keyCode))
+    reports.add(keyboardReport(extraModifiers, 0x00))
     stroke.terminatorKeyCode?.let { key ->
-      reports.add(keyboardReport(0x00, key))
-      reports.add(keyboardReport(0x00, 0x00))
+      reports.add(keyboardReport(extraModifiers, key))
+      reports.add(keyboardReport(extraModifiers, 0x00))
     }
   }
 
@@ -1126,13 +1127,19 @@ class GadgetManager(
     }
   }
 
-  private fun handleUnsupportedChar(path: String, ch: Char, delayMs: Int, withPerCharDelay: Boolean) {
+  private fun handleUnsupportedChar(
+    path: String,
+    ch: Char,
+    delayMs: Int,
+    withPerCharDelay: Boolean,
+    extraModifiers: Int = 0
+  ) {
     val composedStrokes = ArrayList<KeyStroke>(2)
     if (addComposedUnicodeStrokes(ch, composedStrokes)) {
       val reports = ArrayList<ByteArray>(1 + composedStrokes.size * 4)
-      reports.add(keyboardReport(0x00, 0x00))
+      reports.add(keyboardReport(extraModifiers, 0x00))
       for (stroke in composedStrokes) {
-        addStrokeReports(reports, stroke)
+        addStrokeReports(reports, stroke, extraModifiers)
       }
       writeKeyboardReportsWithDelays(
         path,
@@ -1156,8 +1163,8 @@ class GadgetManager(
           val stroke = keyboardMapper.getStrokeForChar(c)
           if (stroke != null) {
             val reports = ArrayList<ByteArray>(5)
-            reports.add(keyboardReport(0x00, 0x00))
-            addStrokeReports(reports, stroke)
+            reports.add(keyboardReport(extraModifiers, 0x00))
+            addStrokeReports(reports, stroke, extraModifiers)
             writeKeyboardReportsWithDelays(
               path,
               reports = reports,
