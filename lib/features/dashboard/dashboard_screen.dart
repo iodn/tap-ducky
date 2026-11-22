@@ -309,26 +309,21 @@ class DashboardScreen extends ConsumerWidget {
   void _showQuickActionsSheet(BuildContext context, WidgetRef ref, ExecutionState exec) {
     showModalBottomSheet(
       context: context,
-      builder: (context) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
+      isScrollControlled: true,
+      useSafeArea: true,
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        top: false,
+        child: ListView(
+          shrinkWrap: true,
+          padding: const EdgeInsets.only(bottom: 8),
           children: [
-            const SizedBox(height: 8),
-            Container(
-              width: 40,
-              height: 4,
-              decoration: BoxDecoration(
-                color: Theme.of(context).colorScheme.onSurfaceVariant.withOpacity(0.4),
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-            const SizedBox(height: 16),
             ListTile(
               leading: const Icon(Icons.inventory_2),
               title: const Text('Payload Manager'),
               subtitle: const Text('Create, edit, import, export'),
               onTap: () {
-                Navigator.pop(context);
+                Navigator.pop(sheetContext);
                 context.go(const PayloadsRoute().location);
               },
             ),
@@ -337,7 +332,7 @@ class DashboardScreen extends ConsumerWidget {
               title: const Text('Scheduler'),
               subtitle: const Text('Time windows & triggers'),
               onTap: () {
-                Navigator.pop(context);
+                Navigator.pop(sheetContext);
                 context.go(const ScheduleRoute().location);
               },
             ),
@@ -346,7 +341,7 @@ class DashboardScreen extends ConsumerWidget {
               title: const Text('Settings'),
               subtitle: const Text('Theme, logging, HID config'),
               onTap: () {
-                Navigator.pop(context);
+                Navigator.pop(sheetContext);
                 context.go(const SettingsRoute().location);
               },
             ),
@@ -355,7 +350,7 @@ class DashboardScreen extends ConsumerWidget {
               title: const Text('Logs'),
               subtitle: const Text('Execution history'),
               onTap: () {
-                Navigator.pop(context);
+                Navigator.pop(sheetContext);
                 context.push(const LogsRoute().location);
               },
             ),
@@ -364,7 +359,7 @@ class DashboardScreen extends ConsumerWidget {
               title: const Text('Device Info'),
               subtitle: const Text('Diagnostics & compatibility'),
               onTap: () {
-                Navigator.pop(context);
+                Navigator.pop(sheetContext);
                 context.push(const DeviceRoute().location);
               },
             ),
@@ -374,11 +369,10 @@ class DashboardScreen extends ConsumerWidget {
                 title: const Text('Panic Stop'),
                 subtitle: const Text('Emergency stop and gadget teardown'),
                 onTap: () async {
-                  Navigator.pop(context);
+                  Navigator.pop(sheetContext);
                   await ref.read(executionControllerProvider.notifier).panicStop();
                 },
               ),
-            const SizedBox(height: 8),
           ],
         ),
       ),
@@ -851,35 +845,39 @@ class _QuickAccessGrid extends StatelessWidget {
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, constraints) {
-        final crossAxisCount = constraints.maxWidth > 600 ? 4 : 2;
-        return GridView.count(
-          crossAxisCount: crossAxisCount,
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          mainAxisSpacing: 12,
-          crossAxisSpacing: 12,
-          childAspectRatio: 1.3,
+        const gap = 12.0;
+        final minTileWidth = MediaQuery.textScalerOf(context).scale(14) * 9;
+        final columns = constraints.maxWidth >= minTileWidth * 4 + gap * 3
+            ? 4
+            : (constraints.maxWidth >= minTileWidth * 2 + gap ? 2 : 1);
+        final tileWidth = (constraints.maxWidth - gap * (columns - 1)) / columns;
+        return Wrap(
+          spacing: gap,
+          runSpacing: gap,
           children: [
-            _QuickAccessTile(
-              icon: Icons.schedule,
-              label: 'Schedule',
-              onTap: onScheduleTap,
-            ),
-            _QuickAccessTile(
-              icon: Icons.settings,
-              label: 'Settings',
-              onTap: onSettingsTap,
-            ),
-            _QuickAccessTile(
-              icon: Icons.list_alt,
-              label: 'Logs',
-              onTap: onLogsTap,
-            ),
-            _QuickAccessTile(
-              icon: Icons.phone_android,
-              label: 'Device',
-              onTap: onDeviceTap,
-            ),
+            for (final tile in [
+              _QuickAccessTile(
+                icon: Icons.schedule,
+                label: 'Schedule',
+                onTap: onScheduleTap,
+              ),
+              _QuickAccessTile(
+                icon: Icons.settings,
+                label: 'Settings',
+                onTap: onSettingsTap,
+              ),
+              _QuickAccessTile(
+                icon: Icons.list_alt,
+                label: 'Logs',
+                onTap: onLogsTap,
+              ),
+              _QuickAccessTile(
+                icon: Icons.phone_android,
+                label: 'Device',
+                onTap: onDeviceTap,
+              ),
+            ])
+              SizedBox(width: tileWidth, child: tile),
           ],
         );
       },
@@ -906,7 +904,9 @@ class _QuickAccessTile extends StatelessWidget {
       clipBehavior: Clip.antiAlias,
       child: InkWell(
         onTap: onTap,
-        child: Padding(
+        child: Container(
+          width: double.infinity,
+          constraints: const BoxConstraints(minHeight: 96),
           padding: const EdgeInsets.all(16),
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
