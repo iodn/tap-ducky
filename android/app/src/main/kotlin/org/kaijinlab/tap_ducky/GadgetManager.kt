@@ -396,7 +396,7 @@ class GadgetManager(
     }
     if (prefs.activeGadgetDir != null || prefs.pendingGadgetDir != null) {
       val existing = refreshAndEmitStatus()
-      if (existing.state == "ACTIVE" || existing.state == "ERROR") return
+      if (existing.state == "ACTIVE") return
     }
 
     setState("ACTIVATING", profile.id, "Creating gadget…")
@@ -434,12 +434,20 @@ class GadgetManager(
       r = root.exec(Configfs.buildAttachToStockScript(profile, stockDir, stockUdc), timeoutSec = 30)
     }
     if (!r.ok) {
+      val detail = r.stderr.trim().ifEmpty { r.stdout.trim() }
+      if (r.exitCode == Configfs.HOST_ATTACHED_REFUSED) {
+        log.log("usb", "Activation refused: unplug the USB data cable first")
+        if (prefs.activeGadgetDir == null) prefs.clearUsbSnapshot()
+        setState("IDLE", null, detail.ifEmpty {
+          "Unplug the USB data cable before switching the Android USB configuration, then retry."
+        })
+        return
+      }
       log.logError("gadget", "Activation failed; cleaning up the incomplete gadget")
       val replacedBoundGadget = snap.boundGadgetsRaw.orEmpty().lineSequence()
         .any { it.substringBefore(':') == gadgetDir }
       val preBindFailure = r.exitCode in listOf(Configfs.HID_ALLOCATION_FAILED, Configfs.GADGET_CREATION_FAILED)
       val recovered = recoverUsbSession(gadgetDir, "activation_failed", restore = !preBindFailure || replacedBoundGadget)
-      val detail = r.stderr.trim().ifEmpty { r.stdout.trim() }
       setError("Activation failed (exit=${r.exitCode}). $detail${recoveryHint(recovered)}")
       return
     }
@@ -500,15 +508,94 @@ class GadgetManager(
   fun deactivate() {
     val current = statusRef.get()
     if (current.state == "ACTIVATING") return
+    if (hostAttachedNow() != false) {
+      log.log("usb", "Disarm blocked: USB host attached or state unknown")
+      setNotice("Unplug the USB data cable before disarming. The session is still armed.")
+      return
+    }
     stopUsbSession("Deactivating…", "deactivate")
   }
 
   fun panicStop() {
+    if (hostAttachedNow() != false) {
+      // Releasing keys is the emergency action. Unbinding or restoring the
+      // stock USB configuration under a live host can reset/reboot the device,
+      // so keep the gadget bound and let the user unplug before disarming.
+      try {
+        releaseAllKeysBestEffort()
+      } catch (_: Throwable) {
+      }
+      closeHidWritersBestEffort()
+      setNotice("Panic Stop released all keys. Unplug the USB data cable before disarming.")
+      log.log("usb", "Panic stop kept the gadget bound while a host is attached")
+      return
+    }
     stopUsbSession("Panic stop…", "panic_stop")
+  }
+
+  private fun readActiveUdcName(): String? {
+    val dir = prefs.activeGadgetDir ?: prefs.pendingGadgetDir ?: return null
+    if (!dir.matches(Regex("[A-Za-z0-9._-]+"))) return null
+    for (base in listOf("/config/usb_gadget", "/sys/kernel/config/usb_gadget")) {
+      val name = root.exec(
+        "cat $base/$dir/UDC 2>/dev/null || true",
+        timeoutSec = 3,
+      ).stdout.lineSequence().firstOrNull()?.trim()?.trim('\r') ?: continue
+      if (name.isNotBlank() && udcNameRegex.matches(name)) return name
+    }
+    return null
+  }
+
+  private fun readAnyUdcName(): String? {
+    val prop = root.exec("getprop sys.usb.controller 2>/dev/null || true", timeoutSec = 3)
+      .stdout.lineSequence().firstOrNull()?.trim()?.trim('\r')
+    if (!prop.isNullOrBlank() && udcNameRegex.matches(prop) && !prop.startsWith("dummy_udc")) {
+      return prop
+    }
+    val list = root.exec("ls -1 /sys/class/udc 2>/dev/null || true", timeoutSec = 3).stdout
+    return list.lineSequence()
+      .map { it.trim().trim('\r') }
+      .firstOrNull { it.isNotBlank() && udcNameRegex.matches(it) && !it.startsWith("dummy_udc") }
+  }
+
+  private fun readUdcStateNow(): String? {
+    val udc = readActiveUdcName() ?: readAnyUdcName() ?: return null
+    val out = root.exec("cat /sys/class/udc/$udc/state 2>/dev/null || true", timeoutSec = 3).stdout
+    return out.lineSequence().firstOrNull()?.trim()?.trim('\r')?.takeIf { it.isNotBlank() }
+  }
+
+  /**
+   * null means "cannot prove the host is detached". Callers must treat null
+   * as unsafe and avoid touching the UDC or USB properties.
+   */
+  private fun hostAttachedNow(): Boolean? {
+    val raw = readUdcStateNow() ?: return null
+    val state = raw.lowercase(Locale.US).replace('-', ' ').replace('_', ' ')
+    if (state.contains("not attached") || state.contains("disconnected") ||
+      state.contains("unbound") || state.contains("disabled") ||
+      state.contains("not connected")
+    ) {
+      return false
+    }
+    return true
+  }
+
+  private fun setNotice(message: String) {
+    val current = statusRef.get()
+    if (current.state == "ACTIVATING") return
+    val next = current.copy(message = message)
+    statusRef.set(next)
+    emit(next)
+    log.log("usb", message)
   }
 
   @Synchronized
   private fun stopUsbSession(message: String, reason: String) {
+    if (hostAttachedNow() != false) {
+      setNotice("Unplug the USB data cable before changing the USB session.")
+      log.log("usb", "USB teardown blocked: host attached or state unknown")
+      return
+    }
     val gadgetDir = prefs.activeGadgetDir ?: prefs.pendingGadgetDir ?: return
     setState("ACTIVATING", null, message)
     stopUdcPolling()
@@ -528,6 +615,10 @@ class GadgetManager(
   }
 
   private fun recoverUsbSession(gadgetDir: String, reason: String, restore: Boolean = true): Boolean {
+    if (hostAttachedNow() != false) {
+      log.log("usb", "USB recovery deferred: unplug the USB data cable first ($reason)")
+      return false
+    }
     val shared = prefs.pendingSharedGadget && gadgetDir == prefs.pendingGadgetDir
     val cleanup = root.exec(Configfs.buildUnbindAndCleanupScript(gadgetDir, shared), timeoutSec = 12)
     if (!cleanup.ok) {
@@ -1030,6 +1121,12 @@ class GadgetManager(
     val configured = udc?.contains("configured") == true
     return current.deviceConnected || configured
   }
+
+  /**
+   * Authoritative precondition for changing the USB configuration. Unknown
+   * state is reported as attached so callers never touch the UDC blindly.
+   */
+  fun isHostAttached(): Boolean = hostAttachedNow() != false
 
   fun isUdcConfigured(): Boolean {
     val udc = statusRef.get().udcState?.trim()?.lowercase(Locale.US)

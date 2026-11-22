@@ -36,6 +36,7 @@ class MainActivity : FlutterActivity() {
         "checkSupport" -> runAsync(result) { manager.checkSupport() }
         "listUdcs" -> runAsync(result) { manager.listUdcs() }
         "getStatus" -> runAsync(result) { manager.getStatusSnapshot().toMap() }
+        "isHostAttached" -> runAsync(result) { manager.isHostAttached() }
         "getDiagnostics" -> runAsync(result) { manager.getDiagnostics() }
         "setKeyboardLayout" -> {
           val layout = (call.arguments as? Int) ?: KeyboardLayout.LAYOUT_US

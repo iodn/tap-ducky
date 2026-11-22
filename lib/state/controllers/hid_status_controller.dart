@@ -270,6 +270,10 @@ class HidStatusController extends Notifier<HidStatus> {
     await service.deactivate();
   }
 
+  Future<bool> isHostAttached() {
+    return ref.read(platformGadgetServiceProvider).isHostAttached();
+  }
+
   Future<void> panicStop() async {
     final service = ref.read(platformGadgetServiceProvider);
     await service.panicStop();

@@ -111,11 +111,39 @@ class TaskBar extends ConsumerWidget {
                                     label: hid.sessionArmed
                                         ? 'Armed'
                                         : 'Disarmed',
-                                    onTap: () => ref
-                                        .read(
-                                          hidStatusControllerProvider.notifier,
-                                        )
-                                        .toggleSessionArmed(),
+                                    onTap: () async {
+                                      var attached = hid.deviceConnected;
+                                      try {
+                                        attached = await ref
+                                            .read(
+                                              hidStatusControllerProvider
+                                                  .notifier,
+                                            )
+                                            .isHostAttached();
+                                      } catch (_) {}
+                                      if (!context.mounted) return;
+                                      if (attached) {
+                                        ScaffoldMessenger.of(context)
+                                            .showSnackBar(
+                                          SnackBar(
+                                            content: Text(
+                                              hid.sessionArmed
+                                                  ? 'Unplug the USB data cable before disarming.'
+                                                  : 'Unplug the USB data cable, arm the session, then reconnect the cable to the target.',
+                                            ),
+                                            behavior:
+                                                SnackBarBehavior.floating,
+                                          ),
+                                        );
+                                        return;
+                                      }
+                                      ref
+                                          .read(
+                                            hidStatusControllerProvider
+                                                .notifier,
+                                          )
+                                          .toggleSessionArmed();
+                                    },
                                   ),
                                   if (exec.isRunning) ...[
                                     const SizedBox(width: 8),

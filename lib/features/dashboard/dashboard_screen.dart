@@ -20,6 +20,18 @@ import '../../widgets/root_required_card.dart';
 class DashboardScreen extends ConsumerWidget {
   const DashboardScreen({super.key});
 
+  void _showCableMessage(BuildContext context, {required bool armed}) {
+    final message = armed
+        ? 'Unplug the USB data cable before disarming.'
+        : 'Unplug the USB data cable, arm the session, then reconnect the cable to the target.';
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
   Future<void> _armIfNeeded(WidgetRef ref) async {
     final hid = ref.read(hidStatusControllerProvider);
     if (hid.sessionArmed) return;
@@ -155,6 +167,18 @@ class DashboardScreen extends ConsumerWidget {
                 hid: hid,
                 exec: exec,
                 onArmToggle: () async {
+                  var attached = hid.deviceConnected;
+                  try {
+                    attached = await ref
+                        .read(hidStatusControllerProvider.notifier)
+                        .isHostAttached();
+                  } catch (_) {}
+                  if (!context.mounted) return;
+                  if (attached) {
+                    _showCableMessage(context, armed: hid.sessionArmed);
+                    return;
+                  }
+
                   if (hid.sessionArmed) {
                     await ref.read(hidStatusControllerProvider.notifier).deactivate();
                     return;
@@ -549,7 +573,8 @@ class _HeroStatusCard extends ConsumerWidget {
   String _getStatusSubtitle() {
     if (!hid.rootAvailable) return 'Root access required';
     if (!hid.hidSupported) return 'USB gadget not supported';
-    if (!hid.sessionArmed) return hid.message ?? 'Tap to activate USB gadget';
+    if (hid.message != null && hid.message!.isNotEmpty) return hid.message!;
+    if (!hid.sessionArmed) return 'Tap to activate USB gadget';
     if (!hid.deviceConnected) return 'Connect USB cable to target';
     if (exec.isRunning) return 'Payload in progress';
     return 'System operational';

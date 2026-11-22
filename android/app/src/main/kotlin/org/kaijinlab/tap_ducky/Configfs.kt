@@ -6,6 +6,44 @@ import java.util.Locale
 object Configfs {
   const val HID_ALLOCATION_FAILED = 23
   const val GADGET_CREATION_FAILED = 24
+  const val HOST_ATTACHED_REFUSED = 25
+
+  /**
+   * f_hid has a small global instance limit. Android's stock gadget can hold
+   * idle hid.* instances that are not linked into any configuration. Remove
+   * only those unlinked instances; a linked/active HID function is never
+   * touched. This runs only after the caller has verified the UDC is detached.
+   */
+  private val reclaimUnlinkedHidScript = """
+    CFGBASE="/config/usb_gadget"
+    [ -d "${'$'}CFGBASE" ] || CFGBASE="/sys/kernel/config/usb_gadget"
+    reclaim_unlinked_hid() {
+      base=${'$'}1
+      [ -d "${'$'}base" ] || return 0
+      for g in "${'$'}base"/*; do
+        [ -d "${'$'}g" ] || continue
+        for f in "${'$'}g"/functions/hid.*; do
+          [ -d "${'$'}f" ] || continue
+          used=0
+          for cfg in "${'$'}g"/configs/*; do
+            [ -d "${'$'}cfg" ] || continue
+            for link in "${'$'}cfg"/*; do
+              [ -L "${'$'}link" ] || continue
+              target=${'$'}(readlink -f "${'$'}link" 2>/dev/null || true)
+              current=${'$'}(readlink -f "${'$'}f" 2>/dev/null || true)
+              if [ -n "${'$'}target" ] && [ "${'$'}target" = "${'$'}current" ]; then
+                used=1
+              fi
+            done
+          done
+          if [ "${'$'}used" = "0" ]; then
+            rmdir "${'$'}f" 2>/dev/null || true
+          fi
+        done
+      done
+    }
+    reclaim_unlinked_hid "${'$'}CFGBASE"
+  """.trimIndent()
 
   fun buildProbeSessionScript(gadgetDir: String, shared: Boolean): String {
     val prefix = if (shared) "hid.tapducky" else "hid.usb"
@@ -111,6 +149,24 @@ object Configfs {
         echo "No UDC found in /sys/class/udc" >&2
         exit 3
       fi
+
+      # Never touch the USB device controller while a host is attached.
+      # Unbinding the stock Android gadget under a live host can reset or
+      # reboot the device on some platforms. Only detached UDCs are usable.
+      DETACHED_UDCS=""
+      for UDC_NAME in ${'$'}UDC_CANDIDATES; do
+        HOST_STATE=${'$'}(cat "/sys/class/udc/${'$'}UDC_NAME/state" 2>/dev/null | tr -d '\r' | tr 'A-Z' 'a-z' | tr '-' ' ')
+        if [ "${'$'}HOST_STATE" = "not attached" ] || [ "${'$'}HOST_STATE" = "disconnected" ] || [ "${'$'}HOST_STATE" = "unbound" ] || [ "${'$'}HOST_STATE" = "disabled" ]; then
+          DETACHED_UDCS="${'$'}DETACHED_UDCS ${'$'}UDC_NAME"
+        fi
+      done
+      if [ -z "${'$'}DETACHED_UDCS" ]; then
+        echo "Unplug the USB data cable before switching the Android USB configuration, then retry." >&2
+        exit $HOST_ATTACHED_REFUSED
+      fi
+      UDC_CANDIDATES="${'$'}DETACHED_UDCS"
+
+      $reclaimUnlinkedHidScript
 
       G="${'$'}CFGBASE/$gadget"
       if [ -d "${'$'}G" ]; then
@@ -277,6 +333,7 @@ object Configfs {
       UDC_NAME=${shEscape(udc)}
       [ "${'$'}(cat UDC)" = "${'$'}UDC_NAME" ] || exit 25
       $requireDetachedStockHost
+      $reclaimUnlinkedHidScript
       set -- configs/*
       if [ "${'$'}#" -ne 1 ] || [ ! -d "${'$'}1" ]; then
         echo "Stock USB gadget must have exactly one configuration" >&2
@@ -369,7 +426,7 @@ object Configfs {
     val expectedHexLen = expectedHex.length
     return """
       if ! mkdir functions/$fn; then
-        echo "Cannot allocate USB HID function $fn. If the error is 'No such device', end any other USB HID gadget session and retry. The kernel may have no free HID slots or may lack HID gadget support." >&2
+        echo "Cannot allocate USB HID function $fn. The kernel's HID function slots may all be in use (Android's stock USB can hold idle instances) or HID gadget support may be missing. Unplug the USB data cable, retry, and check Device Information > Backend Diagnostics if it persists." >&2
         exit $HID_ALLOCATION_FAILED
       fi
       echo $protocol > functions/$fn/protocol

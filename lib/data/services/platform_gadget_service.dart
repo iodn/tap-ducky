@@ -309,6 +309,12 @@ class PlatformGadgetService {
     );
   }
 
+  Future<bool> isHostAttached() async {
+    final v = await _methods.invokeMethod<dynamic>('isHostAttached');
+    if (v is bool) return v;
+    return v?.toString().toLowerCase() == 'true';
+  }
+
   Future<Map<String, dynamic>> getDiagnostics() async {
     final v = await _methods.invokeMethod<dynamic>('getDiagnostics');
     if (v is Map) return _asMap(v);
