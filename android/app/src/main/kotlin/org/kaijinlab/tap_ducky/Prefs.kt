@@ -38,6 +38,12 @@ class Prefs(context: Context) {
       sp.edit().putString(KEY_ACTIVE_MOUSE_DEV, value).apply()
     }
 
+  var activeMediaDev: String?
+    get() = sp.getString(KEY_ACTIVE_MEDIA_DEV, null)
+    set(value) {
+      sp.edit().putString(KEY_ACTIVE_MEDIA_DEV, value).apply()
+    }
+
   var prevSysUsbConfig: String?
     get() = sp.getString(KEY_PREV_SYS_USB_CONFIG, null)
     set(value) {
@@ -135,13 +141,21 @@ class Prefs(context: Context) {
     }
   }
 
-  fun setActive(profileId: String, roleType: String, gadgetDir: String, keyboardDev: String?, mouseDev: String?) {
+  fun setActive(
+    profileId: String,
+    roleType: String,
+    gadgetDir: String,
+    keyboardDev: String?,
+    mouseDev: String?,
+    mediaDev: String?,
+  ) {
     sp.edit()
       .putString(KEY_ACTIVE_PROFILE_ID, profileId)
       .putString(KEY_ACTIVE_ROLE_TYPE, roleType)
       .putString(KEY_ACTIVE_GADGET_DIR, gadgetDir)
       .putString(KEY_ACTIVE_KBD_DEV, keyboardDev)
       .putString(KEY_ACTIVE_MOUSE_DEV, mouseDev)
+      .putString(KEY_ACTIVE_MEDIA_DEV, mediaDev)
       .apply()
   }
 
@@ -152,6 +166,7 @@ class Prefs(context: Context) {
       .remove(KEY_ACTIVE_GADGET_DIR)
       .remove(KEY_ACTIVE_KBD_DEV)
       .remove(KEY_ACTIVE_MOUSE_DEV)
+      .remove(KEY_ACTIVE_MEDIA_DEV)
       .apply()
   }
 
@@ -197,6 +212,7 @@ class Prefs(context: Context) {
     private const val KEY_ACTIVE_GADGET_DIR = "active_gadget_dir"
     private const val KEY_ACTIVE_KBD_DEV = "active_keyboard_dev"
     private const val KEY_ACTIVE_MOUSE_DEV = "active_mouse_dev"
+    private const val KEY_ACTIVE_MEDIA_DEV = "active_media_dev"
     private const val KEY_PREV_SYS_USB_CONFIG = "prev_sys_usb_config"
     private const val KEY_PREV_SYS_USB_STATE = "prev_sys_usb_state"
     private const val KEY_PREV_SYS_USB_CONFIGFS = "prev_sys_usb_configfs"

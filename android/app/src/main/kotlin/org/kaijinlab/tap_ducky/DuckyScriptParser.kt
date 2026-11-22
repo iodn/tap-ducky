@@ -1280,9 +1280,9 @@ class DuckyScriptExecutor(
 
   private fun managerSendMediaKey(code: String): Boolean {
     val c = code.uppercase(Locale.US)
-    val candidates = listOf("sendMediaKey", "mediaKey", "sendConsumerKey", "sendMedia", "consumerKey")
-    if (tryInvokeAny(candidates, listOf(c))) return true
-    return false
+    val sent = manager.sendMediaKey(c)
+    if (!sent) log.log("media", "Media key unavailable: $c")
+    return sent
   }
 
   private fun executeCommand(cmd: DuckyCommand) {

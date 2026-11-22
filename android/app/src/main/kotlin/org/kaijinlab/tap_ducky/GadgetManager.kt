@@ -184,10 +184,11 @@ class GadgetManager(
       when (val probe = probeSavedSession(dir)) {
         is SessionProbe.Bound -> {
           if (state != "ACTIVE" || activeRole != probe.role ||
-            prefs.activeKeyboardDev != probe.keyboard || prefs.activeMouseDev != probe.mouse) {
+            prefs.activeKeyboardDev != probe.keyboard || prefs.activeMouseDev != probe.mouse ||
+            prefs.activeMediaDev != probe.media) {
             val wasActive = prefs.activeGadgetDir == dir
             val profile = prefs.activeProfileId ?: prefs.pendingProfileId ?: "recovered:$dir"
-            prefs.setActive(profile, probe.role, dir, probe.keyboard, probe.mouse)
+            prefs.setActive(profile, probe.role, dir, probe.keyboard, probe.mouse, probe.media)
             state = "ACTIVE"
             activeId = profile
             activeRole = probe.role
@@ -459,8 +460,13 @@ class GadgetManager(
       "keyboard" -> null
       else -> resolveHidDevice(r.stdout, "hid.usb1", legacyMinor = 1)
     }
+    val mediaDev = when (role) {
+      "mouse" -> null
+      "keyboard" -> resolveHidDevice(r.stdout, "hid.usb1", legacyMinor = 1)
+      else -> resolveHidDevice(r.stdout, "hid.usb2", legacyMinor = 2)
+    }
 
-    prefs.setActive(profile.id, profile.roleType, gadgetDir, kbdDev, mouseDev)
+    prefs.setActive(profile.id, profile.roleType, gadgetDir, kbdDev, mouseDev, mediaDev)
     hostConfigurationRequestCount = 0
     lastHostLikelyConnected = false
     startForeground("USB gadget active: ${profile.name}")
@@ -471,9 +477,11 @@ class GadgetManager(
   }
 
   private fun resolveHidDevice(stdout: String, function: String, legacyMinor: Int): String {
-    val minor = stdout.lineSequence()
+    val raw = stdout.lineSequence()
       .firstOrNull { it.startsWith("$function=") }
-      ?.substringAfter(':')?.trim()?.toIntOrNull()?.takeIf { it >= 0 }
+      ?.substringAfter('=')?.trim()
+    if (raw != null && raw.matches(Regex("/dev/hidg[0-9]+"))) return raw
+    val minor = raw?.substringAfter(':')?.trim()?.toIntOrNull()?.takeIf { it >= 0 }
     return "/dev/hidg${minor ?: legacyMinor}"
   }
 
@@ -614,6 +622,53 @@ class GadgetManager(
     val del = HidSpec.keyCodeFor("DELETE") ?: 0x4C
     writeKeyboardTap(path, mods = mods, key = del, downHoldUs = scaledDownHoldUs(12000))
     log.log("test", "Ctrl+Alt+Del sent")
+  }
+
+  fun sendMediaKey(code: String): Boolean {
+    val usage = mediaUsage(code) ?: return false
+    if (!waitForActive(hidActiveGraceMs)) return false
+    val path = prefs.activeMediaDev ?: return false
+    val press = byteArrayOf(
+      (usage and 0xFF).toByte(),
+      ((usage shr 8) and 0xFF).toByte(),
+    )
+    val release = byteArrayOf(0x00, 0x00)
+    if (!writeHidReport(path, press)) return false
+    Thread.sleep(25)
+    if (!writeHidReport(path, release)) return false
+    log.log("media", "Media key $code sent (usage=0x${Integer.toHexString(usage)})")
+    return true
+  }
+
+  private fun mediaUsage(code: String): Int? = when (code.uppercase(Locale.US)) {
+    "PLAYPAUSE", "MEDIA_PLAYPAUSE" -> 0xCD
+    "STOP", "MEDIA_STOP" -> 0xB7
+    "PREVIOUSSONG", "MEDIA_PREV" -> 0xB6
+    "NEXTSONG", "MEDIA_NEXT" -> 0xB5
+    "VOLUMEUP", "MEDIA_VOLUMEUP" -> 0xE9
+    "VOLUMEDOWN", "MEDIA_VOLUMEDOWN" -> 0xEA
+    "MUTE", "MEDIA_MUTE" -> 0xE2
+    else -> null
+  }
+
+  private fun writeHidReport(path: String, bytes: ByteArray): Boolean {
+    val hexEsc = toPrintfEsc(bytes)
+    val script = "printf '$hexEsc' > ${shQuote(path)}"
+    var attempt = 0
+    while (attempt < 3) {
+      val r = root.exec(script, timeoutSec = 5)
+      if (r.ok) {
+        recordWriteSuccess()
+        return true
+      }
+      recordWriteFailure()
+      if (attempt < 2) {
+        Thread.sleep(200L * (1L shl attempt))
+        waitForActive(hidActiveGraceMs)
+      }
+      attempt++
+    }
+    return false
   }
 
   fun executeDuckyScript(script: String, delayMultiplier: Double = 1.0, executionId: String? = null) {
@@ -1326,7 +1381,12 @@ class GadgetManager(
   }
 
   private sealed interface SessionProbe {
-    data class Bound(val role: String, val keyboard: String?, val mouse: String?) : SessionProbe
+    data class Bound(
+      val role: String,
+      val keyboard: String?,
+      val mouse: String?,
+      val media: String?,
+    ) : SessionProbe
     data object Unbound : SessionProbe
     data object Unknown : SessionProbe
   }
@@ -1347,20 +1407,36 @@ class GadgetManager(
     val first = functions.firstOrNull { it.firstOrNull() == "${prefix}0" }
       ?: return SessionProbe.Unknown
     val second = functions.firstOrNull { it.firstOrNull() == "${prefix}1" }
-    val role = when (first.getOrNull(1) to second?.getOrNull(1)) {
-      "1" to null -> "keyboard"
-      "2" to null -> "mouse"
-      "1" to "2" -> "composite"
+    val third = functions.firstOrNull { it.firstOrNull() == "${prefix}2" }
+    val role = when {
+      first.getOrNull(1) == "1" && second?.getOrNull(1) == "2" -> "composite"
+      first.getOrNull(1) == "1" -> "keyboard"
+      first.getOrNull(1) == "2" -> "mouse"
       else -> return SessionProbe.Unknown
     }
     val saved = prefs.activeGadgetDir == gadgetDir && prefs.activeRoleType == role
-    fun endpoint(fields: List<String>?, fallback: String?): String? =
-      fields?.getOrNull(3)?.toIntOrNull()?.takeIf { it >= 0 }?.let { "/dev/hidg$it" }
-        ?: fallback?.takeIf { saved && it.matches(Regex("/dev/hidg[0-9]+")) }
+    fun endpoint(fields: List<String>?, fallback: String?): String? {
+      val dev = fields?.getOrNull(2)?.trim()
+      if (dev != null && dev.matches(Regex("/dev/hidg[0-9]+"))) return dev
+      return fallback?.takeIf { saved && it.matches(Regex("/dev/hidg[0-9]+")) }
+    }
+    val keyboardFields = if (role == "mouse") null else first
+    val mouseFields = when (role) {
+      "mouse" -> first
+      "composite" -> second
+      else -> null
+    }
+    val mediaFields = when (role) {
+      "mouse" -> null
+      "composite" -> third?.takeIf { it.getOrNull(1) == "0" }
+        ?: second?.takeIf { it.getOrNull(1) == "0" }
+      else -> second?.takeIf { it.getOrNull(1) == "0" }
+    }
     return SessionProbe.Bound(
       role,
-      if (role == "mouse") null else endpoint(first, prefs.activeKeyboardDev),
-      if (role == "keyboard") null else endpoint(if (role == "mouse") first else second, prefs.activeMouseDev),
+      endpoint(keyboardFields, prefs.activeKeyboardDev),
+      endpoint(mouseFields, prefs.activeMouseDev),
+      endpoint(mediaFields, prefs.activeMediaDev.takeIf { mediaFields != null }),
     )
   }
 
@@ -1736,7 +1812,7 @@ class GadgetManager(
           continue
         fi
         FOUND=1
-        for FN in hid.usb0 hid.usb1; do
+        for FN in hid.usb0 hid.usb1 hid.usb2; do
           INSTANCE="${'$'}FN"
           if [ "$shared" = "true" ]; then
             INSTANCE="hid.tapducky${'$'}{FN#hid.usb}"
@@ -1763,18 +1839,29 @@ class GadgetManager(
   private fun expectedHidDescriptorLengths(roleType: String): Map<String, Int> {
     return when (roleType.lowercase(Locale.US)) {
       "mouse" -> mapOf("hid.usb0" to HidSpec.MOUSE_REPORT_DESC.size)
-      "keyboard" -> mapOf("hid.usb0" to HidSpec.KEYBOARD_REPORT_DESC.size)
-      else -> mapOf("hid.usb0" to HidSpec.KEYBOARD_REPORT_DESC.size, "hid.usb1" to HidSpec.MOUSE_REPORT_DESC.size)
+      "keyboard" -> mapOf(
+        "hid.usb0" to HidSpec.KEYBOARD_REPORT_DESC.size,
+        "hid.usb1" to HidSpec.CONSUMER_REPORT_DESC.size,
+      )
+      else -> mapOf(
+        "hid.usb0" to HidSpec.KEYBOARD_REPORT_DESC.size,
+        "hid.usb1" to HidSpec.MOUSE_REPORT_DESC.size,
+        "hid.usb2" to HidSpec.CONSUMER_REPORT_DESC.size,
+      )
     }
   }
 
   private fun expectedHidDescriptorHex(roleType: String): Map<String, String> {
     return when (roleType.lowercase(Locale.US)) {
       "mouse" -> mapOf("hid.usb0" to bytesToHex(HidSpec.MOUSE_REPORT_DESC))
-      "keyboard" -> mapOf("hid.usb0" to bytesToHex(HidSpec.KEYBOARD_REPORT_DESC))
+      "keyboard" -> mapOf(
+        "hid.usb0" to bytesToHex(HidSpec.KEYBOARD_REPORT_DESC),
+        "hid.usb1" to bytesToHex(HidSpec.CONSUMER_REPORT_DESC),
+      )
       else -> mapOf(
         "hid.usb0" to bytesToHex(HidSpec.KEYBOARD_REPORT_DESC),
         "hid.usb1" to bytesToHex(HidSpec.MOUSE_REPORT_DESC),
+        "hid.usb2" to bytesToHex(HidSpec.CONSUMER_REPORT_DESC),
       )
     }
   }

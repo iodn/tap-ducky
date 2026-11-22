@@ -20,7 +20,7 @@ object Configfs {
         UDC_NAME=${'$'}(cat "${'$'}G/UDC") || exit 2
         [ -n "${'$'}UDC_NAME" ] || continue
         echo bound
-        for fn in ${prefix}0 ${prefix}1; do
+        for fn in ${prefix}0 ${prefix}1 ${prefix}2; do
           for link in "${'$'}G"/configs/*/"${'$'}fn"; do
             [ -L "${'$'}link" ] && [ -d "${'$'}link" ] || continue
             target=${'$'}(readlink "${'$'}link") || continue
@@ -150,7 +150,10 @@ object Configfs {
 
     val functions = when (p.roleType.lowercase(Locale.US)) {
       "mouse" -> buildMouseFunctionScript("hid.usb0")
-      "keyboard" -> buildKeyboardFunctionScript("hid.usb0")
+      "keyboard" -> listOf(
+        buildKeyboardFunctionScript("hid.usb0"),
+        buildConsumerFunctionScript("hid.usb1"),
+      ).joinToString("\n\n")
       else -> buildCompositeFunctionScript()
     }
 
@@ -250,18 +253,23 @@ object Configfs {
 
   fun buildAttachToStockScript(profile: ParsedProfile, gadgetDir: String, udc: String): String {
     val composite = profile.roleType.lowercase(Locale.US) !in listOf("keyboard", "mouse")
-    val names = if (composite) {
-      "hid.tapducky0 hid.tapducky1"
-    } else {
-      "hid.tapducky0"
+    val mouse = profile.roleType.equals("mouse", ignoreCase = true)
+    val names = when {
+      mouse -> "hid.tapducky0"
+      composite -> "hid.tapducky0 hid.tapducky1 hid.tapducky2"
+      else -> "hid.tapducky0 hid.tapducky1"
     }
-    val functions = if (profile.roleType.equals("mouse", ignoreCase = true)) {
-      buildMouseFunctionScript("hid.tapducky0")
-    } else {
-      listOfNotNull(
+    val functions = when {
+      mouse -> buildMouseFunctionScript("hid.tapducky0")
+      composite -> listOf(
         buildKeyboardFunctionScript("hid.tapducky0"),
-        if (composite) buildMouseFunctionScript("hid.tapducky1") else null,
-      ).joinToString("\n")
+        buildMouseFunctionScript("hid.tapducky1"),
+        buildConsumerFunctionScript("hid.tapducky2"),
+      ).joinToString("\n\n")
+      else -> listOf(
+        buildKeyboardFunctionScript("hid.tapducky0"),
+        buildConsumerFunctionScript("hid.tapducky1"),
+      ).joinToString("\n\n")
     }
     return """
       set -e
@@ -311,7 +319,7 @@ object Configfs {
   private fun buildStockCleanupScript(gadgetDir: String): String = """
     set -e
     ${stockGadgetLocation(gadgetDir)}
-    for link in configs/*/hid.tapducky0 configs/*/hid.tapducky1; do
+    for link in configs/*/hid.tapducky0 configs/*/hid.tapducky1 configs/*/hid.tapducky2; do
       [ -L "${'$'}link" ] || continue
       UDC_NAME=${'$'}(cat UDC)
       if [ -n "${'$'}UDC_NAME" ]; then
@@ -320,7 +328,7 @@ object Configfs {
       fi
       rm "${'$'}link"
     done
-    for fn in functions/hid.tapducky0 functions/hid.tapducky1; do
+    for fn in functions/hid.tapducky0 functions/hid.tapducky1 functions/hid.tapducky2; do
       if [ -d "${'$'}fn" ]; then rmdir "${'$'}fn"; fi
     done
   """.trimIndent() + "\n"
@@ -456,18 +464,29 @@ object Configfs {
     """.trimIndent()
   }
 
+  private fun buildConsumerFunctionScript(fn: String): String {
+    return buildHidFunctionScript(
+      fn = fn,
+      protocol = 0,
+      subclass = 0,
+      reportLength = 2,
+      descriptor = HidSpec.CONSUMER_REPORT_DESC,
+    )
+  }
+
   private fun buildCompositeFunctionScript(): String {
     return listOf(
       buildKeyboardFunctionScript("hid.usb0"),
-      buildMouseFunctionScript("hid.usb1")
+      buildMouseFunctionScript("hid.usb1"),
+      buildConsumerFunctionScript("hid.usb2"),
     ).joinToString("\n\n")
   }
 
   private fun expectedFunctionNames(roleType: String): List<String> {
     return when (roleType.lowercase(Locale.US)) {
       "mouse" -> listOf("hid.usb0")
-      "keyboard" -> listOf("hid.usb0")
-      else -> listOf("hid.usb0", "hid.usb1")
+      "keyboard" -> listOf("hid.usb0", "hid.usb1")
+      else -> listOf("hid.usb0", "hid.usb1", "hid.usb2")
     }
   }
 
