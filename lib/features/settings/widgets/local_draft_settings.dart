@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -81,7 +81,7 @@ class _LocalDraftSettingsState extends ConsumerState<LocalDraftSettings> {
                   ),
               ] else
                 const Text(
-                  'Choose a .litertlm model for offline drafting. GGUF files are not supported by LiteRT-LM. TapDucky keeps a local copy on this device.',
+                  'Choose a .litertlm model for offline DuckyScript drafting. GGUF files are not supported by LiteRT-LM. TapDucky keeps a local copy on this device.',
                 ),
               const SizedBox(height: 8),
               Wrap(

@@ -33,10 +33,6 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    kotlinOptions {
-        jvmTarget = JavaVersion.VERSION_17.toString()
-    }
-
     sourceSets {
         getByName("main") {
             java.srcDir("src/main/kotlin")
@@ -95,10 +91,16 @@ android {
     }
 }
 
+kotlin {
+    compilerOptions {
+        jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17
+    }
+}
+
 flutter {
     source = "../.."
 }
 
 dependencies {
-    implementation("com.google.ai.edge.litertlm:litertlm-android:0.15.0")
+    implementation("com.google.ai.edge.litertlm:litertlm-android:0.19.1")
 }

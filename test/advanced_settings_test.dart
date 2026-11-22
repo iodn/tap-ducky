@@ -1,5 +1,5 @@
 // ignore: depend_on_referenced_packages
-import 'package:test/test.dart';
+import 'package:flutter_test/flutter_test.dart';
 import 'package:tap_ducky/data/models/advanced_settings.dart';
 
 void main() {

@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter/services.dart';
 
 import '../../data/services/local_drafts_service.dart';
@@ -32,7 +32,7 @@ class _LocalDraftDialogState extends State<LocalDraftDialog> {
   Future<void> _generate() async {
     final prompt = _prompt.text.trim();
     if (prompt.isEmpty) {
-      setState(() => _error = 'Describe what you want the script to type.');
+      setState(() => _error = 'Describe what the script should do.');
       return;
     }
     FocusScope.of(context).unfocus();
@@ -43,11 +43,12 @@ class _LocalDraftDialogState extends State<LocalDraftDialog> {
     try {
       final draft = await widget.service.generate(prompt);
       if (mounted) setState(() => _draft = draft);
-    } on FormatException {
+    } on FormatException catch (e) {
       if (mounted) {
         setState(
-          () => _error =
-              'Try a simple typing request, such as “Type hello world 20 times.”',
+          () => _error = e.message.isEmpty
+              ? 'The model returned an unusable draft. Try rephrasing the request.'
+              : e.message,
         );
       }
     } on PlatformException catch (e) {
@@ -72,10 +73,6 @@ class _LocalDraftDialogState extends State<LocalDraftDialog> {
         mainAxisSize: MainAxisSize.min,
         children: [
           if (draft == null) ...[
-            const Text(
-              'Describe a plain-text typing script. Generation runs on this phone.',
-            ),
-            const SizedBox(height: 16),
             TextField(
               controller: _prompt,
               enabled: !_generating,
@@ -84,7 +81,7 @@ class _LocalDraftDialogState extends State<LocalDraftDialog> {
               maxLines: 4,
               decoration: InputDecoration(
                 labelText: 'Request',
-                hintText: 'Type hello world 20 times',
+                hintText: 'Describe what the script should do',
                 errorText: _error,
                 errorMaxLines: 4,
               ),
@@ -92,7 +89,7 @@ class _LocalDraftDialogState extends State<LocalDraftDialog> {
             if (_generating) ...[
               const LinearProgressIndicator(semanticsLabel: 'Generating draft'),
               const SizedBox(height: 8),
-              const Text('Generating on this phone…'),
+              const Text('Drafting on this device…'),
             ],
           ] else ...[
             Text(draft.title, style: Theme.of(context).textTheme.titleMedium),

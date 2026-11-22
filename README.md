@@ -36,6 +36,7 @@
   - Live validation with human‑readable issues/warnings, placeholder parameters, delay multiplier, and optional jitter for human‑like timing.
 - Payload management:
   - Create/edit payloads with name/description/tags/parameters, quick share/export, and built‑in templates/wizard.
+  - Optional offline "Draft with AI": describe a goal and a local LiteRT‑LM model writes a validated DuckyScript using the app's full command set.
 - GitHub Payload Store:
   - Add sources, browse repositories, preview files with validation, import supported scripts; auto‑detects DuckyScript and converts Digispark `.ino` sketches when possible.
 - Scheduler:

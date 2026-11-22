@@ -67,7 +67,7 @@ internal class LocalDrafts(private val activity: Activity) {
                   engine.initialize()
                   val config = ConversationConfig(
                     automaticToolCalling = false,
-                    maxOutputToken = 384,
+                    maxOutputToken = 1024,
                     thinkingConfig = ThinkingConfig(enableThinking = false),
                     enableResponseFormat = true,
                   )
@@ -152,12 +152,24 @@ internal class LocalDrafts(private val activity: Activity) {
     const val PICK_MODEL = 7351
     const val SCHEMA = """{"type":"object","properties":{"title":{"type":"string"},
 "description":{"type":"string"},"tags":{"type":"array","items":{"type":"string"}},
-"text":{"type":"string"},"repeat":{"type":"integer"}},
-"required":["title","description","tags","text","repeat"],"additionalProperties":false}"""
-    const val INSTRUCTION = """Produce a single JSON object for a plain-text typing demo.
-Keys: title (short string), description (short string), tags (array of up to 5 short strings),
-text (one printable ASCII line of prose), repeat (integer 1 to 100).
-Example: {"title":"Hello world","description":"Types a greeting twenty times.","tags":["demo"],"text":"hello world","repeat":20}
-Do not emit script code, terminal commands, or instructions to open applications. Return {} if the request requires anything other than typing display text. Return JSON only."""
+"steps":{"type":"array","items":{"type":"object","properties":{
+"action":{"type":"string"},"value":{"type":"string"},"ms":{"type":"integer"}},
+"required":["action"],"additionalProperties":false}}},
+"required":["title","description","tags","steps"],"additionalProperties":false}"""
+    const val INSTRUCTION = """You turn a request into simple keyboard actions for TapDucky, an Android USB keyboard.
+Return one JSON object: title, description, tags, steps.
+Each step is {"action":"...","value":"...","ms":1000}. Actions:
+open_url: value is a website URL.
+open_app: value is an application name.
+type: value is text to type.
+type_line: value is text, then presses ENTER.
+key: value is ENTER, TAB, ESC, SPACE, UP, DOWN, LEFT, RIGHT, or F1-F24.
+shortcut: value is modifiers and one key with spaces, such as GUI r, CTRL l, ALT TAB.
+delay: ms is milliseconds.
+mouse_click: value is LEFT, RIGHT, or MIDDLE.
+mouse_move: value is "dx,dy".
+mouse_scroll: value is UP or DOWN.
+raw: value is one DuckyScript line for anything else.
+Use open_url for websites and open_app for applications. Use plain ASCII. Return JSON only."""
   }
 }
