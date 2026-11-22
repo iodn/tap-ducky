@@ -6,7 +6,10 @@ import 'package:go_router/go_router.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../app/router.dart';
+import '../../data/models/app_settings.dart';
+import '../../data/services/local_drafts_service.dart';
 import '../../state/controllers/app_settings_controller.dart';
+import '../../state/controllers/dynamic_color_controller.dart';
 import '../../state/controllers/hid_status_controller.dart';
 import 'about_screen.dart';
 import 'widgets/donation_sheet.dart';
@@ -15,8 +18,22 @@ import 'widgets/dynamic_colors_tile.dart';
 import 'widgets/local_draft_settings.dart';
 import 'widgets/support_pill.dart';
 
-class SettingsScreen extends ConsumerWidget {
+class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({super.key});
+
+  @override
+  ConsumerState<SettingsScreen> createState() => _SettingsScreenState();
+}
+
+class _SettingsScreenState extends ConsumerState<SettingsScreen> {
+  final _searchCtrl = TextEditingController();
+  String _query = '';
+
+  @override
+  void dispose() {
+    _searchCtrl.dispose();
+    super.dispose();
+  }
 
   static const String _repoUrl = 'https://github.com/iodn/tap-ducky';
   static const String _issuesUrl = 'https://github.com/iodn/tap-ducky/issues';
@@ -98,9 +115,20 @@ class SettingsScreen extends ConsumerWidget {
   }
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  Widget build(BuildContext context) {
     final settingsAsync = ref.watch(appSettingsControllerProvider);
     final hid = ref.watch(hidStatusControllerProvider);
+    final model = ref.watch(localModelStatusProvider).value;
+    final dynamicColors = ref.watch(dynamicColorsControllerProvider);
+    final s = settingsAsync.value;
+    final groups = _settingsGroups(s, hid, model, dynamicColors);
+    final query = _query.trim().toLowerCase();
+    final matches = query.isEmpty
+        ? const <_SettingsDestination>[]
+        : groups
+            .expand((group) => group.destinations)
+            .where((destination) => destination.matches(query))
+            .toList();
 
     return Scaffold(
       appBar: AppBar(
@@ -113,47 +141,238 @@ class SettingsScreen extends ConsumerWidget {
           ),
         ],
       ),
-      body: settingsAsync.when(
-        loading: () => const Center(child: CircularProgressIndicator()),
-        error: (e, st) => Center(child: Text('Failed to load settings: $e')),
-        data: (s) {
-          final clampedMultiplier = s.delayMultiplier.clamp(0.1, 4.0);
-          return ListView(
-            children: [
-              const SizedBox(height: 10),
-              _buildDonationsSection(context, ref),
-              const SizedBox(height: 10),
-              _buildAppearanceSection(context, ref, s.themeMode),
-              const SizedBox(height: 10),
-              _buildExecutionSection(context, ref, s, clampedMultiplier),
-              const LocalDraftSettings(),
-              const SizedBox(height: 10),
-              _buildStealthSection(context),
-              const SizedBox(height: 10),
-              _buildStoreLinkSection(context),
-              const SizedBox(height: 10),
-              _buildAdvancedLinkSection(context),
-              const SizedBox(height: 10),
-              _buildHidControlSection(context, ref, hid),
-              const SizedBox(height: 10),
-              _buildAboutSection(context),
-              const SizedBox(height: 6),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: Align(
-                  alignment: Alignment.center,
-                  child: TextButton.icon(
-                    onPressed: () => _confirmResetAll(context, ref),
-                    icon: const Icon(Icons.restart_alt, size: 18),
-                    label: const Text('Reset all settings'),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 18),
-            ],
-          );
-        },
+      body: ListView(
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+        children: [
+          _SettingsSearchField(
+            controller: _searchCtrl,
+            query: _query,
+            onChanged: (value) => setState(() => _query = value),
+            onClear: () {
+              _searchCtrl.clear();
+              setState(() => _query = '');
+            },
+          ),
+          const SizedBox(height: 12),
+          if (query.isEmpty)
+            for (final group in groups) ...[
+              _SettingsGroupCard(group: group),
+              const SizedBox(height: 14),
+            ]
+          else if (matches.isEmpty)
+            _SettingsEmptyResult(query: _query)
+          else
+            _SettingsGroupCard(
+              group: _SettingsGroup('Results', matches),
+            ),
+        ],
       ),
+    );
+  }
+
+  List<_SettingsGroup> _settingsGroups(
+    AppSettings? s,
+    HidStatus hid,
+    LocalModelStatus? model,
+    bool dynamicColors,
+  ) {
+    final appearance = _SettingsDestination(
+      icon: Icons.palette_outlined,
+      title: 'Appearance',
+      subtitle: s == null
+          ? 'Theme and colors'
+          : '${_getThemeName(s.themeMode)} · ${dynamicColors ? 'Dynamic color' : 'Static colors'}',
+      keywords: const [
+        'theme',
+        'dark',
+        'light',
+        'auto',
+        'color',
+        'dynamic',
+        'appearance',
+      ],
+      builder: _appearancePage,
+    );
+    final aiDraft = _SettingsDestination(
+      icon: Icons.auto_awesome_outlined,
+      title: 'AI Drafting',
+      subtitle: switch (model?.state) {
+        'ready' => model?.name ?? 'Local model ready',
+        'missing' => 'No local model selected',
+        _ => 'Offline DuckyScript drafting',
+      },
+      keywords: const [
+        'ai',
+        'draft',
+        'model',
+        'litert',
+        'offline',
+        'duckyscript',
+        'generate',
+      ],
+      builder: _aiDraftPage,
+    );
+    final execution = _SettingsDestination(
+      icon: Icons.keyboard_outlined,
+      title: 'Execution & Typing',
+      subtitle: s == null
+          ? 'Speed, timing, logging'
+          : '${_speedLabel(s.delayMultiplier)} · ${s.delayMultiplier.toStringAsFixed(2)}×',
+      keywords: const [
+        'execution',
+        'typing',
+        'speed',
+        'delay',
+        'timing',
+        'log',
+        'unicode',
+        'screen',
+        'grace',
+        'payload',
+      ],
+      builder: _executionPage,
+    );
+    final usb = _SettingsDestination(
+      icon: Icons.usb,
+      title: 'USB & HID',
+      subtitle: hid.sessionArmed ? 'Session armed' : 'Session disarmed',
+      keywords: const [
+        'usb',
+        'hid',
+        'gadget',
+        'root',
+        'session',
+        'arm',
+        'profile',
+        'keyboard',
+      ],
+      builder: _usbPage,
+    );
+    final advanced = _SettingsDestination(
+      icon: Icons.tune,
+      title: 'Advanced',
+      subtitle: 'Profiles, hotkeys, command presets',
+      keywords: const [
+        'advanced',
+        'vid',
+        'pid',
+        'profile',
+        'hotkey',
+        'preset',
+        'layout',
+        'usb',
+      ],
+      onTap: (context) =>
+          context.push(const AdvancedSettingsRoute().location),
+    );
+    final store = _SettingsDestination(
+      icon: Icons.storefront_outlined,
+      title: 'Payload Store',
+      subtitle: 'Browse GitHub payload repositories',
+      keywords: const ['store', 'github', 'payload', 'import', 'repository'],
+      onTap: (context) => context.push(const PayloadsStoreRoute().location),
+    );
+    final about = _SettingsDestination(
+      icon: Icons.info_outline,
+      title: 'About TapDucky',
+      subtitle: 'Version, licenses, repository',
+      keywords: const ['about', 'version', 'license', 'repo', 'github', 'app'],
+      builder: _aboutPage,
+    );
+    final support = _SettingsDestination(
+      icon: Icons.volunteer_activism_outlined,
+      title: 'Support the Project',
+      subtitle: 'Donate or star the repository',
+      keywords: const [
+        'support',
+        'donate',
+        'donation',
+        'star',
+        'liberapay',
+        'bitcoin',
+        'ethereum',
+      ],
+      builder: _supportPage,
+    );
+    final reset = _SettingsDestination(
+      icon: Icons.restart_alt,
+      title: 'Reset All Settings',
+      subtitle: 'Restore every setting to its default',
+      keywords: const ['reset', 'default', 'erase', 'restore'],
+      danger: true,
+      onTap: (context) => _confirmResetAll(context, ref),
+    );
+
+    return [
+      _SettingsGroup('Personalize', [
+        appearance,
+        if (model == null || model.state != 'unsupported') aiDraft,
+      ]),
+      _SettingsGroup('Keyboard & USB', [execution, usb, advanced]),
+      _SettingsGroup('Library', [store]),
+      _SettingsGroup('About & Support', [about, support, reset]),
+    ];
+  }
+
+  Widget _appearancePage(BuildContext context, WidgetRef ref) {
+    final async = ref.watch(appSettingsControllerProvider);
+    final s = async.value;
+    if (s == null) return _SettingsLoading(error: async.error);
+    return ListView(
+      padding: const EdgeInsets.only(top: 8, bottom: 24),
+      children: [_buildAppearanceSection(context, ref, s.themeMode)],
+    );
+  }
+
+  Widget _executionPage(BuildContext context, WidgetRef ref) {
+    final async = ref.watch(appSettingsControllerProvider);
+    final s = async.value;
+    if (s == null) return _SettingsLoading(error: async.error);
+    return ListView(
+      padding: const EdgeInsets.only(top: 8, bottom: 24),
+      children: [
+        _buildExecutionSection(
+          context,
+          ref,
+          s,
+          s.delayMultiplier.clamp(0.1, 4.0),
+        ),
+        const SizedBox(height: 8),
+        _buildStealthSection(context),
+      ],
+    );
+  }
+
+  Widget _aiDraftPage(BuildContext context, WidgetRef ref) {
+    return ListView(
+      padding: const EdgeInsets.only(top: 8, bottom: 24),
+      children: const [LocalDraftSettings()],
+    );
+  }
+
+  Widget _usbPage(BuildContext context, WidgetRef ref) {
+    final hid = ref.watch(hidStatusControllerProvider);
+    return ListView(
+      padding: const EdgeInsets.only(top: 8, bottom: 24),
+      children: [
+        _buildHidControlSection(context, ref, hid),
+        const SizedBox(height: 8),
+        _buildAdvancedLinkSection(context),
+      ],
+    );
+  }
+
+  Widget _aboutPage(BuildContext context, WidgetRef ref) {
+    return ListView(
+      padding: const EdgeInsets.only(top: 8, bottom: 24),
+      children: [_buildAboutSection(context)],
+    );
+  }
+
+  Widget _supportPage(BuildContext context, WidgetRef ref) {
+    return ListView(
+      padding: const EdgeInsets.only(top: 8, bottom: 24),
+      children: [_buildDonationsSection(context, ref)],
     );
   }
 
@@ -788,25 +1007,6 @@ class SettingsScreen extends ConsumerWidget {
     );
   }
 
-  Widget _buildStoreLinkSection(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16),
-      child: SectionCard(
-        title: 'Payloads Store',
-        subtitle: 'Browse GitHub repositories and import payloads',
-        leading: Icon(Icons.storefront, color: cs.primary),
-        child: ListTile(
-          leading: const Icon(Icons.storefront),
-          title: const Text('Open Payloads Store'),
-          subtitle: const Text('Manage and import from multiple repos'),
-          trailing: const Icon(Icons.chevron_right),
-          onTap: () => context.push(const PayloadsStoreRoute().location),
-        ),
-      ),
-    );
-  }
-
   Widget _buildAdvancedLinkSection(BuildContext context) {
     final theme = Theme.of(context);
     final cs = theme.colorScheme;
@@ -1151,6 +1351,239 @@ class _ThemeCard extends StatelessWidget {
               ),
             ],
           ],
+        ),
+      ),
+    );
+  }
+}
+
+class _SettingsGroup {
+  const _SettingsGroup(this.title, this.destinations);
+
+  final String title;
+  final List<_SettingsDestination> destinations;
+}
+
+class _SettingsDestination {
+  const _SettingsDestination({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.keywords,
+    this.builder,
+    this.onTap,
+    this.danger = false,
+  });
+
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final List<String> keywords;
+  final Widget Function(BuildContext, WidgetRef)? builder;
+  final void Function(BuildContext)? onTap;
+  final bool danger;
+
+  bool matches(String query) {
+    final haystack = '$title $subtitle ${keywords.join(' ')}'.toLowerCase();
+    return haystack.contains(query);
+  }
+}
+
+class _SettingsGroupCard extends StatelessWidget {
+  const _SettingsGroupCard({required this.group});
+
+  final _SettingsGroup group;
+
+  @override
+  Widget build(BuildContext context) {
+    return SectionCard(
+      title: group.title,
+      child: Column(
+        children: [
+          for (var i = 0; i < group.destinations.length; i++) ...[
+            if (i > 0) const Divider(height: 1),
+            _SettingsDestinationTile(destination: group.destinations[i]),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _SettingsDestinationTile extends StatelessWidget {
+  const _SettingsDestinationTile({required this.destination});
+
+  final _SettingsDestination destination;
+
+  void _open(BuildContext context) {
+    final onTap = destination.onTap;
+    if (onTap != null) {
+      onTap(context);
+      return;
+    }
+    final builder = destination.builder;
+    if (builder == null) return;
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => _SettingsCategoryPage(
+          title: destination.title,
+          builder: builder,
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final accent = destination.danger ? cs.error : cs.primary;
+    final accentContainer =
+        destination.danger ? cs.errorContainer : cs.primaryContainer;
+    final onAccentContainer =
+        destination.danger ? cs.onErrorContainer : cs.onPrimaryContainer;
+
+    return ListTile(
+      contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      leading: Container(
+        width: 40,
+        height: 40,
+        decoration: BoxDecoration(
+          color: accentContainer,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Icon(destination.icon, size: 20, color: onAccentContainer),
+      ),
+      title: Text(
+        destination.title,
+        style: TextStyle(
+          fontWeight: FontWeight.w700,
+          color: destination.danger ? accent : null,
+        ),
+      ),
+      subtitle: Text(
+        destination.subtitle,
+        maxLines: 2,
+        overflow: TextOverflow.ellipsis,
+      ),
+      trailing: Icon(Icons.chevron_right, color: cs.onSurfaceVariant),
+      onTap: () => _open(context),
+    );
+  }
+}
+
+class _SettingsCategoryPage extends ConsumerWidget {
+  const _SettingsCategoryPage({required this.title, required this.builder});
+
+  final String title;
+  final Widget Function(BuildContext, WidgetRef) builder;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    return Scaffold(
+      appBar: AppBar(title: Text(title)),
+      body: builder(context, ref),
+    );
+  }
+}
+
+class _SettingsSearchField extends StatelessWidget {
+  const _SettingsSearchField({
+    required this.controller,
+    required this.query,
+    required this.onChanged,
+    required this.onClear,
+  });
+
+  final TextEditingController controller;
+  final String query;
+  final ValueChanged<String> onChanged;
+  final VoidCallback onClear;
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return TextField(
+      controller: controller,
+      onChanged: onChanged,
+      textInputAction: TextInputAction.search,
+      decoration: InputDecoration(
+        hintText: 'Search settings',
+        prefixIcon: const Icon(Icons.search),
+        suffixIcon: query.isEmpty
+            ? null
+            : IconButton(
+                tooltip: 'Clear search',
+                icon: const Icon(Icons.close),
+                onPressed: onClear,
+              ),
+        filled: true,
+        fillColor: cs.surfaceContainerHighest.withValues(alpha: 0.5),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(16),
+          borderSide: BorderSide.none,
+        ),
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 16,
+          vertical: 14,
+        ),
+      ),
+    );
+  }
+}
+
+class _SettingsEmptyResult extends StatelessWidget {
+  const _SettingsEmptyResult({required this.query});
+
+  final String query;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final cs = theme.colorScheme;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 48),
+      child: Column(
+        children: [
+          Icon(Icons.search_off, size: 42, color: cs.onSurfaceVariant),
+          const SizedBox(height: 12),
+          Text(
+            'No settings match “$query”',
+            textAlign: TextAlign.center,
+            style: theme.textTheme.titleSmall?.copyWith(
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'Try “theme”, “speed”, “model”, “USB”, or “license”.',
+            textAlign: TextAlign.center,
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: cs.onSurfaceVariant,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SettingsLoading extends StatelessWidget {
+  const _SettingsLoading({this.error});
+
+  final Object? error;
+
+  @override
+  Widget build(BuildContext context) {
+    if (error == null) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Text(
+          'Failed to load settings: $error',
+          textAlign: TextAlign.center,
         ),
       ),
     );
