@@ -67,4 +67,19 @@ void loop() {
     expect(result, isNotNull);
     expect(result!.text, 'STRING kept');
   });
+
+  test('preserves the case of unmodified letter keys', () {
+    const sketch = '''
+#include "DigiKeyboard.h"
+void loop() {
+  DigiKeyboard.sendKeyStroke(KEY_A);
+  DigiKeyboard.sendKeyStroke(KEY_B, MOD_SHIFT_LEFT);
+}
+''';
+
+    final result = DigiSparkConverter.convert(sketch);
+
+    expect(result, isNotNull);
+    expect(result!.text, 'STRING a\nSHIFT B');
+  });
 }

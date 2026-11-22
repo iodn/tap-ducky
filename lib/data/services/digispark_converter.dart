@@ -142,13 +142,17 @@ class DigiSparkConverter {
         }
 
         String? keyStr;
+        String? typedLetter;
         if (_keyMap.containsKey(keyToken)) {
           keyStr = _keyMap[keyToken];
         } else if (RegExp(r'^KEY_[A-Z0-9]$').hasMatch(keyToken)) {
-          // KEY_R -> R
+          // KEY_R -> R, but without Shift the key types lowercase.
           final ch = keyToken.substring(4);
           if (ch.length == 1) {
             keyStr = ch.toUpperCase();
+            if (RegExp(r'^[A-Z]$').hasMatch(ch)) {
+              typedLetter = ch.toLowerCase();
+            }
           }
         } else if (RegExp(r'^\d+$').hasMatch(keyToken)) {
           // numeric key code e.g., 70 => 'F', 81 => 'Q'
@@ -169,8 +173,11 @@ class DigiSparkConverter {
             out.add('RELEASE ${parts.join(' ')}');
           } else if (combo.isEmpty) {
             // single key
-            if (keyStr.length == 1 && RegExp(r'^[A-Z]$').hasMatch(keyStr)) {
-              // Letters are not recognized as standalone key commands by our validator; use STRING
+            if (typedLetter != null) {
+              out.add('STRING $typedLetter');
+            } else if (keyStr.length == 1 &&
+                RegExp(r'^[A-Z]$').hasMatch(keyStr)) {
+              // Numeric key codes map to characters; type them with STRING.
               out.add('STRING $keyStr');
             } else {
               out.add(keyStr);
