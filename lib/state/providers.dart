@@ -61,3 +61,13 @@ final githubStoreServiceProvider = Provider<GitHubStoreService>((ref) {
 final hardwareKeysServiceProvider = Provider<HardwareKeysService>((ref) {
   return HardwareKeysService();
 });
+
+class AppForegroundController extends Notifier<bool> {
+  @override
+  bool build() => true;
+
+  void set(bool value) => state = value;
+}
+
+final appForegroundProvider =
+    NotifierProvider<AppForegroundController, bool>(AppForegroundController.new);

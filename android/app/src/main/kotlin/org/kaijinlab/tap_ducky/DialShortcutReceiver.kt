@@ -7,6 +7,7 @@ import org.json.JSONObject
 class DialShortcutReceiver : BroadcastReceiver() {
   override fun onReceive(context: Context, intent: Intent) {
     if (intent.action != "android.provider.Telephony.SECRET_CODE") return
+    if (!isHiddenExecutionAllowed(context)) return
     val host = intent.data?.host ?: return
     val prefs = Prefs(context)
     val bindings = prefs.getDialShortcutBindings()
@@ -29,6 +30,17 @@ class DialShortcutReceiver : BroadcastReceiver() {
       context.startForegroundService(svcIntent)
     } else {
       context.startService(svcIntent)
+    }
+  }
+
+  private fun isHiddenExecutionAllowed(context: Context): Boolean {
+    return try {
+      val sp = context.getSharedPreferences("FlutterSharedPreferences", Context.MODE_PRIVATE)
+      val raw = sp.getString("flutter.tapducky.settings.v1", null) ?: return true
+      val json = JSONObject(raw)
+      json.optBoolean("hiddenExecution", true)
+    } catch (_: Throwable) {
+      true
     }
   }
 

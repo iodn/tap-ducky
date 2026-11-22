@@ -3,10 +3,12 @@ import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:uuid/uuid.dart';
 
+import '../../data/models/app_settings.dart';
 import '../../data/models/payload.dart';
 import '../../data/models/scheduled_task.dart';
 import '../../data/services/schedule_rules.dart';
 import '../providers.dart';
+import 'app_settings_controller.dart';
 import 'execution_controller.dart';
 import 'hid_status_controller.dart';
 import 'payloads_controller.dart';
@@ -172,6 +174,8 @@ class SchedulerController extends AsyncNotifier<List<ScheduledTask>> {
     _timer?.cancel();
     _timer = null;
 
+    if (!_hiddenExecutionAllowed()) return;
+
     final now = DateTime.now();
 
     bool hasDue = false;
@@ -221,6 +225,8 @@ class SchedulerController extends AsyncNotifier<List<ScheduledTask>> {
   Future<void> _tickOnce() async {
     final items = state.value;
     if (items == null || items.isEmpty) return;
+
+    if (!_hiddenExecutionAllowed()) return;
 
     final now = DateTime.now();
 
@@ -428,6 +434,8 @@ class SchedulerController extends AsyncNotifier<List<ScheduledTask>> {
   }
 
   Future<bool> _executeAndConfirm(ScheduledTask t, {required bool autoDisable}) async {
+    if (!_hiddenExecutionAllowed()) return false;
+
     final execCtrl = ref.read(executionControllerProvider.notifier);
     if (execCtrl.isBusy) return false;
 
@@ -473,5 +481,10 @@ class SchedulerController extends AsyncNotifier<List<ScheduledTask>> {
 
   bool _isOneTimeTrigger(String trigger) {
     return trigger == 'one_time' || trigger == 'date_time' || trigger == 'at_time';
+  }
+
+  bool _hiddenExecutionAllowed() {
+    final settings = ref.read(appSettingsControllerProvider).value ?? AppSettings.defaults();
+    return settings.hiddenExecution || ref.read(appForegroundProvider);
   }
 }

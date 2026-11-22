@@ -64,9 +64,11 @@ class _AppShellState extends ConsumerState<AppShell> with WidgetsBindingObserver
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       _isForeground = true;
+      ref.read(appForegroundProvider.notifier).set(true);
       ref.read(schedulerControllerProvider.notifier).onAppResumed();
     } else if (state == AppLifecycleState.paused || state == AppLifecycleState.inactive || state == AppLifecycleState.detached) {
       _isForeground = false;
+      ref.read(appForegroundProvider.notifier).set(false);
     }
   }
 

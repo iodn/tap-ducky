@@ -9,6 +9,7 @@ class AppSettings {
     required this.delayMultiplier,
     required this.randomizeTiming,
     required this.keepScreenOn,
+    required this.hiddenExecution,
     required this.showPowerUserHints,
     required this.lastProfileType,
     required this.hidGraceWindowMs,
@@ -26,6 +27,7 @@ class AppSettings {
   final double delayMultiplier;
   final bool randomizeTiming;
   final bool keepScreenOn;
+  final bool hiddenExecution;
   final bool showPowerUserHints;
   final String lastProfileType;
   final int hidGraceWindowMs;
@@ -43,6 +45,7 @@ class AppSettings {
     double? delayMultiplier,
     bool? randomizeTiming,
     bool? keepScreenOn,
+    bool? hiddenExecution,
     bool? showPowerUserHints,
     String? lastProfileType,
     int? hidGraceWindowMs,
@@ -60,6 +63,7 @@ class AppSettings {
       delayMultiplier: delayMultiplier ?? this.delayMultiplier,
       randomizeTiming: randomizeTiming ?? this.randomizeTiming,
       keepScreenOn: keepScreenOn ?? this.keepScreenOn,
+      hiddenExecution: hiddenExecution ?? this.hiddenExecution,
       showPowerUserHints: showPowerUserHints ?? this.showPowerUserHints,
       lastProfileType: lastProfileType ?? this.lastProfileType,
       hidGraceWindowMs: hidGraceWindowMs ?? this.hidGraceWindowMs,
@@ -79,6 +83,7 @@ class AppSettings {
         'delayMultiplier': delayMultiplier,
         'randomizeTiming': randomizeTiming,
         'keepScreenOn': keepScreenOn,
+        'hiddenExecution': hiddenExecution,
         'showPowerUserHints': showPowerUserHints,
         'lastProfileType': lastProfileType,
         'hidGraceWindowMs': hidGraceWindowMs,
@@ -97,6 +102,7 @@ class AppSettings {
         delayMultiplier: 1.0,
         randomizeTiming: true,
         keepScreenOn: false,
+        hiddenExecution: true,
         showPowerUserHints: true,
         lastProfileType: 'composite',
         hidGraceWindowMs: 1500,
@@ -195,6 +201,7 @@ class AppSettings {
       delayMultiplier: (json['delayMultiplier'] is num) ? (json['delayMultiplier'] as num).toDouble() : 1.0,
       randomizeTiming: (json['randomizeTiming'] ?? true) == true,
       keepScreenOn: (json['keepScreenOn'] ?? false) == true,
+      hiddenExecution: (json['hiddenExecution'] ?? true) == true,
       showPowerUserHints: (json['showPowerUserHints'] ?? true) == true,
       lastProfileType: (json['lastProfileType'] ?? 'composite').toString(),
       hidGraceWindowMs: (json['hidGraceWindowMs'] is num) ? (json['hidGraceWindowMs'] as num).toInt() : 1500,

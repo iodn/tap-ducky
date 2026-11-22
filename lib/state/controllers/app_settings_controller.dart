@@ -58,6 +58,11 @@ class AppSettingsController extends AsyncNotifier<AppSettings> {
     await _save(s);
   }
 
+  Future<void> setHiddenExecution(bool v) async {
+    final s = (state.value ?? AppSettings.defaults()).copyWith(hiddenExecution: v);
+    await _save(s);
+  }
+
   Future<void> setShowPowerUserHints(bool v) async {
     final s = (state.value ?? AppSettings.defaults()).copyWith(showPowerUserHints: v);
     await _save(s);

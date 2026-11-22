@@ -338,7 +338,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           s.delayMultiplier.clamp(0.1, 4.0),
         ),
         const SizedBox(height: 8),
-        _buildStealthSection(context),
+        _buildStealthSection(context, ref, s),
       ],
     );
   }
@@ -932,73 +932,50 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     );
   }
 
-  Widget _buildStealthSection(BuildContext context) {
-    final theme = Theme.of(context);
-    final cs = theme.colorScheme;
+  Widget _buildStealthSection(
+      BuildContext context, WidgetRef ref, AppSettings s) {
+    final cs = Theme.of(context).colorScheme;
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16),
       child: SectionCard(
-        title: 'Stealth Mode',
-        subtitle: 'Covert operation capabilities',
+        title: 'Hidden execution',
+        subtitle: 'Run payloads while TapDucky is not in the foreground',
         leading: Icon(Icons.visibility_off, color: cs.primary),
         child: Padding(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                value: s.hiddenExecution,
+                onChanged: (v) => ref
+                    .read(appSettingsControllerProvider.notifier)
+                    .setHiddenExecution(v),
+                title: const Text('Allow hidden execution'),
+                subtitle: Text(
+                  s.hiddenExecution
+                      ? 'Scheduled payloads and dial shortcuts can run while the app is in the background.'
+                      : 'Scheduled payloads and dial shortcuts run only while the app is open.',
+                ),
+              ),
+              const SizedBox(height: 4),
               Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Icon(Icons.visibility_off, color: cs.primary),
-                  const SizedBox(width: 12),
-                  const Expanded(
+                  Icon(Icons.info_outline,
+                      size: 16, color: cs.onSurfaceVariant),
+                  const SizedBox(width: 8),
+                  Expanded(
                     child: Text(
-                      'Hidden Execution',
-                      style:
-                          TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
+                      'Applies to automatic runs from schedules and dial shortcuts. '
+                      'Manual execution always works, and "Keep screen on" is a separate setting.',
+                      style: TextStyle(
+                          fontSize: 12, color: cs.onSurfaceVariant),
                     ),
                   ),
                 ],
-              ),
-              const SizedBox(height: 12),
-              Text(
-                'When "Keep screen on" is disabled, payloads can execute while the screen is off. '
-                'This allows for covert operation where the device appears idle.',
-                style: TextStyle(fontSize: 13, color: cs.onSurfaceVariant),
-              ),
-              const SizedBox(height: 12),
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: cs.primaryContainer.withOpacity(0.3),
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: cs.primary.withOpacity(0.3)),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Icon(Icons.info_outline, size: 16, color: cs.primary),
-                        const SizedBox(width: 8),
-                        Text(
-                          'Use Cases',
-                          style: TextStyle(
-                            fontWeight: FontWeight.w600,
-                            fontSize: 12,
-                            color: cs.primary,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      '• Screen ON: Interactive testing, debugging, demonstrations\n'
-                      '• Screen OFF: Scheduled tasks, automated operations, covert execution',
-                      style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant),
-                    ),
-                  ],
-                ),
               ),
             ],
           ),
