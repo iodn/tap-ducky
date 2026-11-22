@@ -1289,13 +1289,13 @@ class DuckyScriptExecutor(
     when (cmd.type) {
       CommandType.STRING -> {
         val text = cmd.args.getOrNull(0) ?: ""
-        if (text.isNotEmpty()) manager.typeString(text, 0, activeModifierMask(), shouldCancel = shouldCancel)
+        if (text.isNotEmpty()) manager.typeString(text, 0, activeModifierMask(), extraKeys = heldKeyCodes.toList(), shouldCancel = shouldCancel)
         setExitCode(0)
       }
 
       CommandType.STRINGLN -> {
         val text = cmd.args.getOrNull(0) ?: ""
-        manager.typeString(text, 0, activeModifierMask(), shouldCancel = shouldCancel)
+        manager.typeString(text, 0, activeModifierMask(), extraKeys = heldKeyCodes.toList(), shouldCancel = shouldCancel)
         sendKeyWithInjectedMods("ENTER")
         setExitCode(0)
       }
@@ -1304,7 +1304,7 @@ class DuckyScriptExecutor(
         val delayMs = cmd.args.getOrNull(0)?.toIntOrNull() ?: 0
         val adjustedDelayMs = timing.scaleMs(delayMs)
         val text = cmd.args.getOrNull(1) ?: ""
-        manager.typeString(text, adjustedDelayMs, activeModifierMask(), shouldCancel = shouldCancel)
+        manager.typeString(text, adjustedDelayMs, activeModifierMask(), extraKeys = heldKeyCodes.toList(), shouldCancel = shouldCancel)
         setExitCode(0)
       }
 
@@ -1415,37 +1415,37 @@ class DuckyScriptExecutor(
 
       CommandType.RANDOM_LOWERCASE_LETTER -> {
         val count = cmd.args.firstOrNull()?.toIntOrNull() ?: 1
-        manager.typeString(randomFrom("abcdefghijklmnopqrstuvwxyz", count), 0, activeModifierMask(), shouldCancel = shouldCancel)
+        manager.typeString(randomFrom("abcdefghijklmnopqrstuvwxyz", count), 0, activeModifierMask(), extraKeys = heldKeyCodes.toList(), shouldCancel = shouldCancel)
         setExitCode(0)
       }
 
       CommandType.RANDOM_UPPERCASE_LETTER -> {
         val count = cmd.args.firstOrNull()?.toIntOrNull() ?: 1
-        manager.typeString(randomFrom("ABCDEFGHIJKLMNOPQRSTUVWXYZ", count), 0, activeModifierMask(), shouldCancel = shouldCancel)
+        manager.typeString(randomFrom("ABCDEFGHIJKLMNOPQRSTUVWXYZ", count), 0, activeModifierMask(), extraKeys = heldKeyCodes.toList(), shouldCancel = shouldCancel)
         setExitCode(0)
       }
 
       CommandType.RANDOM_LETTER -> {
         val count = cmd.args.firstOrNull()?.toIntOrNull() ?: 1
-        manager.typeString(randomFrom("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ", count), 0, activeModifierMask(), shouldCancel = shouldCancel)
+        manager.typeString(randomFrom("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ", count), 0, activeModifierMask(), extraKeys = heldKeyCodes.toList(), shouldCancel = shouldCancel)
         setExitCode(0)
       }
 
       CommandType.RANDOM_NUMBER -> {
         val count = cmd.args.firstOrNull()?.toIntOrNull() ?: 1
-        manager.typeString(randomFrom("0123456789", count), 0, activeModifierMask(), shouldCancel = shouldCancel)
+        manager.typeString(randomFrom("0123456789", count), 0, activeModifierMask(), extraKeys = heldKeyCodes.toList(), shouldCancel = shouldCancel)
         setExitCode(0)
       }
 
       CommandType.RANDOM_SPECIAL -> {
         val count = cmd.args.firstOrNull()?.toIntOrNull() ?: 1
-        manager.typeString(randomFrom("!@#$%^&*()-_=+[]{};:'\",.<>/?\\|`~", count), 0, activeModifierMask(), shouldCancel = shouldCancel)
+        manager.typeString(randomFrom("!@#$%^&*()-_=+[]{};:'\",.<>/?\\|`~", count), 0, activeModifierMask(), extraKeys = heldKeyCodes.toList(), shouldCancel = shouldCancel)
         setExitCode(0)
       }
 
       CommandType.RANDOM_CHAR -> {
         val count = cmd.args.firstOrNull()?.toIntOrNull() ?: 1
-        manager.typeString(randomFrom("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*()-_=+[]{};:'\",.<>/?\\|`~", count), 0, activeModifierMask(), shouldCancel = shouldCancel)
+        manager.typeString(randomFrom("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*()-_=+[]{};:'\",.<>/?\\|`~", count), 0, activeModifierMask(), extraKeys = heldKeyCodes.toList(), shouldCancel = shouldCancel)
         setExitCode(0)
       }
 
@@ -1673,7 +1673,12 @@ class DuckyScriptExecutor(
     val key = keyName.uppercase(Locale.US)
     val keyCode = HidSpec.keyCodeFor(key) ?: return
     val mask = injectedModifierMask or heldModifierMask
-    manager.writeKeyboardTapWithMods(mask, keyCode)
+    manager.writeKeyboardTapWithMods(
+      mask,
+      keyCode,
+      heldModifiers = mask,
+      extraKeys = heldKeyCodes.toList(),
+    )
   }
 
   private fun executeModifierCombo(line: String) {
@@ -1695,7 +1700,12 @@ class DuckyScriptExecutor(
     if (targetKey == null) return
     val keyCode = HidSpec.keyCodeFor(targetKey) ?: return
     val finalMask = modifierMask or injectedModifierMask or heldModifierMask
-    manager.writeKeyboardTapWithMods(finalMask, keyCode)
+    manager.writeKeyboardTapWithMods(
+      finalMask,
+      keyCode,
+      heldModifiers = injectedModifierMask or heldModifierMask,
+      extraKeys = heldKeyCodes.toList(),
+    )
   }
 
   private fun applyHoldRelease(keySpec: String, isHold: Boolean) {

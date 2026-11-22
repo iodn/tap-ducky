@@ -577,15 +577,16 @@ class GadgetManager(
     text: String,
     delayMs: Int = 0,
     extraModifiers: Int = 0,
+    extraKeys: List<Int> = emptyList(),
     shouldCancel: (() -> Boolean)? = null,
   ) {
     val current = statusRef.get()
     if (current.state != "ACTIVE") throw IllegalStateException("Gadget is not active")
     val path = prefs.activeKeyboardDev ?: throw IllegalStateException("Keyboard HID device not available")
     if (delayMs > 0) {
-      typeTextWithDelay(path, text, delayMs, extraModifiers, shouldCancel)
+      typeTextWithDelay(path, text, delayMs, extraModifiers, extraKeys, shouldCancel)
     } else {
-      typeText(path, text, extraModifiers, shouldCancel)
+      typeText(path, text, extraModifiers, extraKeys, shouldCancel)
     }
     log.log("type", "String sent (len=${text.length}, delay=${delayMs}ms per char)")
   }
@@ -595,6 +596,7 @@ class GadgetManager(
     text: String,
     delayMs: Int,
     extraModifiers: Int,
+    extraKeys: List<Int>,
     shouldCancel: (() -> Boolean)?,
   ) {
     val interUs = scaledInterKeyDelayUs()
@@ -604,8 +606,8 @@ class GadgetManager(
       val stroke = keyboardMapper.getStrokeForChar(ch)
       if (stroke != null) {
         val reports = ArrayList<ByteArray>(5)
-        reports.add(keyboardReport(extraModifiers, 0x00))
-        addStrokeReports(reports, stroke, extraModifiers)
+        reports.add(keyboardReportMulti(extraModifiers, extraKeys.take(6)))
+        addStrokeReports(reports, stroke, extraModifiers, extraKeys)
         writeKeyboardReportsWithDelays(
           path,
           reports = reports,
@@ -619,17 +621,30 @@ class GadgetManager(
           delayMs,
           withPerCharDelay = true,
           extraModifiers = extraModifiers,
+          extraKeys = extraKeys,
           shouldCancel = shouldCancel,
         )
       }
     }
   }
 
-  fun writeKeyboardTapWithMods(mods: Int, key: Int) {
+  fun writeKeyboardTapWithMods(
+    mods: Int,
+    key: Int,
+    heldModifiers: Int = 0,
+    extraKeys: List<Int> = emptyList(),
+  ) {
     val current = statusRef.get()
     if (current.state != "ACTIVE") throw IllegalStateException("Gadget is not active")
     val path = prefs.activeKeyboardDev ?: throw IllegalStateException("Keyboard HID device not available")
-    writeKeyboardTap(path, mods = mods, key = key, downHoldUs = scaledDownHoldUs(baseKeyDownHoldUs))
+    writeKeyboardTap(
+      path,
+      mods = mods,
+      key = key,
+      downHoldUs = scaledDownHoldUs(baseKeyDownHoldUs),
+      heldModifiers = heldModifiers,
+      extraKeys = extraKeys,
+    )
     log.log("test", "Keyboard mods=0x${Integer.toHexString(mods)} key=0x${Integer.toHexString(key)}")
   }
 
@@ -1066,12 +1081,20 @@ class GadgetManager(
     }
   }
 
-  private fun writeKeyboardTap(path: String, mods: Int, key: Int, downHoldUs: Int) {
-    val up = keyboardReport(0x00, 0x00)
-    val down = keyboardReport(mods, key)
+  private fun writeKeyboardTap(
+    path: String,
+    mods: Int,
+    key: Int,
+    downHoldUs: Int,
+    heldModifiers: Int = 0,
+    extraKeys: List<Int> = emptyList(),
+  ) {
+    val held = extraKeys.take(5)
+    val baseline = keyboardReportMulti(heldModifiers, held)
+    val down = keyboardReportMulti(mods, (listOf(key) + held).distinct().take(6))
     writeKeyboardReportsWithDelays(
       path,
-      reports = listOf(up, down, up),
+      reports = listOf(baseline, down, baseline),
       delaysUs = listOf(scaledInterKeyDelayUs(), downHoldUs)
     )
   }
@@ -1080,6 +1103,7 @@ class GadgetManager(
     path: String,
     text: String,
     extraModifiers: Int = 0,
+    extraKeys: List<Int> = emptyList(),
     shouldCancel: (() -> Boolean)? = null,
   ) {
     var idx = 0
@@ -1088,7 +1112,7 @@ class GadgetManager(
       if (shouldCancel?.invoke() == true) return
       val end = min(text.length, idx + maxTypedCharsPerBatch)
       val chunk = text.substring(idx, end)
-      typeTextChunk(path, chunk, extraModifiers)
+      typeTextChunk(path, chunk, extraModifiers, extraKeys)
       charsSinceFlush += chunk.length
       if (charsSinceFlush >= flushEveryChars) {
         if (!sleepCancellable(flushDelayMs.toLong(), shouldCancel)) return
@@ -1098,7 +1122,12 @@ class GadgetManager(
     }
   }
 
-  private fun typeTextChunk(path: String, chunk: String, extraModifiers: Int) {
+  private fun typeTextChunk(
+    path: String,
+    chunk: String,
+    extraModifiers: Int,
+    extraKeys: List<Int>,
+  ) {
     val strokes = ArrayList<KeyStroke>(chunk.length)
     for (ch in chunk) {
       val s = keyboardMapper.getStrokeForChar(ch)
@@ -1116,20 +1145,26 @@ class GadgetManager(
     val downUs = scaledDownHoldUs(baseKeyDownHoldUs)
 
     val reports = ArrayList<ByteArray>(1 + strokes.size * 4)
-    reports.add(keyboardReport(extraModifiers, 0x00))
+    reports.add(keyboardReportMulti(extraModifiers, extraKeys.take(6)))
     for (stroke in strokes) {
-      addStrokeReports(reports, stroke, extraModifiers)
+      addStrokeReports(reports, stroke, extraModifiers, extraKeys)
     }
     writeKeyboardReportsWithDelays(path, reports, strokeDelays(reports.size, interUs, downUs))
   }
 
-  private fun addStrokeReports(reports: MutableList<ByteArray>, stroke: KeyStroke, extraModifiers: Int = 0) {
+  private fun addStrokeReports(
+    reports: MutableList<ByteArray>,
+    stroke: KeyStroke,
+    extraModifiers: Int = 0,
+    extraKeys: List<Int> = emptyList(),
+  ) {
     val mods = stroke.modifiers or extraModifiers
-    reports.add(keyboardReport(mods, stroke.keyCode))
-    reports.add(keyboardReport(extraModifiers, 0x00))
+    val held = extraKeys.take(6)
+    reports.add(keyboardReportMulti(mods, (listOf(stroke.keyCode) + held).distinct().take(6)))
+    reports.add(keyboardReportMulti(extraModifiers, held))
     stroke.terminatorKeyCode?.let { key ->
-      reports.add(keyboardReport(extraModifiers, key))
-      reports.add(keyboardReport(extraModifiers, 0x00))
+      reports.add(keyboardReportMulti(extraModifiers, (listOf(key) + held).distinct().take(6)))
+      reports.add(keyboardReportMulti(extraModifiers, held))
     }
   }
 
@@ -1228,15 +1263,16 @@ class GadgetManager(
     delayMs: Int,
     withPerCharDelay: Boolean,
     extraModifiers: Int = 0,
+    extraKeys: List<Int> = emptyList(),
     shouldCancel: (() -> Boolean)? = null,
   ) {
     if (shouldCancel?.invoke() == true) return
     val composedStrokes = ArrayList<KeyStroke>(2)
     if (addComposedUnicodeStrokes(ch, composedStrokes)) {
       val reports = ArrayList<ByteArray>(1 + composedStrokes.size * 4)
-      reports.add(keyboardReport(extraModifiers, 0x00))
+      reports.add(keyboardReportMulti(extraModifiers, extraKeys.take(6)))
       for (stroke in composedStrokes) {
-        addStrokeReports(reports, stroke, extraModifiers)
+        addStrokeReports(reports, stroke, extraModifiers, extraKeys)
       }
       writeKeyboardReportsWithDelays(
         path,
@@ -1262,8 +1298,8 @@ class GadgetManager(
           val stroke = keyboardMapper.getStrokeForChar(c)
           if (stroke != null) {
             val reports = ArrayList<ByteArray>(5)
-            reports.add(keyboardReport(extraModifiers, 0x00))
-            addStrokeReports(reports, stroke, extraModifiers)
+            reports.add(keyboardReportMulti(extraModifiers, extraKeys.take(6)))
+            addStrokeReports(reports, stroke, extraModifiers, extraKeys)
             writeKeyboardReportsWithDelays(
               path,
               reports = reports,
