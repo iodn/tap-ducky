@@ -347,7 +347,6 @@ class DuckyScriptValidator {
     final Set<String> declaredFunctions = {};
     int ifDepth = 0;
     int whileDepth = 0;
-    int tryDepth = 0;
     final tryHasCatch = <bool>[];
     int functionDepth = 0;
 
@@ -627,12 +626,6 @@ class DuckyScriptValidator {
           commitCommand(keyCount: 0, perCharDelayMs: 0, charCount: 0);
           break;
 
-        case 'TRY':
-        case 'CATCH':
-        case 'END_TRY':
-        case 'ENDTRY':
-          break;
-
         case 'DEFINE':
           if (parts.length < 2) {
             issues.add(ValidationIssue(
@@ -758,16 +751,21 @@ class DuckyScriptValidator {
           break;
 
         case 'TRY':
-          tryDepth++;
           tryHasCatch.add(false);
           break;
 
         case 'CATCH':
-          if (tryDepth <= 0 || tryHasCatch.isEmpty) {
+          if (tryHasCatch.isEmpty) {
             issues.add(ValidationIssue(
               line: lineNum,
               severity: IssueSeverity.error,
               message: 'CATCH without matching TRY',
+            ));
+          } else if (tryHasCatch.last) {
+            issues.add(ValidationIssue(
+              line: lineNum,
+              severity: IssueSeverity.error,
+              message: 'Duplicate CATCH for the same TRY',
             ));
           } else {
             tryHasCatch[tryHasCatch.length - 1] = true;
@@ -776,14 +774,13 @@ class DuckyScriptValidator {
 
         case 'END_TRY':
         case 'ENDTRY':
-          if (tryDepth <= 0 || tryHasCatch.isEmpty) {
+          if (tryHasCatch.isEmpty) {
             issues.add(ValidationIssue(
               line: lineNum,
               severity: IssueSeverity.error,
               message: 'END_TRY without matching TRY',
             ));
           } else {
-            tryDepth--;
             tryHasCatch.removeLast();
           }
           break;
@@ -927,11 +924,11 @@ class DuckyScriptValidator {
         suggestion: 'Add END_FUNCTION for each FUNCTION',
       ));
     }
-    if (tryDepth > 0) {
+    if (tryHasCatch.isNotEmpty) {
       issues.add(ValidationIssue(
         line: 0,
         severity: IssueSeverity.error,
-        message: '$tryDepth unclosed TRY block(s)',
+        message: '${tryHasCatch.length} unclosed TRY block(s)',
         suggestion: 'Add END_TRY for each TRY',
       ));
     }
