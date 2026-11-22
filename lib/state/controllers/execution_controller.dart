@@ -332,7 +332,7 @@ class ExecutionController extends Notifier<ExecutionState> {
   Future<void> sendRawCommand(String cmd) async {
     final script = cmd.trim();
     if (script.isEmpty) return;
-    if (state.isRunning) return;
+    if (state.isRunning || _activeExecutionId != null) return;
 
     final settings = ref.read(appSettingsControllerProvider).value ?? AppSettings.defaults();
     final enableLogging = settings.enableLogging;
@@ -631,7 +631,7 @@ class ExecutionController extends Notifier<ExecutionState> {
   }
 
   Future<void> runPayload(Payload payload, Map<String, String> params) async {
-    if (state.isRunning) return;
+    if (state.isRunning || _activeExecutionId != null) return;
 
     final settings = ref.read(appSettingsControllerProvider).value ?? AppSettings.defaults();
     final enableLogging = settings.enableLogging;
@@ -668,13 +668,13 @@ class ExecutionController extends Notifier<ExecutionState> {
       return;
     }
 
+    final executionId = _uuid.v4();
+    _activeExecutionId = executionId;
+
     try {
       final prefs = await ref.read(prefsStorageProvider.future);
       await prefs.setString('last_executed_payload_id', payload.id);
     } catch (_) {}
-
-    final executionId = _uuid.v4();
-    _activeExecutionId = executionId;
 
     await _execSub?.cancel();
     _execSub = null;
