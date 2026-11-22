@@ -526,8 +526,7 @@ class GadgetManager(
       return
     }
     typeText(path, trimmed)
-    val preview = if (trimmed.length <= 18) trimmed else trimmed.take(18) + "…"
-    log.log("test", "Keyboard text(len=${trimmed.length}) \"$preview\"")
+    log.log("test", "Keyboard test sent (${trimmed.length} chars)")
   }
 
   fun typeString(text: String, delayMs: Int = 0) {
@@ -539,8 +538,7 @@ class GadgetManager(
     } else {
       typeText(path, text)
     }
-    val preview = if (text.length <= 18) text else text.take(18) + "…"
-    log.log("type", "String(len=${text.length}, delay=${delayMs}ms) \"$preview\"")
+    log.log("type", "String sent (len=${text.length}, delay=${delayMs}ms per char)")
   }
 
   private fun typeTextWithDelay(path: String, text: String, delayMs: Int) {
@@ -584,6 +582,8 @@ class GadgetManager(
 
   fun executeDuckyScript(script: String, delayMultiplier: Double = 1.0, executionId: String? = null) {
     val id = executionId?.takeIf { it.isNotBlank() } ?: "exec_${System.currentTimeMillis()}"
+    val startedAt = android.os.SystemClock.elapsedRealtime()
+    var terminalSent = false
     cancelExecRef.set(null)
     prefs.lastExecutedScript = script
     val executor = DuckyScriptExecutor(
@@ -591,10 +591,30 @@ class GadgetManager(
       log = log,
       delayMultiplier = delayMultiplier,
       executionId = id,
-      emitExec = { m -> emitExec(m) },
+      emitExec = { event ->
+        if (event["type"] == "done" || event["type"] == "error") {
+          terminalSent = true
+          val elapsedMs = android.os.SystemClock.elapsedRealtime() - startedAt
+          emitExec(event + ("elapsedMs" to elapsedMs))
+        } else {
+          emitExec(event)
+        }
+      },
       shouldCancel = { isCancelRequested(id) }
     )
-    executor.execute(script)
+    try {
+      executor.execute(script)
+    } catch (e: Exception) {
+      if (!terminalSent) {
+        emitExec(mapOf(
+          "type" to "error",
+          "executionId" to id,
+          "message" to (e.message ?: "Could not start execution"),
+          "elapsedMs" to (android.os.SystemClock.elapsedRealtime() - startedAt),
+        ))
+      }
+      throw e
+    }
   }
 
   fun setDialShortcutConfig(enabled: Boolean, mode: String, script: String?, name: String?) {

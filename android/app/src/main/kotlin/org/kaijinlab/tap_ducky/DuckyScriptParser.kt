@@ -659,6 +659,7 @@ class DuckyScriptExecutor(
 
   private var totalSteps = 0
   private var completedSteps = 0
+  private var currentLine: Int? = null
   private val timing = TimingController(log, delayMultiplier)
 
   fun execute(script: String) {
@@ -687,10 +688,9 @@ class DuckyScriptExecutor(
 
     try {
       executeRange(processed, 0, processed.size)
+      throwIfCancelled()
     } catch (e: CancelSignal) {
-      releaseAllHeldKeys()
-      releaseAllHeldMouseButtons()
-      clearInjectedModifiers()
+      releaseInputAfterInterruptedRun()
       emitExec(
         mapOf(
           "type" to "done",
@@ -699,7 +699,7 @@ class DuckyScriptExecutor(
           "cancelled" to true,
           "total" to totalSteps,
           "completed" to completedSteps,
-          "progress" to 1.0,
+          "progress" to currentProgress(),
           "message" to "Cancelled",
           "timestampMs" to System.currentTimeMillis(),
         )
@@ -709,15 +709,14 @@ class DuckyScriptExecutor(
       setVar("$?", clampU16(e.value))
     } catch (e: Exception) {
       log.logError("ducky", "Execution failed: ${e.message}")
-      releaseAllHeldKeys()
-      releaseAllHeldMouseButtons()
-      clearInjectedModifiers()
+      releaseInputAfterInterruptedRun()
       emitExec(
         mapOf(
           "type" to "error",
           "executionId" to executionId,
           "message" to (e.message ?: "Execution failed"),
           "error_code" to ((e as? GadgetManager.HidWriteException)?.errorCode),
+          "lineNumber" to currentLine,
           "total" to totalSteps,
           "completed" to completedSteps,
           "progress" to currentProgress(),
@@ -742,6 +741,20 @@ class DuckyScriptExecutor(
         "timestampMs" to System.currentTimeMillis(),
       )
     )
+  }
+
+  private fun releaseInputAfterInterruptedRun() {
+    for ((label, release) in listOf(
+      "keyboard" to { releaseAllHeldKeys() },
+      "mouse" to { releaseAllHeldMouseButtons() },
+      "modifiers" to { clearInjectedModifiers() },
+    )) {
+      try {
+        release()
+      } catch (e: Exception) {
+        log.logError("ducky", "Could not release $label: ${e.message}")
+      }
+    }
   }
 
   private fun preprocessCommands(commands: List<DuckyCommand>): List<DuckyCommand> {
@@ -842,6 +855,7 @@ class DuckyScriptExecutor(
         }
 
         else -> {
+          currentLine = cmd.lineNumber
           if (requiresHost(cmd.type)) {
             if (!manager.isHostConnected()) {
               val ok = waitForPredicateCancellable(timeoutMs = 10_000L) { manager.isHostConnected() }
@@ -1235,30 +1249,6 @@ class DuckyScriptExecutor(
     return sb.toString()
   }
 
-  private fun managerTypeString(text: String, delayMs: Int): Boolean {
-    return try {
-      manager.typeString(text, delayMs)
-      true
-    } catch (e: Exception) {
-      if (e is GadgetManager.HidWriteException) {
-        emitExec(
-          mapOf(
-            "type" to "error",
-            "executionId" to executionId,
-            "error_code" to e.errorCode,
-            "message" to (e.message ?: "HID write failed"),
-            "total" to totalSteps,
-            "completed" to completedSteps,
-            "progress" to currentProgress(),
-            "timestampMs" to System.currentTimeMillis(),
-          )
-        )
-      }
-      log.logError("ducky", "typeString failed: ${e.message}")
-      false
-    }
-  }
-
   private fun managerUpdateAttackMode(args: List<String>): Boolean {
     val candidates = listOf("updateAttackMode", "setAttackMode", "attackMode", "setMode")
     if (tryInvokeAny(candidates, listOf(args))) return true
@@ -1273,30 +1263,6 @@ class DuckyScriptExecutor(
     if (tryInvokeAny(candidates, listOf(mask.toShort()))) return true
     if (tryInvokeAny(candidates, listOf(mask.toByte()))) return true
     return false
-  }
-
-  private fun managerWriteKeyboardTapWithMods(mask: Int, keyCode: Int): Boolean {
-    return try {
-      manager.writeKeyboardTapWithMods(mask, keyCode)
-      true
-    } catch (e: Exception) {
-      if (e is GadgetManager.HidWriteException) {
-        emitExec(
-          mapOf(
-            "type" to "error",
-            "executionId" to executionId,
-            "error_code" to e.errorCode,
-            "message" to (e.message ?: "HID write failed"),
-            "total" to totalSteps,
-            "completed" to completedSteps,
-            "progress" to currentProgress(),
-            "timestampMs" to System.currentTimeMillis(),
-          )
-        )
-      }
-      log.logError("ducky", "writeKeyboardTapWithMods failed: ${e.message}")
-      false
-    }
   }
 
   private fun managerSendMediaKey(code: String): Boolean {
@@ -1325,7 +1291,7 @@ class DuckyScriptExecutor(
         val delayMs = cmd.args.getOrNull(0)?.toIntOrNull() ?: 0
         val adjustedDelayMs = timing.scaleMs(delayMs)
         val text = cmd.args.getOrNull(1) ?: ""
-        managerTypeString(text, adjustedDelayMs)
+        manager.typeString(text, adjustedDelayMs)
         setExitCode(0)
       }
 
@@ -1691,7 +1657,7 @@ class DuckyScriptExecutor(
     val key = keyName.uppercase(Locale.US)
     val keyCode = HidSpec.keyCodeFor(key) ?: return
     val mask = injectedModifierMask or heldModifierMask
-    if (mask == 0) managerWriteKeyboardTapWithMods(0, keyCode) else managerWriteKeyboardTapWithMods(mask, keyCode)
+    manager.writeKeyboardTapWithMods(mask, keyCode)
   }
 
   private fun executeModifierCombo(line: String) {
@@ -1713,7 +1679,7 @@ class DuckyScriptExecutor(
     if (targetKey == null) return
     val keyCode = HidSpec.keyCodeFor(targetKey) ?: return
     val finalMask = modifierMask or injectedModifierMask or heldModifierMask
-    managerWriteKeyboardTapWithMods(finalMask, keyCode)
+    manager.writeKeyboardTapWithMods(finalMask, keyCode)
   }
 
   private fun applyHoldRelease(keySpec: String, isHold: Boolean) {

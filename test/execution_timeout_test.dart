@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -26,8 +28,13 @@ class _ArmedHid extends HidStatusController {
 }
 
 class _SilentGadget extends PlatformGadgetService {
+  _SilentGadget({this.events});
+
+  final StreamController<Map<String, dynamic>>? events;
+
   @override
-  Stream<Map<String, dynamic>> get execStream => const Stream.empty();
+  Stream<Map<String, dynamic>> get execStream =>
+      events?.stream ?? const Stream.empty();
 
   String? startedId;
   final startedScripts = <String>[];
@@ -70,6 +77,51 @@ Future<ProviderContainer> _createContainer(_SilentGadget service) async {
 }
 
 void main() {
+  testWidgets('native failure ends execution without reporting 100%', (tester) async {
+    final events = StreamController<Map<String, dynamic>>.broadcast();
+    addTearDown(events.close);
+    final service = _SilentGadget(events: events);
+    final container = await _createContainer(service);
+    final controller = container.read(executionControllerProvider.notifier);
+
+    await controller.sendRawCommand('STRING hello');
+    final id = service.startedId;
+    expect(container.read(executionControllerProvider).isRunning, isTrue);
+
+    events.add({
+      'type': 'error',
+      'executionId': id,
+      'message': 'Host disconnected',
+      'error_code': 'HOST_DISCONNECTED',
+      'elapsedMs': 125,
+    });
+    await tester.pump();
+
+    final failed = container.read(executionControllerProvider);
+    expect(failed.isRunning, isFalse);
+    expect(failed.success, isFalse);
+    expect(failed.progress, lessThan(1));
+    expect(failed.tail.last.message, contains('Host disconnected'));
+    expect(failed.tail.last.meta?['durationMs'], '125');
+    expect(failed.tail.last.meta?['error_code'], 'HOST_DISCONNECTED');
+
+    await tester.pump(const Duration(seconds: 100));
+    expect(service.cancelledIds, isEmpty);
+    await controller.sendRawCommand('DELAY 100');
+    expect(container.read(executionControllerProvider).success, isNull);
+    events.add({
+      'type': 'done',
+      'executionId': service.startedId,
+      'success': true,
+      'elapsedMs': 101,
+    });
+    await tester.pump();
+    final completed = container.read(executionControllerProvider);
+    expect(completed.success, isTrue);
+    expect(completed.progress, 1);
+    expect(completed.tail.last.meta?['durationMs'], '101');
+  });
+
   testWidgets('timeout keeps execution busy until stop escalates', (tester) async {
     final service = _SilentGadget();
     final container = await _createContainer(service);

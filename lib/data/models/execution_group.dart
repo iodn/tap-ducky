@@ -23,7 +23,14 @@ class ExecutionGroup {
   final int errorCount;
   final int warningCount;
 
-  Duration get duration => endTime.difference(startTime);
+  Duration get duration {
+    final recorded = events.isEmpty
+        ? null
+        : int.tryParse(events.last.meta?['durationMs'] ?? '');
+    return recorded != null && recorded >= 0
+        ? Duration(milliseconds: recorded)
+        : endTime.difference(startTime);
+  }
 
   String get durationFormatted {
     final ms = duration.inMilliseconds;

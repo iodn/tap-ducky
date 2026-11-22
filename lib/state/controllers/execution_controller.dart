@@ -143,6 +143,83 @@ class ExecutionController extends Notifier<ExecutionState> {
     state = state.copyWith(tail: trimmed);
   }
 
+  Future<void> _finishFromNative(
+    String executionId,
+    Map<String, dynamic> event,
+    DateTime startedAt,
+    bool enableLogging, {
+    Payload? payload,
+  }) async {
+    if (_activeExecutionId != executionId) return;
+    final cancelled = event['cancelled'] == true;
+    final ok = event['type'] == 'done' && event['success'] == true && !cancelled;
+    final finishedAt = DateTime.now();
+    final durationMs = (event['elapsedMs'] as num?)?.toInt();
+    final reason = event['message']?.toString().trim() ?? '';
+    final line = event['lineNumber'];
+    final location = line is int ? ' at line $line' : '';
+    final message = switch ((cancelled, ok, reason.isEmpty)) {
+      (true, _, _) => 'Execution cancelled',
+      (_, true, _) => 'Execution completed',
+      (_, _, true) => 'Execution failed$location',
+      _ => 'Execution failed$location: $reason',
+    };
+    final level = cancelled ? 'warn' : ok ? 'info' : 'error';
+    final meta = {
+      'executionId': executionId,
+      'startedAt': startedAt.toIso8601String(),
+      'finishedAt': finishedAt.toIso8601String(),
+      'cancelled': cancelled.toString(),
+      if (durationMs != null) 'durationMs': durationMs.toString(),
+      if (event['error_code'] case final String code) 'error_code': code,
+      if (line is int) 'lineNumber': line.toString(),
+      if (event['completed'] case final int steps) 'completedSteps': steps.toString(),
+    };
+
+    final subscription = _execSub;
+    _execSub = null;
+    _activeExecutionId = null;
+    _timeoutTimer?.cancel();
+    _timeoutTimer = null;
+    _panicTimer?.cancel();
+    _panicTimer = null;
+    _autoPanicTimer?.cancel();
+    _autoPanicTimer = null;
+
+    state = state.copyWith(
+      isRunning: false,
+      progress: ok ? 1.0 : state.progress,
+      status: cancelled ? 'Cancelled' : ok ? 'Completed' : message,
+      finishedAt: finishedAt,
+      success: ok,
+      stopRequested: false,
+      panicAvailable: false,
+    );
+    final detail = durationMs == null ? message : '$message (${durationMs} ms on device)';
+    _pushTail(_mkTail(
+      executionId: executionId,
+      level: level,
+      message: detail,
+      success: ok,
+      payloadId: payload?.id,
+      payloadName: payload?.name,
+      meta: meta,
+    ));
+    await subscription?.cancel();
+    if (enableLogging) {
+      await _emitAndPersist(LogEntry(
+        id: '$executionId-end',
+        timestamp: finishedAt,
+        level: level,
+        message: message,
+        success: ok,
+        payloadId: payload?.id,
+        payloadName: payload?.name,
+        meta: meta,
+      ));
+    }
+  }
+
   LogEntry _mkTail({
     required String executionId,
     required String level,
@@ -377,7 +454,7 @@ class ExecutionController extends Notifier<ExecutionState> {
     _lastStepTailMsg = null;
 
     final startedAt = DateTime.now();
-    state = state.copyWith(
+    state = ExecutionState(
       isRunning: true,
       progress: 0,
       status: 'Executing…',
@@ -386,20 +463,15 @@ class ExecutionController extends Notifier<ExecutionState> {
       payloadId: null,
       payloadName: null,
       startedAt: startedAt,
-      finishedAt: null,
-      success: null,
       executionId: executionId,
       tail: const <LogEntry>[],
     );
 
     final service = ref.read(platformGadgetServiceProvider);
-    var sawAnyEvent = false;
 
     _execSub = service.execStream.listen((evt) async {
       final id = evt['executionId']?.toString();
       if (id != executionId) return;
-
-      sawAnyEvent = true;
 
       final type = evt['type']?.toString() ?? '';
       if (type == 'start') {
@@ -431,73 +503,8 @@ class ExecutionController extends Notifier<ExecutionState> {
         return;
       }
 
-      if (type == 'error') {
-        final msg = (evt['message']?.toString() ?? '').trim();
-        final m = msg.isNotEmpty ? msg : 'Execution error';
-        state = state.copyWith(status: m);
-        _pushTail(_mkTail(executionId: executionId, level: 'error', message: m, success: false));
-        if (enableLogging) {
-          await _emitAndPersist(LogEntry(
-            id: '$executionId-error-event',
-            timestamp: DateTime.now(),
-            level: 'error',
-            message: m,
-            success: false,
-            meta: {'executionId': executionId},
-          ));
-        }
-        return;
-      }
-
-      if (type == 'done') {
-        final ok = evt['success'] == true;
-        final cancelled = evt['cancelled'] == true;
-        final finishedAt = DateTime.now();
-        state = state.copyWith(
-          isRunning: false,
-          progress: 1.0,
-          status: cancelled ? 'Cancelled' : (ok ? 'Completed' : 'Failed'),
-          finishedAt: finishedAt,
-          success: ok && !cancelled,
-          stopRequested: false,
-          panicAvailable: false,
-        );
-
-        _pushTail(_mkTail(
-          executionId: executionId,
-          level: ok && !cancelled ? 'info' : (cancelled ? 'warn' : 'error'),
-          message: cancelled ? 'Execution cancelled' : (ok ? 'Execution completed' : 'Execution failed'),
-          success: ok && !cancelled,
-        ));
-
-        if (enableLogging) {
-          await _emitAndPersist(LogEntry(
-            id: '$executionId-end',
-            timestamp: finishedAt,
-            level: 'info',
-            message: cancelled ? 'Execution cancelled' : (ok ? 'Execution completed' : 'Execution failed'),
-            success: ok && !cancelled,
-            meta: {
-              'executionId': executionId,
-              'startedAt': (state.startedAt ?? startedAt).toIso8601String(),
-              'finishedAt': finishedAt.toIso8601String(),
-              'durationMs': finishedAt.difference(state.startedAt ?? startedAt).inMilliseconds.toString(),
-              'cancelled': cancelled.toString(),
-            },
-          ));
-        }
-
-        await _execSub?.cancel();
-        _execSub = null;
-        _activeExecutionId = null;
-
-        _timeoutTimer?.cancel();
-        _timeoutTimer = null;
-        _panicTimer?.cancel();
-        _panicTimer = null;
-        _autoPanicTimer?.cancel();
-        _autoPanicTimer = null;
-        return;
+      if (type == 'error' || type == 'done') {
+        await _finishFromNative(executionId, evt, startedAt, enableLogging);
       }
     });
 
@@ -524,7 +531,6 @@ class ExecutionController extends Notifier<ExecutionState> {
       ));
     }
 
-    final beforeCall = DateTime.now();
     try {
       await _applySelectedKeyboardLayout();
       await service.executeDuckyScript(
@@ -532,101 +538,12 @@ class ExecutionController extends Notifier<ExecutionState> {
         delayMultiplier: delayMultiplier,
         executionId: executionId,
       );
-
-      final callElapsedMs = DateTime.now().difference(beforeCall).inMilliseconds;
-      Timer(const Duration(seconds: 2), () async {
-        if (callElapsedMs < 800) return;
-        if (_activeExecutionId != executionId) return;
-        if (!state.isRunning) return;
-        if (sawAnyEvent) return;
-
-        final finishedAt = DateTime.now();
-        state = state.copyWith(
-          isRunning: false,
-          progress: 1.0,
-          status: 'Completed',
-          finishedAt: finishedAt,
-          success: true,
-          stopRequested: false,
-          panicAvailable: false,
-        );
-
-        _pushTail(_mkTail(
-          executionId: executionId,
-          level: 'info',
-          message: 'Execution completed',
-          success: true,
-        ));
-
-        if (enableLogging) {
-          await _emitAndPersist(LogEntry(
-            id: '$executionId-end',
-            timestamp: finishedAt,
-            level: 'info',
-            message: 'Execution completed',
-            success: true,
-            meta: {
-              'executionId': executionId,
-              'startedAt': startedAt.toIso8601String(),
-              'finishedAt': finishedAt.toIso8601String(),
-              'durationMs': finishedAt.difference(startedAt).inMilliseconds.toString(),
-            },
-          ));
-        }
-
-        await _execSub?.cancel();
-        _execSub = null;
-        _activeExecutionId = null;
-
-        _timeoutTimer?.cancel();
-        _timeoutTimer = null;
-        _panicTimer?.cancel();
-        _panicTimer = null;
-        _autoPanicTimer?.cancel();
-        _autoPanicTimer = null;
-      });
     } catch (e) {
-      final finishedAt = DateTime.now();
-      final s = e.toString();
-      final cancelled = s.toLowerCase().contains('cancel');
-
-      state = state.copyWith(
-        isRunning: false,
-        status: cancelled ? 'Cancelled' : 'Failed',
-        finishedAt: finishedAt,
-        success: false,
-        stopRequested: false,
-        panicAvailable: false,
-      );
-
-      _pushTail(_mkTail(
-        executionId: executionId,
-        level: 'error',
-        message: 'Execution error: $e',
-        success: false,
-      ));
-
-      if (enableLogging) {
-        await _emitAndPersist(LogEntry(
-          id: '$executionId-error',
-          timestamp: finishedAt,
-          level: 'error',
-          message: 'Execution error: $e',
-          success: false,
-          meta: {'executionId': executionId},
-        ));
-      }
-
-      await _execSub?.cancel();
-      _execSub = null;
-      _activeExecutionId = null;
-
-      _timeoutTimer?.cancel();
-      _timeoutTimer = null;
-      _panicTimer?.cancel();
-      _panicTimer = null;
-      _autoPanicTimer?.cancel();
-      _autoPanicTimer = null;
+      if (_activeExecutionId != executionId) return;
+      await _finishFromNative(executionId, {
+        'type': 'error',
+        'message': e.toString(),
+      }, startedAt, enableLogging);
     }
   }
 
@@ -684,7 +601,7 @@ class ExecutionController extends Notifier<ExecutionState> {
     _lastStepTailMsg = null;
 
     final startedAt = DateTime.now();
-    state = state.copyWith(
+    state = ExecutionState(
       isRunning: true,
       progress: 0,
       status: 'Starting…',
@@ -693,8 +610,6 @@ class ExecutionController extends Notifier<ExecutionState> {
       payloadId: payload.id,
       payloadName: payload.name,
       startedAt: startedAt,
-      finishedAt: null,
-      success: null,
       executionId: executionId,
       tail: const <LogEntry>[],
     );
@@ -703,13 +618,10 @@ class ExecutionController extends Notifier<ExecutionState> {
     final service = ref.read(platformGadgetServiceProvider);
     final delayMultiplier = settings.delayMultiplier;
 
-    var sawAnyEvent = false;
 
     _execSub = service.execStream.listen((evt) async {
       final id = evt['executionId']?.toString();
       if (id != executionId) return;
-
-      sawAnyEvent = true;
 
       final type = evt['type']?.toString() ?? '';
       if (type == 'start') {
@@ -755,86 +667,8 @@ class ExecutionController extends Notifier<ExecutionState> {
         return;
       }
 
-      if (type == 'error') {
-        final msg = (evt['message']?.toString() ?? '').trim();
-        final m = msg.isNotEmpty ? msg : 'Execution error';
-        state = state.copyWith(status: m);
-        _pushTail(_mkTail(
-          executionId: executionId,
-          level: 'error',
-          message: m,
-          success: false,
-          payloadId: payload.id,
-          payloadName: payload.name,
-        ));
-        if (enableLogging) {
-          await _emitAndPersist(LogEntry(
-            id: '$executionId-error-event',
-            timestamp: DateTime.now(),
-            level: 'error',
-            message: m,
-            success: false,
-            payloadId: payload.id,
-            payloadName: payload.name,
-            meta: {'executionId': executionId},
-          ));
-        }
-        return;
-      }
-
-      if (type == 'done') {
-        final ok = evt['success'] == true;
-        final cancelled = evt['cancelled'] == true;
-        final finishedAt = DateTime.now();
-        state = state.copyWith(
-          isRunning: false,
-          progress: 1.0,
-          status: cancelled ? 'Cancelled' : (ok ? 'Completed' : 'Failed'),
-          finishedAt: finishedAt,
-          success: ok && !cancelled,
-          stopRequested: false,
-          panicAvailable: false,
-        );
-
-        _pushTail(_mkTail(
-          executionId: executionId,
-          level: ok && !cancelled ? 'info' : (cancelled ? 'warn' : 'error'),
-          message: cancelled ? 'Execution cancelled' : (ok ? 'Execution completed' : 'Execution failed'),
-          success: ok && !cancelled,
-          payloadId: payload.id,
-          payloadName: payload.name,
-        ));
-
-        if (enableLogging) {
-          await _emitAndPersist(LogEntry(
-            id: '$executionId-end',
-            timestamp: finishedAt,
-            level: 'info',
-            message: cancelled ? 'Execution cancelled' : (ok ? 'Execution completed' : 'Execution failed'),
-            success: ok && !cancelled,
-            payloadId: payload.id,
-            payloadName: payload.name,
-            meta: {
-              'executionId': executionId,
-              'startedAt': (state.startedAt ?? startedAt).toIso8601String(),
-              'finishedAt': finishedAt.toIso8601String(),
-              'durationMs': finishedAt.difference(state.startedAt ?? startedAt).inMilliseconds.toString(),
-              'cancelled': cancelled.toString(),
-            },
-          ));
-        }
-
-        await _execSub?.cancel();
-        _execSub = null;
-        _activeExecutionId = null;
-
-        _timeoutTimer?.cancel();
-        _timeoutTimer = null;
-        _panicTimer?.cancel();
-        _panicTimer = null;
-        _autoPanicTimer?.cancel();
-        _autoPanicTimer = null;
-        return;
+      if (type == 'error' || type == 'done') {
+        await _finishFromNative(executionId, evt, startedAt, enableLogging, payload: payload);
       }
     });
 
@@ -863,7 +697,6 @@ class ExecutionController extends Notifier<ExecutionState> {
       ));
     }
 
-    final beforeCall = DateTime.now();
     try {
       await _applySelectedKeyboardLayout();
       await service.executeDuckyScript(
@@ -871,109 +704,12 @@ class ExecutionController extends Notifier<ExecutionState> {
         delayMultiplier: delayMultiplier,
         executionId: executionId,
       );
-
-      final callElapsedMs = DateTime.now().difference(beforeCall).inMilliseconds;
-      Timer(const Duration(seconds: 2), () async {
-        if (callElapsedMs < 800) return;
-        if (_activeExecutionId != executionId) return;
-        if (!state.isRunning) return;
-        if (sawAnyEvent) return;
-
-        final finishedAt = DateTime.now();
-        state = state.copyWith(
-          isRunning: false,
-          progress: 1.0,
-          status: 'Completed',
-          finishedAt: finishedAt,
-          success: true,
-          stopRequested: false,
-          panicAvailable: false,
-        );
-
-        _pushTail(_mkTail(
-          executionId: executionId,
-          level: 'info',
-          message: 'Execution completed',
-          success: true,
-          payloadId: payload.id,
-          payloadName: payload.name,
-        ));
-
-        if (enableLogging) {
-          await _emitAndPersist(LogEntry(
-            id: '$executionId-end',
-            timestamp: finishedAt,
-            level: 'info',
-            message: 'Execution completed',
-            success: true,
-            payloadId: payload.id,
-            payloadName: payload.name,
-            meta: {
-              'executionId': executionId,
-              'startedAt': startedAt.toIso8601String(),
-              'finishedAt': finishedAt.toIso8601String(),
-              'durationMs': finishedAt.difference(startedAt).inMilliseconds.toString(),
-            },
-          ));
-        }
-
-        await _execSub?.cancel();
-        _execSub = null;
-        _activeExecutionId = null;
-
-        _timeoutTimer?.cancel();
-        _timeoutTimer = null;
-        _panicTimer?.cancel();
-        _panicTimer = null;
-        _autoPanicTimer?.cancel();
-        _autoPanicTimer = null;
-      });
     } catch (e) {
-      final finishedAt = DateTime.now();
-      final s = e.toString();
-      final cancelled = s.toLowerCase().contains('cancel');
-
-      state = state.copyWith(
-        isRunning: false,
-        status: cancelled ? 'Cancelled' : 'Failed',
-        finishedAt: finishedAt,
-        success: false,
-        stopRequested: false,
-        panicAvailable: false,
-      );
-
-      _pushTail(_mkTail(
-        executionId: executionId,
-        level: 'error',
-        message: 'Execution error: $e',
-        success: false,
-        payloadId: payload.id,
-        payloadName: payload.name,
-      ));
-
-      if (enableLogging) {
-        await _emitAndPersist(LogEntry(
-          id: '$executionId-error',
-          timestamp: finishedAt,
-          level: 'error',
-          message: 'Execution error: $e',
-          success: false,
-          payloadId: payload.id,
-          payloadName: payload.name,
-          meta: {'executionId': executionId},
-        ));
-      }
-
-      await _execSub?.cancel();
-      _execSub = null;
-      _activeExecutionId = null;
-
-      _timeoutTimer?.cancel();
-      _timeoutTimer = null;
-      _panicTimer?.cancel();
-      _panicTimer = null;
-      _autoPanicTimer?.cancel();
-      _autoPanicTimer = null;
+      if (_activeExecutionId != executionId) return;
+      await _finishFromNative(executionId, {
+        'type': 'error',
+        'message': e.toString(),
+      }, startedAt, enableLogging, payload: payload);
     }
   }
 
