@@ -332,11 +332,13 @@ class _ExecutionSpeedCardState extends ConsumerState<_ExecutionSpeedCard> {
                   children: [
                     Icon(Icons.speed, color: cs.primary, size: 20),
                     const SizedBox(width: 8),
-                    const Text(
-                      'Execution Speed',
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w700,
+                    const Expanded(
+                      child: Text(
+                        'Execution Speed',
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w700,
+                        ),
                       ),
                     ),
                   ],
@@ -443,12 +445,14 @@ class _ExecutionSpeedCardState extends ConsumerState<_ExecutionSpeedCard> {
                         children: [
                           Icon(Icons.timer, size: 16, color: cs.onSurfaceVariant),
                           const SizedBox(width: 8),
-                          Text(
-                            'Estimated Duration',
-                            style: TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.w600,
-                              color: cs.onSurfaceVariant,
+                          Expanded(
+                            child: Text(
+                              'Estimated Duration',
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                                color: cs.onSurfaceVariant,
+                              ),
                             ),
                           ),
                         ],
@@ -605,12 +609,14 @@ class _SpeedPresetChip extends StatelessWidget {
         children: [
           Icon(icon, size: 16, color: isSelected ? cs.onPrimaryContainer : cs.onSurfaceVariant),
           const SizedBox(width: 6),
-          Text(
-            '$label ${multiplier.toStringAsFixed(1)}×',
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: isSelected ? FontWeight.w700 : FontWeight.w600,
-              color: isSelected ? cs.onPrimaryContainer : cs.onSurfaceVariant,
+          Flexible(
+            child: Text(
+              '$label ${multiplier.toStringAsFixed(1)}×',
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: isSelected ? FontWeight.w700 : FontWeight.w600,
+                color: isSelected ? cs.onPrimaryContainer : cs.onSurfaceVariant,
+              ),
             ),
           ),
         ],
@@ -619,7 +625,7 @@ class _SpeedPresetChip extends StatelessWidget {
       backgroundColor: cs.surfaceContainerHighest,
       side: BorderSide(color: isSelected ? cs.primary : cs.outlineVariant),
       visualDensity: VisualDensity.compact,
-      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      materialTapTargetSize: MaterialTapTargetSize.padded,
     );
     return tooltip == null ? chip : Tooltip(message: tooltip!, child: chip);
   }
@@ -1042,12 +1048,14 @@ class _PayloadSelectionCard extends StatelessWidget {
                   child: Icon(Icons.inventory_2, color: cs.onPrimaryContainer, size: 20),
                 ),
                 const SizedBox(width: 12),
-                const Text(
-                  'Selected Payload',
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                    letterSpacing: 0.5,
+                const Expanded(
+                  child: Text(
+                    'Selected Payload',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      letterSpacing: 0.5,
+                    ),
                   ),
                 ),
               ],
@@ -1055,6 +1063,7 @@ class _PayloadSelectionCard extends StatelessWidget {
             const SizedBox(height: 16),
             DropdownButtonFormField<String>(
               value: selectedPayload.id,
+              isExpanded: true,
               decoration: const InputDecoration(
                 labelText: 'Payload',
                 border: OutlineInputBorder(),
@@ -1225,11 +1234,13 @@ class _ExecutionControlCard extends StatelessWidget {
                   size: 20,
                 ),
                 const SizedBox(width: 8),
-                const Text(
-                  'Execution',
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w700,
+                const Expanded(
+                  child: Text(
+                    'Execution',
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
                 ),
               ],
@@ -1394,18 +1405,19 @@ class _ConsoleTabState extends ConsumerState<_ConsoleTab> {
     final cs = Theme.of(context).colorScheme;
     final advSettingsAsync = ref.watch(advancedSettingsControllerProvider);
 
-    return Padding(
+    return SingleChildScrollView(
+      primary: false,
       padding: const EdgeInsets.all(16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
+          Wrap(
+            spacing: 8,
+            crossAxisAlignment: WrapCrossAlignment.center,
             children: [
-              const Expanded(
-                child: Text(
-                  'Send raw HID commands',
-                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
-                ),
+              const Text(
+                'Send raw HID commands',
+                style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
               ),
               TextButton.icon(
                 onPressed: () => _showSavePresetDialog(context),
@@ -1506,6 +1518,7 @@ class _ConsoleTabState extends ConsumerState<_ConsoleTab> {
           TextField(
             controller: widget.controller,
             decoration: InputDecoration(
+              labelText: 'Command',
               hintText: 'STRING hello | ENTER | DELAY 200',
               border: const OutlineInputBorder(),
               suffixIcon: IconButton(
