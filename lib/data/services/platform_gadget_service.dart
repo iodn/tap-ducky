@@ -159,6 +159,7 @@ class GadgetStatus {
     required this.isActive,
     required this.state,
     this.activeProfileId,
+    this.activeRoleType,
     this.message,
     this.udcList = const <String>[],
     this.keyboardWriterReady = false,
@@ -173,6 +174,7 @@ class GadgetStatus {
   final bool isActive;
   final String state;
   final String? activeProfileId;
+  final String? activeRoleType;
   final String? message;
   final List<String> udcList;
   final bool keyboardWriterReady;
@@ -187,6 +189,7 @@ class GadgetStatus {
     'isActive': isActive,
     'state': state,
     'activeProfileId': activeProfileId,
+    'activeRoleType': activeRoleType,
     'message': message,
     'udcList': udcList,
     'keyboardWriterReady': keyboardWriterReady,
@@ -219,8 +222,7 @@ class GadgetStatus {
 
     final rawState = (m['state'] ?? '').toString().trim();
     final normalizedState = rawState.isEmpty ? '' : rawState.toUpperCase();
-    final activeFromState =
-        normalizedState == 'ACTIVE' || normalizedState == 'ACTIVATING';
+    final activeFromState = normalizedState == 'ACTIVE';
     final hasIsActive = m.containsKey('isActive');
     final isActive = hasIsActive ? b('isActive') : activeFromState;
     final state = normalizedState.isNotEmpty
@@ -234,6 +236,7 @@ class GadgetStatus {
       isActive: isActive,
       state: state,
       activeProfileId: m['activeProfileId']?.toString(),
+      activeRoleType: m['activeRoleType']?.toString(),
       message: m['message']?.toString(),
       udcList: list('udcList'),
       keyboardWriterReady: b('keyboardWriterReady'),

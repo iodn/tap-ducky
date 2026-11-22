@@ -6,6 +6,38 @@ import java.util.Locale
 object Configfs {
   const val HID_ALLOCATION_FAILED = 23
   const val GADGET_CREATION_FAILED = 24
+
+  fun buildProbeSessionScript(gadgetDir: String, shared: Boolean): String {
+    val prefix = if (shared) "hid.tapducky" else "hid.usb"
+    return """
+      NAME=${shEscape(gadgetDir)}
+      FOUND=0
+      for base in /config/usb_gadget /sys/kernel/config/usb_gadget; do
+        [ -d "${'$'}base" ] || continue
+        FOUND=1
+        G="${'$'}base/${'$'}NAME"
+        [ -e "${'$'}G/UDC" ] || continue
+        UDC_NAME=${'$'}(cat "${'$'}G/UDC") || exit 2
+        [ -n "${'$'}UDC_NAME" ] || continue
+        echo bound
+        for fn in ${prefix}0 ${prefix}1; do
+          for link in "${'$'}G"/configs/*/"${'$'}fn"; do
+            [ -L "${'$'}link" ] && [ -d "${'$'}link" ] || continue
+            target=${'$'}(readlink "${'$'}link") || continue
+            [ "${'$'}{target##*/}" = "${'$'}fn" ] || continue
+            protocol=${'$'}(cat "${'$'}G/functions/${'$'}fn/protocol") || exit 2
+            dev=${'$'}(cat "${'$'}G/functions/${'$'}fn/dev" 2>/dev/null)
+            printf '%s=%s:%s\n' "${'$'}fn" "${'$'}protocol" "${'$'}dev"
+            break
+          done
+        done
+        exit 0
+      done
+      [ "${'$'}FOUND" = 1 ] || exit 2
+      echo unbound
+    """.trimIndent()
+  }
+
   data class ParsedProfile(
     val id: String,
     val name: String,

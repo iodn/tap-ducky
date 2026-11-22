@@ -77,8 +77,9 @@ class GadgetManager(
     val deviceConnected: Boolean,
     val udcState: String?,
     val hostConfigurationRequestCount: Int,
+    val activeRoleType: String? = null,
   ) {
-    val isActive: Boolean get() = state == "ACTIVE" || state == "ACTIVATING"
+    val isActive: Boolean get() = state == "ACTIVE"
     fun toMap(): Map<String, Any?> = mapOf(
       "rootAvailable" to rootAvailable,
       "supportAvailable" to supportAvailable,
@@ -86,6 +87,7 @@ class GadgetManager(
       "state" to state,
       "isActive" to isActive,
       "activeProfileId" to activeProfileId,
+      "activeRoleType" to activeRoleType,
       "message" to message,
       "keyboardWriterReady" to keyboardWriterReady,
       "mouseWriterReady" to mouseWriterReady,
@@ -114,7 +116,7 @@ class GadgetManager(
   private val sinkRef = AtomicReference<EventChannel.EventSink?>(null)
 
   init {
-    refreshAndEmitStatus(restoreFromPrefs = true)
+    refreshAndEmitStatus()
     setRiskyFastMode(prefs.riskyFastMode)
   }
 
@@ -158,10 +160,11 @@ class GadgetManager(
   }
 
   fun getStatusSnapshot(): Status {
-    return refreshAndEmitStatus(restoreFromPrefs = false)
+    return refreshAndEmitStatus()
   }
 
-  fun refreshAndEmitStatus(restoreFromPrefs: Boolean): Status {
+  @Synchronized
+  fun refreshAndEmitStatus(): Status {
     val current = statusRef.get()
     val rootOk = checkRoot()
     val configfsOk = rootOk && ensureConfigfsAvailable()
@@ -173,21 +176,45 @@ class GadgetManager(
     var msg = current.message
     var deviceConnected = current.deviceConnected
     var udcState = current.udcState
+    var activeRole = current.activeRoleType
 
-    if (restoreFromPrefs && state != "ACTIVE") {
-      val savedId = prefs.activeProfileId
-      val savedDir = prefs.activeGadgetDir
-      if (!savedId.isNullOrBlank() && !savedDir.isNullOrBlank() && rootOk) {
-        val stillActive = isGadgetDirBound(savedDir)
-        if (stillActive) {
-          state = "ACTIVE"
-          activeId = savedId
-          msg = null
-          log.log("gadget", "Restored active state for profile=$savedId")
-          reopenHidWritersFromPrefsBestEffort()
-          startUdcPolling()
-        } else {
-          prefs.clearActive()
+    val dir = prefs.activeGadgetDir ?: prefs.pendingGadgetDir
+    var adopted = false
+    if (dir != null && state != "ACTIVATING" && rootOk) {
+      when (val probe = probeSavedSession(dir)) {
+        is SessionProbe.Bound -> {
+          if (state != "ACTIVE" || activeRole != probe.role ||
+            prefs.activeKeyboardDev != probe.keyboard || prefs.activeMouseDev != probe.mouse) {
+            val wasActive = prefs.activeGadgetDir == dir
+            val profile = prefs.activeProfileId ?: prefs.pendingProfileId ?: "recovered:$dir"
+            prefs.setActive(profile, probe.role, dir, probe.keyboard, probe.mouse)
+            state = "ACTIVE"
+            activeId = profile
+            activeRole = probe.role
+            msg = null
+            adopted = true
+            log.log("gadget", "Recognized already-bound USB gadget $dir (${probe.role}); no rebind performed")
+            // Only use verified live endpoints, or the recorded ones for older kernels.
+            if (wasActive || probe.keyboard != null || probe.mouse != null) {
+              openHidWritersBestEffort(probe.keyboard, probe.mouse)
+            }
+          }
+        }
+        SessionProbe.Unbound, SessionProbe.Unknown -> {
+          if (state == "ACTIVE") {
+            stopUdcPolling()
+            closeHidWritersBestEffort()
+            stopForeground()
+            hostConfigurationRequestCount = 0
+          }
+          val unbound = probe == SessionProbe.Unbound
+          if (unbound) prefs.clearActive()
+          state = if (unbound) "IDLE" else "ERROR"
+          activeId = null
+          activeRole = null
+          deviceConnected = false
+          udcState = null
+          msg = if (unbound) null else "Could not verify the previous USB session. No USB configuration was changed."
         }
       }
     }
@@ -204,9 +231,11 @@ class GadgetManager(
       deviceConnected = deviceConnected,
       udcState = udcState,
       hostConfigurationRequestCount = hostConfigurationRequestCount,
+      activeRoleType = activeRole,
     )
     statusRef.set(next)
     emit(next)
+    if (adopted) startUdcPolling()
     return next
   }
 
@@ -352,9 +381,10 @@ class GadgetManager(
     }
   }
 
+  @Synchronized
   fun activate(profileMap: Map<*, *>) {
     val profile = parseProfile(profileMap)
-    if (statusRef.get().state in listOf("ACTIVE", "ACTIVATING")) return
+    if (statusRef.get().state == "ACTIVATING") return
     if (!checkRoot()) {
       setError("Root not available (su denied).")
       return
@@ -362,6 +392,10 @@ class GadgetManager(
     if (!checkSupport()) {
       setError("USB gadget support not detected (configfs/UDC missing).")
       return
+    }
+    if (prefs.activeGadgetDir != null || prefs.pendingGadgetDir != null) {
+      val existing = refreshAndEmitStatus()
+      if (existing.state == "ACTIVE" || existing.state == "ERROR") return
     }
 
     setState("ACTIVATING", profile.id, "Creating gadget…")
@@ -379,6 +413,7 @@ class GadgetManager(
       persistSysUsbConfig = snap.persistSysUsbConfig,
       boundGadgets = snap.boundGadgetsRaw,
       gadgetDir = gadgetDir,
+      profileId = profile.id,
     )
     if (!saved) {
       setError("Could not save the previous USB mode. Activation was skipped.")
@@ -451,7 +486,7 @@ class GadgetManager(
     }
     log.log("hid", "Retrying HID writer open (user-requested)")
     openHidWritersBestEffort(kbdDev, mouseDev)
-    refreshAndEmitStatus(restoreFromPrefs = false)
+    refreshAndEmitStatus()
   }
 
   fun deactivate() {
@@ -464,6 +499,7 @@ class GadgetManager(
     stopUsbSession("Panic stop…", "panic_stop")
   }
 
+  @Synchronized
   private fun stopUsbSession(message: String, reason: String) {
     val gadgetDir = prefs.activeGadgetDir ?: prefs.pendingGadgetDir ?: return
     setState("ACTIVATING", null, message)
@@ -778,13 +814,6 @@ class GadgetManager(
     } catch (t: Throwable) {
       log.logError("hid", "openHidWriters failed: ${t.message}")
     }
-  }
-
-  private fun reopenHidWritersFromPrefsBestEffort() {
-    val kbdDev = prefs.activeKeyboardDev
-    val mouseDev = prefs.activeMouseDev
-    if (kbdDev.isNullOrBlank() && mouseDev.isNullOrBlank()) return
-    openHidWritersBestEffort(kbdDev, mouseDev)
   }
 
   private fun closeHidWritersBestEffort() {
@@ -1289,22 +1318,43 @@ class GadgetManager(
     return mounted.ok
   }
 
-  private fun isGadgetDirBound(gadgetDir: String): Boolean {
+  private sealed interface SessionProbe {
+    data class Bound(val role: String, val keyboard: String?, val mouse: String?) : SessionProbe
+    data object Unbound : SessionProbe
+    data object Unknown : SessionProbe
+  }
+
+  private fun probeSavedSession(gadgetDir: String): SessionProbe {
     val shared = prefs.pendingSharedGadget && gadgetDir == prefs.pendingGadgetDir
-    val script = """
-      CFGBASE=/config/usb_gadget
-      [ -d "${'$'}CFGBASE" ] || CFGBASE=/sys/kernel/config/usb_gadget
-      G="${'$'}CFGBASE/"${shQuote(gadgetDir)}
-      [ -n "${'$'}(cat "${'$'}G/UDC" 2>/dev/null)" ] || exit 1
-      if [ "$shared" = "true" ]; then
-        for link in "${'$'}G"/configs/*/hid.tapducky0; do
-          [ -L "${'$'}link" ] && exit 0
-        done
-        exit 1
-      fi
-    """.trimIndent()
-    val r = root.exec(script, timeoutSec = 5)
-    return r.ok
+    if (!gadgetDir.matches(Regex("[A-Za-z0-9_-]+")) ||
+      (!shared && !gadgetDir.startsWith("gadgetfs_"))) return SessionProbe.Unknown
+    val r = root.exec(Configfs.buildProbeSessionScript(gadgetDir, shared), timeoutSec = 5)
+    if (!r.ok) return SessionProbe.Unknown
+    val lines = r.stdout.lineSequence().map { it.trim() }.filter { it.isNotEmpty() }.toList()
+    if (lines == listOf("unbound")) return SessionProbe.Unbound
+    if (lines.firstOrNull() != "bound") return SessionProbe.Unknown
+    // Stock USB can remain bound after its TapDucky functions have been removed.
+    if (shared && lines.size == 1) return SessionProbe.Unbound
+    val prefix = if (shared) "hid.tapducky" else "hid.usb"
+    val functions = lines.drop(1).map { it.split('=', ':', limit = 4) }
+    val first = functions.firstOrNull { it.firstOrNull() == "${prefix}0" }
+      ?: return SessionProbe.Unknown
+    val second = functions.firstOrNull { it.firstOrNull() == "${prefix}1" }
+    val role = when (first.getOrNull(1) to second?.getOrNull(1)) {
+      "1" to null -> "keyboard"
+      "2" to null -> "mouse"
+      "1" to "2" -> "composite"
+      else -> return SessionProbe.Unknown
+    }
+    val saved = prefs.activeGadgetDir == gadgetDir && prefs.activeRoleType == role
+    fun endpoint(fields: List<String>?, fallback: String?): String? =
+      fields?.getOrNull(3)?.toIntOrNull()?.takeIf { it >= 0 }?.let { "/dev/hidg$it" }
+        ?: fallback?.takeIf { saved && it.matches(Regex("/dev/hidg[0-9]+")) }
+    return SessionProbe.Bound(
+      role,
+      if (role == "mouse") null else endpoint(first, prefs.activeKeyboardDev),
+      if (role == "keyboard") null else endpoint(if (role == "mouse") first else second, prefs.activeMouseDev),
+    )
   }
 
   private fun startForeground(title: String) {
@@ -1330,6 +1380,7 @@ class GadgetManager(
     val next = current.copy(
       state = state,
       activeProfileId = activeProfileId,
+      activeRoleType = if (state == "ACTIVE") prefs.activeRoleType else null,
       message = message,
       keyboardWriterReady = root.isKeyboardWriterReady(),
       mouseWriterReady = root.isMouseWriterReady(),

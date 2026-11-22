@@ -74,6 +74,9 @@ class Prefs(context: Context) {
   val pendingSharedGadget: Boolean
     get() = sp.getBoolean(KEY_PENDING_SHARED_GADGET, false)
 
+  val pendingProfileId: String?
+    get() = sp.getString(KEY_PENDING_PROFILE_ID, null)
+
   fun setSharedGadgetDir(gadgetDir: String): Boolean = sp.edit()
     .putString(KEY_PENDING_GADGET_DIR, gadgetDir)
     .putBoolean(KEY_PENDING_SHARED_GADGET, true)
@@ -158,7 +161,8 @@ class Prefs(context: Context) {
     sysUsbConfigfs: String?,
     persistSysUsbConfig: String?,
     boundGadgets: String?,
-    gadgetDir: String
+    gadgetDir: String,
+    profileId: String,
   ): Boolean {
     return sp.edit()
       .putString(KEY_PREV_SYS_USB_CONFIG, sysUsbConfig)
@@ -167,6 +171,7 @@ class Prefs(context: Context) {
       .putString(KEY_PREV_PERSIST_SYS_USB_CONFIG, persistSysUsbConfig)
       .putString(KEY_PREV_BOUND_GADGETS, boundGadgets)
       .putString(KEY_PENDING_GADGET_DIR, gadgetDir)
+      .putString(KEY_PENDING_PROFILE_ID, profileId)
       .remove(KEY_PENDING_SHARED_GADGET)
       .commit()
   }
@@ -179,6 +184,7 @@ class Prefs(context: Context) {
       .remove(KEY_PREV_PERSIST_SYS_USB_CONFIG)
       .remove(KEY_PREV_BOUND_GADGETS)
       .remove(KEY_PENDING_GADGET_DIR)
+      .remove(KEY_PENDING_PROFILE_ID)
       .remove(KEY_PENDING_SHARED_GADGET)
       .apply()
   }
@@ -186,6 +192,7 @@ class Prefs(context: Context) {
   companion object {
     private const val NAME = "gadgetfs_prefs"
     private const val KEY_ACTIVE_PROFILE_ID = "active_profile_id"
+    private const val KEY_PENDING_PROFILE_ID = "pending_profile_id"
     private const val KEY_ACTIVE_ROLE_TYPE = "active_role_type"
     private const val KEY_ACTIVE_GADGET_DIR = "active_gadget_dir"
     private const val KEY_ACTIVE_KBD_DEV = "active_keyboard_dev"

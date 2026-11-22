@@ -67,8 +67,7 @@ class HidStatus {
   }
 
   factory HidStatus.fromGadgetStatus(
-    GadgetStatus gs,
-    String? roleType, {
+    GadgetStatus gs, {
     bool isInitializing = false,
   }) {
     return HidStatus(
@@ -78,7 +77,7 @@ class HidStatus {
       deviceConnected: gs.deviceConnected,
       sessionArmed: gs.isActive,
       activeProfileId: gs.activeProfileId,
-      activeProfileType: roleType,
+      activeProfileType: gs.activeRoleType,
       message: gs.message,
       udcList: gs.udcList,
       keyboardWriterReady: gs.keyboardWriterReady,
@@ -91,12 +90,9 @@ class HidStatus {
 
 final hidStatusProvider = StreamProvider<HidStatus>((ref) async* {
   final service = ref.watch(platformGadgetServiceProvider);
-  final prefs = await ref.watch(prefsStorageProvider.future);
-
-  final roleType = prefs.getString('active_role_type');
   try {
     final initial = await service.getStatus();
-    yield HidStatus.fromGadgetStatus(initial, roleType, isInitializing: false);
+    yield HidStatus.fromGadgetStatus(initial);
   } catch (_) {
     yield const HidStatus(
       isInitializing: false,
@@ -109,9 +105,7 @@ final hidStatusProvider = StreamProvider<HidStatus>((ref) async* {
 
   await for (final statusMap in service.statusStream) {
     final gs = GadgetStatus.fromMap(statusMap);
-    final currentRole = prefs.getString('active_role_type');
-
-    yield HidStatus.fromGadgetStatus(gs, currentRole);
+    yield HidStatus.fromGadgetStatus(gs);
   }
 });
 
@@ -217,15 +211,6 @@ class HidStatusController extends Notifier<HidStatus> {
     return next.copyWith(isInitializing: false);
   }
 
-  Future<void> _setActiveRoleType(String? roleType) async {
-    final prefs = await ref.read(prefsStorageProvider.future);
-    if (roleType == null || roleType.trim().isEmpty) {
-      await prefs.remove('active_role_type');
-    } else {
-      await prefs.setString('active_role_type', roleType.trim());
-    }
-  }
-
   Future<void> activateKeyboard() async {
     final service = ref.read(platformGadgetServiceProvider);
     final advSettings = ref.read(advancedSettingsControllerProvider).value;
@@ -242,7 +227,6 @@ class HidStatusController extends Notifier<HidStatus> {
     );
 
     await service.activateProfile(profile);
-    await _setActiveRoleType('keyboard');
   }
 
   Future<void> activateMouse() async {
@@ -261,7 +245,6 @@ class HidStatusController extends Notifier<HidStatus> {
     );
 
     await service.activateProfile(profile);
-    await _setActiveRoleType('mouse');
   }
 
   Future<void> activateComposite() async {
@@ -280,19 +263,16 @@ class HidStatusController extends Notifier<HidStatus> {
     );
 
     await service.activateProfile(profile);
-    await _setActiveRoleType('composite');
   }
 
   Future<void> deactivate() async {
     final service = ref.read(platformGadgetServiceProvider);
     await service.deactivate();
-    await _setActiveRoleType(null);
   }
 
   Future<void> panicStop() async {
     final service = ref.read(platformGadgetServiceProvider);
     await service.panicStop();
-    await _setActiveRoleType(null);
   }
 
   Future<void> retryOpenHidWriters() async {

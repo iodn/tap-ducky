@@ -76,6 +76,7 @@ Note: A rooted device with Linux USB gadget (ConfigFS) support is required. Use 
 
 - Device & HID Profiles
   - Activate Keyboard, Mouse, or Composite profiles with configurable IDs/strings/power.
+  - Recognizes an already-bound TapDucky session after reopening without rebinding USB or automatically arming a new session.
   - Keyboard layout selection and code/ID resolution.
   - Status stream shows ACTIVE/IDLE, writer readiness, and host configuration requests.
 
