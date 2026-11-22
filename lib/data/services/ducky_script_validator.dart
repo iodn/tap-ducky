@@ -316,6 +316,75 @@ class DuckyScriptValidator {
     'DELETTE': 'DELETE',
   };
 
+  static const _modifierTokens = {
+    'GUI',
+    'WINDOWS',
+    'WIN',
+    'COMMAND',
+    'CONTROL',
+    'CTRL',
+    'ALT',
+    'OPTION',
+    'SHIFT',
+    'RCTRL',
+    'RCONTROL',
+    'RSHIFT',
+    'RALT',
+    'RGUI',
+    'RWINDOWS',
+    'RCOMMAND',
+  };
+
+  static final Set<String> _comboKeys = {
+    'ENTER',
+    'ESC',
+    'ESCAPE',
+    'BACKSPACE',
+    'BKSP',
+    'TAB',
+    'SPACE',
+    'DELETE',
+    'DEL',
+    'UP',
+    'UPARROW',
+    'DOWN',
+    'DOWNARROW',
+    'LEFT',
+    'LEFTARROW',
+    'RIGHT',
+    'RIGHTARROW',
+    'HOME',
+    'END',
+    'PAGEUP',
+    'PAGEDOWN',
+    'INSERT',
+    'INS',
+    'PRINTSCREEN',
+    'PRTSCN',
+    'SCROLLLOCK',
+    'PAUSE',
+    'BREAK',
+    'CAPSLOCK',
+    'NUMLOCK',
+    'MENU',
+    'APP',
+    for (var i = 1; i <= 24; i++) 'F$i',
+    for (var i = 0; i <= 9; i++) 'NUMPAD_$i',
+    for (var i = 0; i <= 9; i++) 'KP$i',
+    'NUMPAD_PLUS',
+    'KPPLUS',
+    'NUMPAD_MINUS',
+    'KPMINUS',
+    'NUMPAD_MULTIPLY',
+    'KPASTERISK',
+    'NUMPAD_DIVIDE',
+    'KPSLASH',
+    'NUMPAD_ENTER',
+    'KPENTER',
+    'NUMPAD_PERIOD',
+    'KPDOT',
+  };
+
   static const int _minDelayMs = 20;
 
   static const int _baseKeyMs = 25;
@@ -839,6 +908,9 @@ class DuckyScriptValidator {
 
           if (_supportedCommands.contains(command)) {
             commandCount++;
+            if (_modifierTokens.contains(command)) {
+              _validateModifierCombo(parts.skip(1), lineNum, command, issues);
+            }
             if (_isSingleKeyCommand(command)) {
               commitCommand(keyCount: 1, perCharDelayMs: 0, charCount: 0);
             } else if (_isRandomCharCommand(command)) {
@@ -947,6 +1019,56 @@ class DuckyScriptValidator {
       hasErrors: hasErrors,
       hasWarnings: hasWarnings,
     );
+  }
+
+  void _validateModifierCombo(
+    Iterable<String> rest,
+    int line,
+    String command,
+    List<ValidationIssue> issues,
+  ) {
+    final keys = rest
+        .expand((part) => part.toUpperCase().split('-'))
+        .where((part) => part.isNotEmpty && !_modifierTokens.contains(part))
+        .toList();
+    if (keys.isEmpty) {
+      issues.add(
+        ValidationIssue(
+          line: line,
+          severity: IssueSeverity.warning,
+          message: 'Modifier command requires a key',
+          suggestion: 'Example: $command r',
+        ),
+      );
+      return;
+    }
+    if (keys.length > 1) {
+      issues.add(
+        ValidationIssue(
+          line: line,
+          severity: IssueSeverity.warning,
+          message: 'Modifier combo supports one key',
+          suggestion: 'Use one key after the modifiers',
+        ),
+      );
+    }
+    for (final key in keys) {
+      if (!_isComboKey(key)) {
+        issues.add(
+          ValidationIssue(
+            line: line,
+            severity: IssueSeverity.warning,
+            message: 'Unknown key: $key',
+            suggestion: 'Use a key such as r, ENTER, TAB, F4, or UP',
+          ),
+        );
+      }
+    }
+  }
+
+  bool _isComboKey(String key) {
+    if (RegExp(r'^[A-Z0-9]$').hasMatch(key)) return true;
+    return _comboKeys.contains(key);
   }
 
   bool _isSingleKeyCommand(String cmd) {
