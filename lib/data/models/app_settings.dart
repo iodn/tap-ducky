@@ -1,5 +1,9 @@
 import 'package:material_ui/material_ui.dart';
 
+import 'host_os.dart';
+
+const Object _manualHostOsUnchanged = Object();
+
 class AppSettings {
   const AppSettings({
     required this.themeMode,
@@ -18,6 +22,7 @@ class AppSettings {
     required this.typingSpeedFactor,
     required this.typingSpeedSemanticsVersion,
     required this.dialShortcuts,
+    required this.manualHostOs,
   });
 
   final ThemeMode themeMode;
@@ -36,6 +41,7 @@ class AppSettings {
   final double typingSpeedFactor;
   final int typingSpeedSemanticsVersion;
   final List<DialShortcutBinding> dialShortcuts;
+  final HostOs? manualHostOs;
 
   AppSettings copyWith({
     ThemeMode? themeMode,
@@ -54,6 +60,7 @@ class AppSettings {
     double? typingSpeedFactor,
     int? typingSpeedSemanticsVersion,
     List<DialShortcutBinding>? dialShortcuts,
+    Object? manualHostOs = _manualHostOsUnchanged,
   }) {
     return AppSettings(
       themeMode: themeMode ?? this.themeMode,
@@ -72,6 +79,9 @@ class AppSettings {
       typingSpeedFactor: typingSpeedFactor ?? this.typingSpeedFactor,
       typingSpeedSemanticsVersion: typingSpeedSemanticsVersion ?? this.typingSpeedSemanticsVersion,
       dialShortcuts: dialShortcuts ?? this.dialShortcuts,
+      manualHostOs: identical(manualHostOs, _manualHostOsUnchanged)
+          ? this.manualHostOs
+          : manualHostOs as HostOs?,
     );
   }
 
@@ -92,6 +102,7 @@ class AppSettings {
         'typingSpeedFactor': typingSpeedFactor,
         'typingSpeedSemanticsVersion': typingSpeedSemanticsVersion,
         'dialShortcuts': dialShortcuts.map((e) => e.toJson()).toList(),
+        'manualHostOs': manualHostOs?.name,
       };
 
   static AppSettings defaults() => const AppSettings(
@@ -144,6 +155,7 @@ class AppSettings {
             name: null,
           ),
         ],
+        manualHostOs: null,
       );
 
   static AppSettings fromJson(Map<String, dynamic> json) {
@@ -171,6 +183,9 @@ class AppSettings {
     final legacyMode = (json['dialShortcutMode'] ?? 'last').toString();
     final legacyPayloadIdRaw = (json['dialShortcutPayloadId'] ?? '').toString();
     final legacyPayloadId = legacyPayloadIdRaw.isEmpty ? null : legacyPayloadIdRaw;
+
+    final manualHostOsRaw = json['manualHostOs']?.toString();
+    final manualHostOs = HostOs.fromName(manualHostOsRaw);
 
     final normalized = parsedShortcuts.map((b) {
       if (b.code == '78259') return b.copyWith(code: '38250');
@@ -210,6 +225,7 @@ class AppSettings {
       typingSpeedFactor: typingFactor,
       typingSpeedSemanticsVersion: typingSemantics,
       dialShortcuts: mergedShortcuts,
+      manualHostOs: manualHostOs == HostOs.unknown ? null : manualHostOs,
     );
   }
 }

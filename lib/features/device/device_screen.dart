@@ -6,6 +6,7 @@ import '../../app/theme.dart';
 import '../../data/models/device_snapshot.dart';
 import '../../state/controllers/hid_status_controller.dart';
 import '../../state/providers.dart';
+import 'widgets/host_diagnostics_card.dart';
 
 final deviceSnapshotProvider = FutureProvider<DeviceSnapshot>((ref) async {
   final svc = ref.read(deviceInfoServiceProvider);
@@ -74,6 +75,16 @@ class DeviceScreen extends ConsumerWidget {
                 ),
                 const SizedBox(height: 12),
                 _HidReadinessCard(hid: hid),
+                const SizedBox(height: 24),
+
+                // Host connection and OS diagnostics (kept separate)
+                _SectionTitle(
+                  icon: Icons.computer,
+                  title: 'Host',
+                  subtitle: 'Connection and OS diagnostics',
+                ),
+                const SizedBox(height: 12),
+                const HostDiagnosticsCard(),
                 const SizedBox(height: 24),
 
                 // UDC State (if available)

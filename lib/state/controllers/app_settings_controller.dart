@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../../data/models/app_settings.dart';
+import '../../data/models/host_os.dart';
 import '../providers.dart';
 
 final appSettingsControllerProvider = AsyncNotifierProvider<AppSettingsController, AppSettings>(
@@ -60,6 +61,11 @@ class AppSettingsController extends AsyncNotifier<AppSettings> {
 
   Future<void> setHiddenExecution(bool v) async {
     final s = (state.value ?? AppSettings.defaults()).copyWith(hiddenExecution: v);
+    await _save(s);
+  }
+
+  Future<void> setManualHostOs(HostOs? os) async {
+    final s = (state.value ?? AppSettings.defaults()).copyWith(manualHostOs: os);
     await _save(s);
   }
 

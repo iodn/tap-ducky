@@ -45,6 +45,7 @@
   - Tabbed execute view, parameter prompts, run/cancel, execution history, and structured logs with export/clear and level filter.
 - Device diagnostics:
   - Snapshot of device, kernel/gadget status, UDC info, keyboard layouts; copy‑to‑clipboard; emulator detection note.
+  - Host connection and host OS are reported separately. Host OS defaults to Unknown and can be labelled manually; it is diagnostic only and never selects or changes a script.
 
 Note: A rooted device with Linux USB gadget (ConfigFS) support is required. Use a physical device as emulators cannot validate HID behavior.
 
@@ -79,7 +80,7 @@ Note: A rooted device with Linux USB gadget (ConfigFS) support is required. Use 
   - Activate Keyboard, Mouse, or Composite profiles with configurable IDs/strings/power.
   - Recognizes an already-bound TapDucky session after reopening without rebinding USB or automatically arming a new session.
   - Keyboard layout selection and code/ID resolution.
-  - Status stream shows ACTIVE/IDLE, writer readiness, and host configuration requests.
+  - Status stream shows ACTIVE/IDLE, writer readiness, host connection state, and the observed host-present transition count.
 
 - Logs & History
   - Logs tab with level filter (all/info/debug/warn/error), export to share, clear all.
@@ -249,7 +250,8 @@ Note: In addition to the listed aliases, TapDucky accepts snake_case forms like 
 
 ## Device Diagnostics
 
-- View kernel/UDC list, HID writers readiness, active profile state, host configuration request count, and more.
+- View kernel/UDC list, HID writers readiness, active profile state, host connection state, and the host-present transition count.
+- Host OS is shown separately from host connection. It defaults to Unknown; a manual diagnostic label is available and is always labelled as manually selected. Automatic OS identification is not supported by the current USB gadget backend.
 - Copy values to clipboard and refresh snapshot/diagnostics independently.
 
 ## Developer Notes
