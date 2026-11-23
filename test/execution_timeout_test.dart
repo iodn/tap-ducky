@@ -24,6 +24,7 @@ class _ArmedHid extends HidStatusController {
     hidSupported: true,
     deviceConnected: true,
     sessionArmed: true,
+    gadgetBound: true,
   );
 }
 

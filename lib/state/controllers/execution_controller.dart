@@ -470,14 +470,16 @@ class ExecutionController extends Notifier<ExecutionState> {
       return;
     }
 
-    if (!hid.sessionArmed) {
+    if (!hid.sessionArmed || !hid.gadgetBound) {
       await _emitAndPersist(LogEntry(
         id: _uuid.v4(),
         timestamp: DateTime.now(),
         level: 'warn',
-        message: 'HID session not armed. Activate gadget first.',
+        message: hid.sessionArmed
+            ? 'USB HID interface is still being prepared. Try again shortly.'
+            : 'HID session not armed. Arm the session first.',
         success: false,
-        meta: const {'guard': 'session_not_armed'},
+        meta: {'guard': hid.sessionArmed ? 'gadget_not_ready' : 'session_not_armed'},
       ));
       return;
     }
@@ -612,16 +614,18 @@ class ExecutionController extends Notifier<ExecutionState> {
       return;
     }
 
-    if (!hid.sessionArmed) {
+    if (!hid.sessionArmed || !hid.gadgetBound) {
       await _emitAndPersist(LogEntry(
         id: _uuid.v4(),
         timestamp: DateTime.now(),
         level: 'warn',
-        message: 'HID session not armed. Activate gadget first.',
+        message: hid.sessionArmed
+            ? 'USB HID interface is still being prepared. Try again shortly.'
+            : 'HID session not armed. Arm the session first.',
         success: false,
         payloadId: payload.id,
         payloadName: payload.name,
-        meta: const {'guard': 'session_not_armed'},
+        meta: {'guard': hid.sessionArmed ? 'gadget_not_ready' : 'session_not_armed'},
       ));
       return;
     }

@@ -20,18 +20,6 @@ import '../../widgets/root_required_card.dart';
 class DashboardScreen extends ConsumerWidget {
   const DashboardScreen({super.key});
 
-  void _showCableMessage(BuildContext context, {required bool armed}) {
-    final message = armed
-        ? 'Unplug the USB data cable before disarming.'
-        : 'Unplug the USB data cable, arm the session, then reconnect the cable to the target.';
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        behavior: SnackBarBehavior.floating,
-      ),
-    );
-  }
-
   Future<void> _armIfNeeded(WidgetRef ref) async {
     final hid = ref.read(hidStatusControllerProvider);
     if (hid.sessionArmed) return;
@@ -167,18 +155,6 @@ class DashboardScreen extends ConsumerWidget {
                 hid: hid,
                 exec: exec,
                 onArmToggle: () async {
-                  var attached = hid.deviceConnected;
-                  try {
-                    attached = await ref
-                        .read(hidStatusControllerProvider.notifier)
-                        .isHostAttached();
-                  } catch (_) {}
-                  if (!context.mounted) return;
-                  if (attached) {
-                    _showCableMessage(context, armed: hid.sessionArmed);
-                    return;
-                  }
-
                   if (hid.sessionArmed) {
                     await ref.read(hidStatusControllerProvider.notifier).deactivate();
                     return;
@@ -435,8 +411,12 @@ class _HeroStatusCard extends ConsumerWidget {
       statusText = 'Session Disarmed';
       statusIcon = Icons.lock_outline;
       statusColor = cs.tertiary;
+    } else if (!hid.gadgetBound) {
+      statusText = 'Arming';
+      statusIcon = Icons.settings_input_component;
+      statusColor = cs.tertiary;
     } else if (!hid.deviceConnected) {
-      statusText = 'Waiting for Host';
+      statusText = 'Armed - Waiting for Host';
       statusIcon = Icons.usb_off;
       statusColor = cs.warning;
     } else if (exec.isRunning) {
@@ -574,8 +554,13 @@ class _HeroStatusCard extends ConsumerWidget {
     if (!hid.rootAvailable) return 'Root access required';
     if (!hid.hidSupported) return 'USB gadget not supported';
     if (hid.message != null && hid.message!.isNotEmpty) return hid.message!;
-    if (!hid.sessionArmed) return 'Tap to activate USB gadget';
-    if (!hid.deviceConnected) return 'Connect USB cable to target';
+    if (!hid.sessionArmed) {
+      return hid.prepared ? 'USB interface ready; tap to arm' : 'Tap to arm';
+    }
+    if (!hid.gadgetBound) return 'Preparing USB interface…';
+    if (!hid.deviceConnected) {
+      return 'Connect the target USB cable. Payloads run when the host appears.';
+    }
     if (exec.isRunning) return 'Payload in progress';
     return 'System operational';
   }

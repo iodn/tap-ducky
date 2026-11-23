@@ -44,6 +44,27 @@ class Prefs(context: Context) {
       sp.edit().putString(KEY_ACTIVE_MEDIA_DEV, value).apply()
     }
 
+  /** Logical user intent. The USB gadget may stay bound while this is false. */
+  var armed: Boolean
+    get() = sp.getBoolean(KEY_ARMED, false)
+    set(value) {
+      sp.edit().putBoolean(KEY_ARMED, value).apply()
+    }
+
+  /** Role to use for a deferred first-time prepare. */
+  var desiredRole: String?
+    get() = sp.getString(KEY_DESIRED_ROLE, null)
+    set(value) {
+      sp.edit().putString(KEY_DESIRED_ROLE, value).apply()
+    }
+
+  /** Version of the prepared HID layout. Older layouts must be re-prepared. */
+  var preparedVersion: Int
+    get() = sp.getInt(KEY_PREPARED_VERSION, 0)
+    set(value) {
+      sp.edit().putInt(KEY_PREPARED_VERSION, value).apply()
+    }
+
   var prevSysUsbConfig: String?
     get() = sp.getString(KEY_PREV_SYS_USB_CONFIG, null)
     set(value) {
@@ -204,6 +225,30 @@ class Prefs(context: Context) {
       .apply()
   }
 
+  /**
+   * Drop all stale physical-session metadata after a probe proves no TapDucky
+   * artifacts are present. Never touches configfs or the USB controller.
+   */
+  fun clearSessionArtifacts() {
+    sp.edit()
+      .remove(KEY_ACTIVE_PROFILE_ID)
+      .remove(KEY_ACTIVE_ROLE_TYPE)
+      .remove(KEY_ACTIVE_GADGET_DIR)
+      .remove(KEY_ACTIVE_KBD_DEV)
+      .remove(KEY_ACTIVE_MOUSE_DEV)
+      .remove(KEY_ACTIVE_MEDIA_DEV)
+      .remove(KEY_PREV_SYS_USB_CONFIG)
+      .remove(KEY_PREV_SYS_USB_STATE)
+      .remove(KEY_PREV_SYS_USB_CONFIGFS)
+      .remove(KEY_PREV_PERSIST_SYS_USB_CONFIG)
+      .remove(KEY_PREV_BOUND_GADGETS)
+      .remove(KEY_PENDING_GADGET_DIR)
+      .remove(KEY_PENDING_PROFILE_ID)
+      .remove(KEY_PENDING_SHARED_GADGET)
+      .remove(KEY_PREPARED_VERSION)
+      .apply()
+  }
+
   companion object {
     private const val NAME = "gadgetfs_prefs"
     private const val KEY_ACTIVE_PROFILE_ID = "active_profile_id"
@@ -213,6 +258,9 @@ class Prefs(context: Context) {
     private const val KEY_ACTIVE_KBD_DEV = "active_keyboard_dev"
     private const val KEY_ACTIVE_MOUSE_DEV = "active_mouse_dev"
     private const val KEY_ACTIVE_MEDIA_DEV = "active_media_dev"
+    private const val KEY_ARMED = "armed"
+    private const val KEY_DESIRED_ROLE = "desired_role"
+    private const val KEY_PREPARED_VERSION = "prepared_version"
     private const val KEY_PREV_SYS_USB_CONFIG = "prev_sys_usb_config"
     private const val KEY_PREV_SYS_USB_STATE = "prev_sys_usb_state"
     private const val KEY_PREV_SYS_USB_CONFIGFS = "prev_sys_usb_configfs"

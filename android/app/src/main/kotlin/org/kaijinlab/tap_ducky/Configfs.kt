@@ -8,43 +8,6 @@ object Configfs {
   const val GADGET_CREATION_FAILED = 24
   const val HOST_ATTACHED_REFUSED = 25
 
-  /**
-   * f_hid has a small global instance limit. Android's stock gadget can hold
-   * idle hid.* instances that are not linked into any configuration. Remove
-   * only those unlinked instances; a linked/active HID function is never
-   * touched. This runs only after the caller has verified the UDC is detached.
-   */
-  private val reclaimUnlinkedHidScript = """
-    CFGBASE="/config/usb_gadget"
-    [ -d "${'$'}CFGBASE" ] || CFGBASE="/sys/kernel/config/usb_gadget"
-    reclaim_unlinked_hid() {
-      base=${'$'}1
-      [ -d "${'$'}base" ] || return 0
-      for g in "${'$'}base"/*; do
-        [ -d "${'$'}g" ] || continue
-        for f in "${'$'}g"/functions/hid.*; do
-          [ -d "${'$'}f" ] || continue
-          used=0
-          for cfg in "${'$'}g"/configs/*; do
-            [ -d "${'$'}cfg" ] || continue
-            for link in "${'$'}cfg"/*; do
-              [ -L "${'$'}link" ] || continue
-              target=${'$'}(readlink -f "${'$'}link" 2>/dev/null || true)
-              current=${'$'}(readlink -f "${'$'}f" 2>/dev/null || true)
-              if [ -n "${'$'}target" ] && [ "${'$'}target" = "${'$'}current" ]; then
-                used=1
-              fi
-            done
-          done
-          if [ "${'$'}used" = "0" ]; then
-            rmdir "${'$'}f" 2>/dev/null || true
-          fi
-        done
-      done
-    }
-    reclaim_unlinked_hid "${'$'}CFGBASE"
-  """.trimIndent()
-
   fun buildProbeSessionScript(gadgetDir: String, shared: Boolean): String {
     val prefix = if (shared) "hid.tapducky" else "hid.usb"
     return """
@@ -166,10 +129,7 @@ object Configfs {
       fi
       UDC_CANDIDATES="${'$'}DETACHED_UDCS"
 
-      $reclaimUnlinkedHidScript
-
-      G="${'$'}CFGBASE/$gadget"
-      if [ -d "${'$'}G" ]; then
+      G="${'$'}CFGBASE/$gadget"      if [ -d "${'$'}G" ]; then
         echo "Gadget already exists: ${'$'}G" >&2
         (echo "" > "${'$'}G/UDC") 2>/dev/null || true
       else
@@ -206,10 +166,7 @@ object Configfs {
 
     val functions = when (p.roleType.lowercase(Locale.US)) {
       "mouse" -> buildMouseFunctionScript("hid.usb0")
-      "keyboard" -> listOf(
-        buildKeyboardFunctionScript("hid.usb0"),
-        buildConsumerFunctionScript("hid.usb1"),
-      ).joinToString("\n\n")
+      "keyboard" -> buildKeyboardFunctionScript("hid.usb0")
       else -> buildCompositeFunctionScript()
     }
 
@@ -312,28 +269,27 @@ object Configfs {
     val mouse = profile.roleType.equals("mouse", ignoreCase = true)
     val names = when {
       mouse -> "hid.tapducky0"
-      composite -> "hid.tapducky0 hid.tapducky1 hid.tapducky2"
-      else -> "hid.tapducky0 hid.tapducky1"
+      composite -> "hid.tapducky0 hid.tapducky1"
+      else -> "hid.tapducky0"
     }
     val functions = when {
       mouse -> buildMouseFunctionScript("hid.tapducky0")
       composite -> listOf(
         buildKeyboardFunctionScript("hid.tapducky0"),
         buildMouseFunctionScript("hid.tapducky1"),
-        buildConsumerFunctionScript("hid.tapducky2"),
       ).joinToString("\n\n")
-      else -> listOf(
-        buildKeyboardFunctionScript("hid.tapducky0"),
-        buildConsumerFunctionScript("hid.tapducky1"),
-      ).joinToString("\n\n")
+      else -> buildKeyboardFunctionScript("hid.tapducky0")
     }
     return """
       set -e
       ${stockGadgetLocation(gadgetDir)}
       UDC_NAME=${shEscape(udc)}
-      [ "${'$'}(cat UDC)" = "${'$'}UDC_NAME" ] || exit 25
+      CURRENT_UDC=${'$'}(cat UDC 2>/dev/null | tr -d '\r')
+      if [ -n "${'$'}CURRENT_UDC" ] && [ "${'$'}CURRENT_UDC" != "${'$'}UDC_NAME" ]; then
+        echo "Stock USB gadget is bound to a different controller" >&2
+        exit 25
+      fi
       $requireDetachedStockHost
-      $reclaimUnlinkedHidScript
       set -- configs/*
       if [ "${'$'}#" -ne 1 ] || [ ! -d "${'$'}1" ]; then
         echo "Stock USB gadget must have exactly one configuration" >&2
@@ -344,10 +300,23 @@ object Configfs {
         echo "Could not identify an Android stock USB gadget to extend" >&2
         exit 25
       fi
+      $requireDetachedStockHost
+      if [ -n "${'$'}CURRENT_UDC" ]; then
+        printf '\n' > UDC
+      fi
+      # Detach our previous links before rewriting descriptors. f_hid
+      # attributes cannot be changed while a function is linked.
+      for old in hid.tapducky0 hid.tapducky1 hid.tapducky2; do
+        for cfg in configs/*; do
+          if [ -L "${'$'}cfg/${'$'}old" ]; then rm "${'$'}cfg/${'$'}old"; fi
+        done
+      done
+      if [ -d functions/hid.tapducky2 ]; then rmdir functions/hid.tapducky2; fi
       $functions
-      printf '\n' > UDC
       for fn in $names; do
-        ln -s "${'$'}G/functions/${'$'}fn" "${'$'}CFG/${'$'}fn"
+        if [ ! -L "${'$'}CFG/${'$'}fn" ]; then
+          ln -s "${'$'}G/functions/${'$'}fn" "${'$'}CFG/${'$'}fn"
+        fi
       done
       printf '%s\n' "${'$'}UDC_NAME" > UDC
       [ "${'$'}(cat UDC)" = "${'$'}UDC_NAME" ] || exit 25
@@ -366,7 +335,7 @@ object Configfs {
   """.trimIndent()
 
   private val requireDetachedStockHost = """
-    HOST_STATE=${'$'}(cat "/sys/class/udc/${'$'}UDC_NAME/state" 2>/dev/null || true)
+    HOST_STATE=${'$'}(cat "/sys/class/udc/${'$'}UDC_NAME/state" 2>/dev/null | tr -d '\r' | tr 'A-Z' 'a-z' | tr '-' ' ')
     if [ "${'$'}HOST_STATE" != "not attached" ]; then
       echo "Unplug the USB data cable before switching the Android USB configuration, then retry." >&2
       exit 25
@@ -393,10 +362,10 @@ object Configfs {
   private fun buildMouseFunctionScript(fn: String): String {
     return buildHidFunctionScript(
       fn = fn,
-      protocol = 2,
-      subclass = 1,
-      reportLength = 4,
-      descriptor = HidSpec.MOUSE_REPORT_DESC,
+      protocol = 0,
+      subclass = 0,
+      reportLength = 5,
+      descriptor = HidSpec.AUX_REPORT_DESC,
     )
   }
 
@@ -425,9 +394,11 @@ object Configfs {
     val expectedHex = bytesToHex(descriptor)
     val expectedHexLen = expectedHex.length
     return """
-      if ! mkdir functions/$fn; then
-        echo "Cannot allocate USB HID function $fn. The kernel's HID function slots may all be in use (Android's stock USB can hold idle instances) or HID gadget support may be missing. Unplug the USB data cable, retry, and check Device Information > Backend Diagnostics if it persists." >&2
-        exit $HID_ALLOCATION_FAILED
+      if [ ! -d functions/$fn ]; then
+        if ! mkdir functions/$fn; then
+          echo "Cannot allocate USB HID function $fn. The kernel's HID function slots may all be in use (Android's stock USB can hold idle instances) or HID gadget support may be missing." >&2
+          exit $HID_ALLOCATION_FAILED
+        fi
       fi
       echo $protocol > functions/$fn/protocol
       echo $subclass > functions/$fn/subclass
@@ -535,15 +506,14 @@ object Configfs {
     return listOf(
       buildKeyboardFunctionScript("hid.usb0"),
       buildMouseFunctionScript("hid.usb1"),
-      buildConsumerFunctionScript("hid.usb2"),
     ).joinToString("\n\n")
   }
 
   private fun expectedFunctionNames(roleType: String): List<String> {
     return when (roleType.lowercase(Locale.US)) {
       "mouse" -> listOf("hid.usb0")
-      "keyboard" -> listOf("hid.usb0", "hid.usb1")
-      else -> listOf("hid.usb0", "hid.usb1", "hid.usb2")
+      "keyboard" -> listOf("hid.usb0")
+      else -> listOf("hid.usb0", "hid.usb1")
     }
   }
 

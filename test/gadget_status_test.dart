@@ -27,4 +27,33 @@ void main() {
       expect(GadgetStatus.fromMap({'state': state}).isActive, isFalse);
     }
   });
+
+  test('disarmed can still have a bound prepared gadget', () {
+    final status = GadgetStatus.fromMap({
+      'state': 'IDLE',
+      'desiredArmed': false,
+      'gadgetBound': true,
+      'prepared': true,
+    });
+
+    expect(status.isActive, isFalse);
+    expect(status.gadgetBound, isTrue);
+    expect(status.prepared, isTrue);
+  });
+
+  test('armed waiting keeps logical arm separate from host connection', () {
+    final hid = HidStatus.fromGadgetStatus(
+      GadgetStatus.fromMap({
+        'state': 'ACTIVE',
+        'desiredArmed': true,
+        'gadgetBound': true,
+        'prepared': true,
+        'deviceConnected': false,
+      }),
+    );
+
+    expect(hid.sessionArmed, isTrue);
+    expect(hid.gadgetBound, isTrue);
+    expect(hid.deviceConnected, isFalse);
+  });
 }

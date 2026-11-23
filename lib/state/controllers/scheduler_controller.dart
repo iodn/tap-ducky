@@ -47,9 +47,9 @@ class SchedulerController extends AsyncNotifier<List<ScheduledTask>> {
       ref.listen<HidStatus>(
         hidStatusControllerProvider,
         (prev, next) {
-          final prevArmed = prev?.sessionArmed ?? false;
-          if (next.sessionArmed && !prevArmed) {
-            _onSessionArmed();
+          final prevReady = prev != null && _deviceReady(prev);
+          if (_deviceReady(next) && !prevReady) {
+            _onDeviceReady();
           }
         },
       );
@@ -61,8 +61,8 @@ class SchedulerController extends AsyncNotifier<List<ScheduledTask>> {
         await _fireForegroundIfDue(source: 'init');
 
         final hid = ref.read(hidStatusControllerProvider);
-        if (hid.sessionArmed) {
-          await _onSessionArmed();
+        if (_deviceReady(hid)) {
+          await _onDeviceReady();
         }
 
         await _tickSafely();
@@ -295,7 +295,11 @@ class SchedulerController extends AsyncNotifier<List<ScheduledTask>> {
     );
   }
 
-  Future<void> _onSessionArmed() async {
+  bool _deviceReady(HidStatus hid) {
+    return hid.sessionArmed && hid.gadgetBound && hid.deviceConnected;
+  }
+
+  Future<void> _onDeviceReady() async {
     await _triggerForAny(
       const {'device_connected'},
       queueOnFailure: false,
@@ -435,6 +439,7 @@ class SchedulerController extends AsyncNotifier<List<ScheduledTask>> {
 
   Future<bool> _executeAndConfirm(ScheduledTask t, {required bool autoDisable}) async {
     if (!_hiddenExecutionAllowed()) return false;
+    if (!ref.read(hidStatusControllerProvider).gadgetBound) return false;
 
     final execCtrl = ref.read(executionControllerProvider.notifier);
     if (execCtrl.isBusy) return false;

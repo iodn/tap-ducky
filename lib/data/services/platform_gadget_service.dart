@@ -166,6 +166,9 @@ class GadgetStatus {
     this.mouseWriterReady = false,
     this.udcState,
     this.hostConfigurationRequestCount = 0,
+    this.desiredArmed = false,
+    this.gadgetBound = false,
+    this.prepared = false,
   });
 
   final bool rootAvailable;
@@ -181,6 +184,9 @@ class GadgetStatus {
   final bool mouseWriterReady;
   final String? udcState;
   final int hostConfigurationRequestCount;
+  final bool desiredArmed;
+  final bool gadgetBound;
+  final bool prepared;
 
   Map<String, dynamic> toMap() => {
     'rootAvailable': rootAvailable,
@@ -196,6 +202,9 @@ class GadgetStatus {
     'mouseWriterReady': mouseWriterReady,
     'udcState': udcState,
     'hostConfigurationRequestCount': hostConfigurationRequestCount,
+    'desiredArmed': desiredArmed,
+    'gadgetBound': gadgetBound,
+    'prepared': prepared,
   };
 
   factory GadgetStatus.fromMap(Map<String, dynamic> m) {
@@ -224,7 +233,10 @@ class GadgetStatus {
     final normalizedState = rawState.isEmpty ? '' : rawState.toUpperCase();
     final activeFromState = normalizedState == 'ACTIVE';
     final hasIsActive = m.containsKey('isActive');
-    final isActive = hasIsActive ? b('isActive') : activeFromState;
+    final rawIsActive = hasIsActive ? b('isActive') : activeFromState;
+    final desiredArmed =
+        m.containsKey('desiredArmed') ? b('desiredArmed') : rawIsActive;
+    final isActive = desiredArmed;
     final state = normalizedState.isNotEmpty
         ? normalizedState
         : (isActive ? 'ACTIVE' : 'IDLE');
@@ -243,6 +255,9 @@ class GadgetStatus {
       mouseWriterReady: b('mouseWriterReady'),
       udcState: m['udcState']?.toString(),
       hostConfigurationRequestCount: i('hostConfigurationRequestCount'),
+      desiredArmed: desiredArmed,
+      gadgetBound: b('gadgetBound'),
+      prepared: b('prepared'),
     );
   }
 }

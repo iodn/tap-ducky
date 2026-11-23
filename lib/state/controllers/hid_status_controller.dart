@@ -18,6 +18,8 @@ class HidStatus {
     this.mouseWriterReady = false,
     this.udcState,
     this.hostConfigurationRequestCount = 0,
+    this.gadgetBound = false,
+    this.prepared = false,
   });
 
   final bool isInitializing;
@@ -33,6 +35,8 @@ class HidStatus {
   final bool mouseWriterReady;
   final String? udcState;
   final int hostConfigurationRequestCount;
+  final bool gadgetBound;
+  final bool prepared;
 
   HidStatus copyWith({
     bool? isInitializing,
@@ -48,6 +52,8 @@ class HidStatus {
     bool? mouseWriterReady,
     String? udcState,
     int? hostConfigurationRequestCount,
+    bool? gadgetBound,
+    bool? prepared,
   }) {
     return HidStatus(
       isInitializing: isInitializing ?? this.isInitializing,
@@ -63,6 +69,8 @@ class HidStatus {
       mouseWriterReady: mouseWriterReady ?? this.mouseWriterReady,
       udcState: udcState ?? this.udcState,
       hostConfigurationRequestCount: hostConfigurationRequestCount ?? this.hostConfigurationRequestCount,
+      gadgetBound: gadgetBound ?? this.gadgetBound,
+      prepared: prepared ?? this.prepared,
     );
   }
 
@@ -84,6 +92,8 @@ class HidStatus {
       mouseWriterReady: gs.mouseWriterReady,
       udcState: gs.udcState,
       hostConfigurationRequestCount: gs.hostConfigurationRequestCount,
+      gadgetBound: gs.gadgetBound,
+      prepared: gs.prepared,
     );
   }
 }
@@ -115,11 +125,6 @@ final hidStatusControllerProvider = NotifierProvider<HidStatusController, HidSta
 
 class HidStatusController extends Notifier<HidStatus> {
   ProviderSubscription<AsyncValue<HidStatus>>? _sub;
-  DateTime? _lastConnectedAt;
-  int _lastHostConfigCount = 0;
-  String? _lastUdcState;
-
-  static const Duration _stickyConnectedTtl = Duration(minutes: 15);
 
   @override
   HidStatus build() {
@@ -131,17 +136,14 @@ class HidStatusController extends Notifier<HidStatus> {
       hidStatusProvider,
       (prev, next) {
         next.whenData((status) {
-          state = _applyStickyConnection(status);
+          state = status.copyWith(isInitializing: false);
         });
       },
     );
 
     final initial = ref.read(hidStatusProvider);
     return initial.when(
-      data: (s) {
-        final merged = _applyStickyConnection(s);
-        return merged;
-      },
+      data: (s) => s.copyWith(isInitializing: false),
       loading: () => const HidStatus(
         isInitializing: true,
         rootAvailable: false,
@@ -157,58 +159,6 @@ class HidStatusController extends Notifier<HidStatus> {
         sessionArmed: false,
       ),
     );
-  }
-
-  HidStatus _applyStickyConnection(HidStatus next) {
-    final now = DateTime.now();
-
-    if (!next.sessionArmed) {
-      _lastConnectedAt = null;
-      _lastHostConfigCount = next.hostConfigurationRequestCount;
-      _lastUdcState = next.udcState;
-      return next.copyWith(isInitializing: false);
-    }
-
-    final udcState = (next.udcState ?? _lastUdcState ?? '').trim().toLowerCase();
-    final udcSaysConfigured = udcState.contains('configured') ||
-        udcState.contains('connected') ||
-        udcState.contains('addressed') ||
-        udcState.contains('default') ||
-        udcState.contains('powered') ||
-        udcState.contains('suspended') ||
-        udcState.contains('active');
-    final udcSaysDisconnected = udcState.contains('not attached') ||
-        udcState.contains('disconnected') ||
-        udcState.contains('unbound') ||
-        udcState.contains('disabled') ||
-        udcState.contains('not connected');
-
-    if (next.deviceConnected || udcSaysConfigured) {
-      _lastConnectedAt = now;
-      _lastHostConfigCount = next.hostConfigurationRequestCount;
-      _lastUdcState = next.udcState;
-      if (next.deviceConnected) return next.copyWith(isInitializing: false);
-      return next.copyWith(deviceConnected: true, isInitializing: false);
-    }
-
-    final prevWasConnected = state.sessionArmed && state.deviceConnected;
-    final lastAt = _lastConnectedAt;
-    final hostConfigDroppedToZero = _lastHostConfigCount > 0 && next.hostConfigurationRequestCount == 0;
-    final writersStillLookValid = next.keyboardWriterReady || next.mouseWriterReady;
-    final allowSticky = prevWasConnected &&
-        !udcSaysDisconnected &&
-        !hostConfigDroppedToZero &&
-        (writersStillLookValid || lastAt != null);
-
-    if (allowSticky && lastAt != null && now.difference(lastAt) <= _stickyConnectedTtl) {
-      _lastHostConfigCount = next.hostConfigurationRequestCount;
-      _lastUdcState = next.udcState;
-      return next.copyWith(deviceConnected: true, isInitializing: false);
-    }
-
-    _lastHostConfigCount = next.hostConfigurationRequestCount;
-    _lastUdcState = next.udcState;
-    return next.copyWith(isInitializing: false);
   }
 
   Future<void> activateKeyboard() async {

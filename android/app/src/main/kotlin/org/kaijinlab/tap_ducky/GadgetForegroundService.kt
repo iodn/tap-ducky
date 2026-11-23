@@ -57,7 +57,7 @@ class GadgetForegroundService : Service() {
 
     private fun ensureArmed(manager: GadgetManager, prefs: Prefs) {
         val status = manager.getStatusSnapshot()
-        if (status.isActive) return
+        if (status.isActive && status.gadgetBound) return
 
         val roleType = prefs.activeRoleType?.takeIf { it.isNotBlank() }
             ?: readLastProfileType()
