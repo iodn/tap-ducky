@@ -8,6 +8,9 @@ import 'package:tap_ducky/data/models/payload.dart';
 import 'package:tap_ducky/data/models/scheduled_task.dart';
 import 'package:tap_ducky/features/dashboard/dashboard_screen.dart';
 import 'package:tap_ducky/features/execute/execute_screen.dart';
+import 'package:tap_ducky/features/payloads/payload_editor_screen.dart';
+import 'package:tap_ducky/features/schedule/schedule_editor_screen.dart';
+import 'package:tap_ducky/features/schedule/schedule_screen.dart';
 import 'package:tap_ducky/features/payloads/payloads_screen.dart';
 import 'package:tap_ducky/state/controllers/app_settings_controller.dart';
 import 'package:tap_ducky/state/controllers/hid_status_controller.dart';
@@ -62,8 +65,12 @@ class _Payloads extends PayloadsController {
 }
 
 class _Schedules extends SchedulerController {
+  _Schedules(this.items);
+
+  final List<ScheduledTask> items;
+
   @override
-  Future<List<ScheduledTask>> build() async => [];
+  Future<List<ScheduledTask>> build() async => items;
 }
 
 class _Logs extends LogsController {
@@ -76,6 +83,7 @@ Future<void> _pumpScreen(
   Widget screen, {
   required Size size,
   List<Payload> payloads = const [],
+  List<ScheduledTask> tasks = const [],
   _HidStatus? hid,
   _Settings? settings,
 }) async {
@@ -92,7 +100,7 @@ Future<void> _pumpScreen(
           () => settings ?? _Settings(),
         ),
         payloadsControllerProvider.overrideWith(() => _Payloads(payloads)),
-        schedulerControllerProvider.overrideWith(_Schedules.new),
+        schedulerControllerProvider.overrideWith(() => _Schedules(tasks)),
         logsControllerProvider.overrideWith(_Logs.new),
       ],
       child: MaterialApp(
@@ -109,6 +117,25 @@ Future<void> _pumpScreen(
   );
   await tester.pumpAndSettle();
 }
+
+final _longName = List.filled(24, 'LongPayloadName').join();
+final _longParameter = PayloadParameter(
+  key: 'shared',
+  label: List.filled(24, 'LongParameterLabel').join(),
+  type: 'string',
+  defaultValue: 'First default',
+  description: List.filled(24, 'LongParameterDescription').join(),
+  required: false,
+);
+final _longPayload = Payload(
+  id: 'long',
+  name: _longName,
+  description: List.filled(24, 'Description').join(),
+  script: 'STRING ${List.filled(180, 'hello').join()}',
+  tags: [List.filled(24, 'tag').join()],
+  parameters: [_longParameter],
+  isBuiltin: false,
+);
 
 void main() {
   testWidgets('task bar grows and keeps actions reachable', (tester) async {
@@ -225,6 +252,228 @@ void main() {
     expect(hid.armedProfile, 'mouse');
     expect(settings.savedProfile, 'mouse');
     expect(find.text('Disarm'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+    'schedule picker handles long names and keeps overrides per payload',
+    (tester) async {
+      final alternate = _longPayload.copyWith(
+        id: 'alternate',
+        name: '${_longName}UniqueAlternate',
+        parameters: const [
+          PayloadParameter(
+            key: 'shared',
+            label: 'Alternate parameter',
+            type: 'text',
+            defaultValue: 'Alternate default',
+            description: '',
+            required: false,
+          ),
+        ],
+      );
+      await _pumpScreen(
+        tester,
+        const ScheduleEditorScreen.newTask(),
+        size: const Size(320, 568),
+        payloads: [_longPayload, alternate],
+      );
+
+      expect(find.text(_longName).hitTestable(), findsOneWidget);
+      final scheduleScroll = find.byType(Scrollable).first;
+      final firstParameter = find.byWidgetPredicate(
+        (widget) =>
+            widget is TextField && widget.controller?.text == 'First default',
+      );
+      await tester.scrollUntilVisible(
+        firstParameter,
+        220,
+        scrollable: scheduleScroll,
+      );
+      await tester.enterText(firstParameter, 'Schedule override');
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+      final picker = find.widgetWithText(OutlinedButton, 'Payload');
+      await tester.scrollUntilVisible(picker, -240, scrollable: scheduleScroll);
+      await Scrollable.ensureVisible(tester.element(picker), alignment: 0.2);
+      await tester.pumpAndSettle();
+      expect(picker.hitTestable(), findsOneWidget);
+      await tester.tap(picker);
+      await tester.pumpAndSettle();
+      expect(find.text('Choose payload'), findsOneWidget);
+      await tester.enterText(find.byType(TextField).first, 'UniqueAlternate');
+      await tester.pumpAndSettle();
+      expect(find.text(_longName), findsNothing);
+      await tester.tap(find.text(alternate.name));
+      await tester.pumpAndSettle();
+      expect(find.text(alternate.name), findsOneWidget);
+      final alternateParameter = find.byWidgetPredicate(
+        (widget) =>
+            widget is TextField &&
+            widget.controller?.text == 'Alternate default',
+      );
+      await tester.scrollUntilVisible(
+        alternateParameter,
+        220,
+        scrollable: scheduleScroll,
+      );
+      expect(find.text('Schedule override'), findsNothing);
+      expect(alternateParameter, findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('payload preview and actions fit with long text', (tester) async {
+    await _pumpScreen(
+      tester,
+      const PayloadsScreen(),
+      size: const Size(320, 568),
+      payloads: [_longPayload],
+    );
+    final list = find
+        .byWidgetPredicate(
+          (widget) =>
+              widget is Scrollable &&
+              widget.axisDirection == AxisDirection.down,
+        )
+        .first;
+    await tester.scrollUntilVisible(
+      find.text(_longName),
+      140,
+      scrollable: list,
+    );
+    await tester.ensureVisible(find.byTooltip('Expand preview'));
+    await tester.tap(find.byTooltip('Expand preview'));
+    await tester.pumpAndSettle();
+    final menu = find.byType(PopupMenuButton<VoidCallback>);
+    await tester.scrollUntilVisible(menu, 160, scrollable: list);
+    await Scrollable.ensureVisible(tester.element(menu), alignment: 0.5);
+    await tester.pumpAndSettle();
+    await tester.tap(menu);
+    await tester.pumpAndSettle();
+    expect(find.text('Duplicate'), findsOneWidget);
+    expect(find.text('Export'), findsOneWidget);
+    expect(find.text('Delete'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+    'parameter editor keeps Save reachable with a keyboard and large text',
+    (tester) async {
+      await _pumpScreen(
+        tester,
+        const PayloadEditorScreen(),
+        size: const Size(320, 568),
+      );
+      final add = find.widgetWithText(TextButton, 'Add');
+      await tester.scrollUntilVisible(
+        add,
+        240,
+        scrollable: find.byType(Scrollable).first,
+      );
+      await tester.tap(add);
+      await tester.pumpAndSettle();
+      expect(find.text('Add parameter'), findsOneWidget);
+      final form = find.byType(Form).last;
+      final save = find.widgetWithText(TextButton, 'Save');
+      await tester.tap(save);
+      await tester.pumpAndSettle();
+      expect(find.text('Enter a key'), findsOneWidget);
+
+      final fields = find.descendant(
+        of: form,
+        matching: find.byType(TextFormField),
+      );
+      await tester.enterText(fields.at(0), 'GREETING');
+      tester.view.viewInsets = const FakeViewPadding(bottom: 260);
+      addTearDown(tester.view.resetViewInsets);
+      await tester.pumpAndSettle();
+      expect(save.hitTestable(), findsOneWidget);
+
+      await tester.ensureVisible(fields.at(1));
+      await tester.enterText(fields.at(1), 'Greeting');
+      await tester.tap(save);
+      await tester.pumpAndSettle();
+      tester.view.resetViewInsets();
+      await tester.pumpAndSettle();
+      expect(find.text('Add parameter'), findsNothing);
+      final edit = find.byTooltip('Edit parameter');
+      await tester.scrollUntilVisible(
+        edit,
+        160,
+        scrollable: find.byType(Scrollable).first,
+      );
+      await tester.tap(edit);
+      await tester.pumpAndSettle();
+      expect(find.text('Edit parameter'), findsOneWidget);
+      expect(find.text('Greeting'), findsOneWidget);
+      await tester.tap(find.byTooltip('Close'));
+      await tester.pumpAndSettle();
+      expect(find.text('Greeting'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('imported parameters with a legacy type open for editing', (
+    tester,
+  ) async {
+    await _pumpScreen(
+      tester,
+      PayloadEditorScreen(payloadId: _longPayload.id),
+      size: const Size(320, 568),
+      payloads: [_longPayload],
+    );
+
+    expect(
+      find.byWidgetPredicate(
+        (widget) =>
+            widget is TextFormField && widget.controller?.text == _longName,
+      ),
+      findsOneWidget,
+    );
+    final edit = find.byTooltip('Edit parameter');
+    for (var attempt = 0; attempt < 12 && edit.evaluate().isEmpty; attempt++) {
+      await tester.dragFrom(const Offset(8, 500), const Offset(0, -360));
+      await tester.pumpAndSettle();
+    }
+    await tester.ensureVisible(edit);
+    await tester.pumpAndSettle();
+    await tester.tap(edit);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Edit parameter'), findsOneWidget);
+    final type = tester.widget<DropdownButtonFormField<String>>(
+      find.byType(DropdownButtonFormField<String>),
+    );
+    expect(type.initialValue, 'string');
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('schedule cards wrap long labels and metadata', (tester) async {
+    await _pumpScreen(
+      tester,
+      const ScheduleScreen(),
+      size: const Size(320, 568),
+      payloads: [_longPayload],
+      tasks: [
+        ScheduledTask(
+          id: 'schedule',
+          payloadId: _longPayload.id,
+          name: _longName,
+          enabled: true,
+          trigger: 'app_foreground',
+          params: const {},
+          createdAt: DateTime(2026),
+          windowStart: '09:00',
+          windowEnd: '20:00',
+          lastRunAt: DateTime(2026, 9, 20, 23, 30),
+        ),
+      ],
+    );
+    final delete = find.widgetWithIcon(OutlinedButton, Icons.delete);
+    await tester.scrollUntilVisible(delete, 160);
+    await tester.pumpAndSettle();
+    expect(delete.hitTestable(), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 

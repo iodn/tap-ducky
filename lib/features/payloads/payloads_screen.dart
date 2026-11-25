@@ -11,6 +11,7 @@ import '../../data/models/payload.dart';
 import '../../state/controllers/execution_controller.dart';
 import '../../state/controllers/hid_status_controller.dart';
 import '../../state/controllers/payloads_controller.dart';
+import '../../widgets/configuration_page.dart';
 import '../../widgets/confirm_dialog.dart';
 
 @immutable
@@ -244,6 +245,8 @@ class _PayloadsScreenState extends ConsumerState<PayloadsScreen> {
                       Expanded(
                         child: Text(
                           'Searching: "${ui.searchQuery}"',
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
                           style: const TextStyle(fontSize: 13),
                         ),
                       ),
@@ -273,7 +276,7 @@ class _PayloadsScreenState extends ConsumerState<PayloadsScreen> {
                           await Future.delayed(const Duration(milliseconds: 500));
                         },
                         child: ListView.builder(
-                          padding: const EdgeInsets.symmetric(vertical: 8),
+                          padding: EdgeInsets.only(top: 8, bottom: ui.selectionMode ? 8 : 88),
                           itemCount: filtered.length,
                           itemBuilder: (context, i) {
                             final p = filtered[i];
@@ -405,42 +408,16 @@ class _PayloadsScreenState extends ConsumerState<PayloadsScreen> {
   }
 
   Future<void> _importFromClipboard(BuildContext context) async {
-    final ctrl = TextEditingController();
-    final res = await showDialog<String>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Import payload(s)'),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text('Paste payload JSON or a payload pack JSON below:'),
-              const SizedBox(height: 12),
-              TextField(
-                controller: ctrl,
-                maxLines: 10,
-                decoration: const InputDecoration(
-                  hintText: '{"id": "...", "name": "...", ...}',
-                  border: OutlineInputBorder(),
-                ),
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(null),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(context).pop(ctrl.text),
-            child: const Text('Import'),
-          ),
-        ],
+    final res = await showConfigurationPage<String>(
+      context,
+      (_) => const TextConfigurationPage(
+        title: 'Import payloads',
+        fieldLabel: 'Payload or pack JSON',
+        hint: 'Paste JSON here',
+        actionLabel: 'Import',
       ),
     );
-
+    if (!context.mounted) return;
     if (res == null || res.trim().isEmpty) return;
 
     try {
@@ -475,58 +452,20 @@ class _PayloadsScreenState extends ConsumerState<PayloadsScreen> {
     }
   }
 
-  void _showSearchSheet(BuildContext context) {
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      builder: (context) => Padding(
-        padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
-        child: SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                TextField(
-                  controller: _searchCtrl,
-                  autofocus: true,
-                  decoration: InputDecoration(
-                    labelText: 'Search payloads',
-                    hintText: 'Name, tags, script content...',
-                    prefixIcon: const Icon(Icons.search),
-                    suffixIcon: _searchCtrl.text.isNotEmpty
-                        ? IconButton(
-                            icon: const Icon(Icons.clear),
-                            onPressed: () {
-                              _searchCtrl.clear();
-                              setState(() {});
-                            },
-                          )
-                        : null,
-                  ),
-                  onChanged: (_) => setState(() {}),
-                  onSubmitted: (v) {
-                    ref.read(payloadsUiProvider.notifier).setSearchQuery(v);
-                    Navigator.pop(context);
-                  },
-                ),
-                const SizedBox(height: 16),
-                SizedBox(
-                  width: double.infinity,
-                  child: FilledButton(
-                    onPressed: () {
-                      ref.read(payloadsUiProvider.notifier).setSearchQuery(_searchCtrl.text);
-                      Navigator.pop(context);
-                    },
-                    child: const Text('Search'),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
+  Future<void> _showSearchSheet(BuildContext context) async {
+    final query = await showConfigurationPage<String>(
+      context,
+      (_) => TextConfigurationPage(
+        title: 'Search payloads',
+        fieldLabel: 'Name, tag, or script text',
+        actionLabel: 'Search',
+        initialValue: _searchCtrl.text,
+        multiline: false,
       ),
     );
+    if (!context.mounted || query == null) return;
+    _searchCtrl.text = query;
+    ref.read(payloadsUiProvider.notifier).setSearchQuery(query);
   }
 }
 
@@ -539,7 +478,7 @@ class _TagFilterBar extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     return Container(
-      height: 56,
+      height: MediaQuery.textScalerOf(context).scale(14) + 42,
       padding: const EdgeInsets.symmetric(vertical: 8),
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
@@ -555,10 +494,17 @@ class _TagFilterBar extends ConsumerWidget {
             );
           }
           final tag = tags[i - 1];
-          return FilterChip(
-            label: Text(tag),
-            selected: selectedTag == tag,
-            onSelected: (_) => ref.read(payloadsUiProvider.notifier).setTag(tag),
+          return Tooltip(
+            message: tag,
+            excludeFromSemantics: true,
+            child: FilterChip(
+              label: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 180),
+                child: Text(tag, maxLines: 1, overflow: TextOverflow.ellipsis),
+              ),
+              selected: selectedTag == tag,
+              onSelected: (_) => ref.read(payloadsUiProvider.notifier).setTag(tag),
+            ),
           );
         },
       ),
@@ -641,14 +587,15 @@ class _PayloadCardState extends State<_PayloadCard> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(
-                          widget.payload.name,
-                          style: const TextStyle(
-                            fontWeight: FontWeight.w600,
-                            fontSize: 16,
+                        Tooltip(
+                          message: widget.payload.name,
+                          excludeFromSemantics: true,
+                          child: Text(
+                            widget.payload.name,
+                            style: Theme.of(context).textTheme.titleMedium,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
                           ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
                         ),
                         if (widget.payload.description.isNotEmpty) ...[
                           const SizedBox(height: 4),
@@ -716,12 +663,14 @@ class _PayloadCardState extends State<_PayloadCard> {
                       children: [
                         Icon(Icons.code, size: 14, color: cs.onSurfaceVariant),
                         const SizedBox(width: 6),
-                        Text(
-                          'Script Preview',
-                          style: TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
-                            color: cs.onSurfaceVariant,
+                        Flexible(
+                          child: Text(
+                            'Script Preview',
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              color: cs.onSurfaceVariant,
+                            ),
                           ),
                         ),
                       ],
@@ -758,22 +707,16 @@ class _PayloadCardState extends State<_PayloadCard> {
                       ),
                     ),
                     const SizedBox(width: 8),
-                    IconButton.outlined(
-                      onPressed: widget.onDuplicate,
-                      icon: const Icon(Icons.content_copy, size: 18),
-                      tooltip: 'Duplicate',
+                    PopupMenuButton<VoidCallback>(
+                      tooltip: 'Payload actions',
+                      onSelected: (action) => action(),
+                      itemBuilder: (_) => [
+                        PopupMenuItem(value: widget.onDuplicate, child: const Text('Duplicate')),
+                        PopupMenuItem(value: widget.onExport, child: const Text('Export')),
+                        if (widget.onDelete case final delete?)
+                          PopupMenuItem(value: delete, child: const Text('Delete')),
+                      ],
                     ),
-                    IconButton.outlined(
-                      onPressed: widget.onExport,
-                      icon: const Icon(Icons.ios_share, size: 18),
-                      tooltip: 'Export',
-                    ),
-                    if (widget.onDelete != null)
-                      IconButton.outlined(
-                        onPressed: widget.onDelete,
-                        icon: Icon(Icons.delete, size: 18, color: cs.error),
-                        tooltip: 'Delete',
-                      ),
                   ],
                 ),
               ),

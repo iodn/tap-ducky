@@ -15,6 +15,9 @@ import '../../state/controllers/logs_controller.dart';
 import '../../state/controllers/payloads_controller.dart';
 import '../../state/controllers/selection_controller.dart';
 import '../../state/providers.dart';
+import '../../widgets/configuration_page.dart';
+import '../../widgets/payload_parameter_field.dart';
+import '../../widgets/payload_picker.dart';
 import '../../widgets/empty_state.dart';
 
 class ExecuteScreen extends ConsumerStatefulWidget {
@@ -26,7 +29,7 @@ class ExecuteScreen extends ConsumerStatefulWidget {
 
 class _ExecuteScreenState extends ConsumerState<ExecuteScreen> with SingleTickerProviderStateMixin {
   final _rawCtrl = TextEditingController();
-  final Map<String, TextEditingController> _paramCtrls = {};
+  final _parameterControllers = <String, Map<String, TextEditingController>>{};
   late TabController _tabController;
   final _validator = DuckyScriptValidator();
 
@@ -40,8 +43,10 @@ class _ExecuteScreenState extends ConsumerState<ExecuteScreen> with SingleTicker
   void dispose() {
     _rawCtrl.dispose();
     _tabController.dispose();
-    for (final c in _paramCtrls.values) {
-      c.dispose();
+    for (final controllers in _parameterControllers.values) {
+      for (final controller in controllers.values) {
+        controller.dispose();
+      }
     }
     super.dispose();
   }
@@ -150,14 +155,8 @@ class _ExecuteScreenState extends ConsumerState<ExecuteScreen> with SingleTicker
             );
           }
 
-          final selected = _resolveSelected(payloads, selectedId);
-          if (selected == null) {
-            ref.read(selectedPayloadIdProvider.notifier).state = payloads.first.id;
-          } else {
-            _syncParamControllers(selected);
-          }
-
-          final payload = selected ?? payloads.first;
+          final payload = _resolveSelected(payloads, selectedId) ?? payloads.first;
+          final controllers = _controllersFor(payload);
 
           return ListView(
             padding: const EdgeInsets.all(16),
@@ -165,18 +164,21 @@ class _ExecuteScreenState extends ConsumerState<ExecuteScreen> with SingleTicker
               _PayloadSelectionCard(
                 payloads: payloads,
                 selectedPayload: payload,
-                onChanged: (id) => ref.read(selectedPayloadIdProvider.notifier).state = id,
+                onChanged: (id) => ref.read(selectedPayloadIdProvider.notifier).select(id),
                 onEdit: () => context.go('${const PayloadsRoute().location}/${payload.id}/edit'),
               ),
               const SizedBox(height: 16),
               if (payload.parameters.isNotEmpty) ...[
-                _ParametersCard(payload: payload, controllers: _paramCtrls),
+                _ParametersCard(key: ValueKey(payload.id), payload: payload, controllers: controllers),
                 const SizedBox(height: 16),
               ],
               ListenableBuilder(
-                listenable: Listenable.merge(_paramCtrls.values),
+                listenable: Listenable.merge(payload.parameters.map((p) => controllers[p.key])),
                 builder: (context, _) {
-                  final params = _collectParams(payload);
+                  final params = {
+                    for (final parameter in payload.parameters)
+                      parameter.key: controllers[parameter.key]!.text,
+                  };
                   final missing = payload.parameters.any(
                     (p) => p.required && (params[p.key]?.trim().isEmpty ?? true),
                   );
@@ -225,24 +227,15 @@ class _ExecuteScreenState extends ConsumerState<ExecuteScreen> with SingleTicker
     return null;
   }
 
-  void _syncParamControllers(Payload payload) {
-    final keys = payload.parameters.map((e) => e.key).toSet();
-    final toRemove = _paramCtrls.keys.where((k) => !keys.contains(k)).toList();
-    for (final k in toRemove) {
-      _paramCtrls.remove(k)?.dispose();
+  Map<String, TextEditingController> _controllersFor(Payload payload) {
+    final controllers = _parameterControllers.putIfAbsent(payload.id, () => {});
+    for (final parameter in payload.parameters) {
+      controllers.putIfAbsent(
+        parameter.key,
+        () => TextEditingController(text: parameter.defaultValue),
+      );
     }
-    for (final p in payload.parameters) {
-      _paramCtrls.putIfAbsent(p.key, () => TextEditingController(text: p.defaultValue));
-    }
-  }
-
-  Map<String, String> _collectParams(Payload payload) {
-    final out = <String, String>{};
-    for (final p in payload.parameters) {
-      final v = _paramCtrls[p.key]?.text ?? p.defaultValue;
-      out[p.key] = v;
-    }
-    return out;
+    return controllers;
   }
 }
 
@@ -476,24 +469,10 @@ class _PayloadSelectionCard extends StatelessWidget {
         child: Row(
           children: [
             Expanded(
-              child: DropdownButtonFormField<String>(
-                key: ValueKey(selectedPayload.id),
-                initialValue: selectedPayload.id,
-                isExpanded: true,
-                decoration: const InputDecoration(
-                  labelText: 'Payload',
-                  border: OutlineInputBorder(),
-                  contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-                ),
-                items: payloads
-                    .map((payload) => DropdownMenuItem<String>(
-                          value: payload.id,
-                          child: Text(payload.name, overflow: TextOverflow.ellipsis),
-                        ))
-                    .toList(),
-                onChanged: (id) {
-                  if (id != null) onChanged(id);
-                },
+              child: PayloadPicker(
+                payloads: payloads,
+                selected: selectedPayload,
+                onChanged: (payload) => onChanged(payload.id),
               ),
             ),
             const SizedBox(width: 8),
@@ -511,6 +490,7 @@ class _PayloadSelectionCard extends StatelessWidget {
 
 class _ParametersCard extends StatelessWidget {
   const _ParametersCard({
+    super.key,
     required this.payload,
     required this.controllers,
   });
@@ -544,37 +524,13 @@ class _ParametersCard extends StatelessWidget {
             const SizedBox(height: 16),
             for (int i = 0; i < payload.parameters.length; i++) ...[
               if (i > 0) const SizedBox(height: 12),
-              _ParameterField(
+              PayloadParameterField(
                 parameter: payload.parameters[i],
                 controller: controllers[payload.parameters[i].key]!,
               ),
             ],
           ],
         ),
-      ),
-    );
-  }
-}
-
-class _ParameterField extends StatelessWidget {
-  const _ParameterField({
-    required this.parameter,
-    required this.controller,
-  });
-
-  final parameter;
-  final TextEditingController controller;
-
-  @override
-  Widget build(BuildContext context) {
-    return TextField(
-      controller: controller,
-      decoration: InputDecoration(
-        labelText: parameter.label,
-        hintText: parameter.defaultValue,
-        helperText: parameter.description.isNotEmpty ? parameter.description : null,
-        border: const OutlineInputBorder(),
-        suffixIcon: parameter.required ? const Icon(Icons.star, size: 16, color: Colors.red) : null,
       ),
     );
   }
@@ -621,10 +577,6 @@ class _ExecutionControlCard extends StatelessWidget {
               ),
               const SizedBox(height: 12),
             ],
-            if (status != null) ...[
-              Text(status, style: Theme.of(context).textTheme.bodyMedium),
-              const SizedBox(height: 12),
-            ],
             if (exec.isRunning)
               FilledButton.icon(
                 onPressed: onStop,
@@ -641,6 +593,10 @@ class _ExecutionControlCard extends StatelessWidget {
                 icon: const Icon(Icons.play_arrow),
                 label: const Text('Run Payload'),
               ),
+            if (status != null) ...[
+              const SizedBox(height: 8),
+              Text(status, style: Theme.of(context).textTheme.bodyMedium),
+            ],
           ],
         ),
       ),
@@ -887,70 +843,21 @@ class _ConsoleTabState extends ConsumerState<_ConsoleTab> {
       return;
     }
 
-    final nameCtrl = TextEditingController();
-    final presetCtrl = TextEditingController(text: currentText);
-
-    final result = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Save as Preset'),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              TextField(
-                controller: nameCtrl,
-                decoration: const InputDecoration(
-                  labelText: 'Preset Name (optional)',
-                  hintText: 'e.g., Open Notepad',
-                  border: OutlineInputBorder(),
-                ),
-              ),
-              const SizedBox(height: 16),
-              const Text(
-                'Command:',
-                style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
-              ),
-              const SizedBox(height: 8),
-              TextField(
-                controller: presetCtrl,
-                decoration: const InputDecoration(
-                  border: OutlineInputBorder(),
-                  filled: true,
-                ),
-                maxLines: 6,
-                style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('Save'),
-          ),
-        ],
+    final result = await showConfigurationPage<String>(
+      context,
+      (_) => TextConfigurationPage(
+        title: 'Save as preset',
+        fieldLabel: 'Command',
+        actionLabel: 'Save',
+        initialValue: currentText,
       ),
     );
-
-    if (result == true && context.mounted) {
-      final presetText = presetCtrl.text.trim();
-      if (presetText.isNotEmpty) {
-        await ref.read(advancedSettingsControllerProvider.notifier).addCommandPreset(presetText);
-        if (context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Preset saved successfully'),
-              duration: Duration(seconds: 2),
-            ),
-          );
-        }
-      }
+    if (!context.mounted || result == null || result.trim().isEmpty) return;
+    await ref.read(advancedSettingsControllerProvider.notifier).addCommandPreset(result.trim());
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Preset saved')),
+      );
     }
   }
 }

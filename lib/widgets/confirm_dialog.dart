@@ -12,6 +12,7 @@ Future<bool> showConfirmDialog(
     context: context,
     builder: (context) {
       return AlertDialog(
+        scrollable: true,
         title: Text(title),
         content: Text(message),
         actions: [

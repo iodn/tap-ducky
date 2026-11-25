@@ -10,11 +10,11 @@ import '../../app/router.dart';
 import '../../data/models/payload.dart';
 import '../../data/services/ducky_script_validator.dart';
 import '../../data/services/local_drafts_service.dart';
-import '../../data/services/platform_gadget_service.dart';
 import '../../state/controllers/app_settings_controller.dart';
 import '../../state/controllers/payloads_controller.dart';
 import '../../state/providers.dart';
 import '../../widgets/confirm_dialog.dart';
+import '../../widgets/configuration_page.dart';
 import '../../widgets/section_header.dart';
 import 'local_draft_dialog.dart';
 
@@ -38,6 +38,7 @@ class _PayloadEditorScreenState extends ConsumerState<PayloadEditorScreen> {
 
   final List<PayloadParameter> _params = [];
   bool _isBuiltin = false;
+  bool _editReady = false;
   bool _hasChanges = false;
 
   final _validator = DuckyScriptValidator();
@@ -59,9 +60,14 @@ class _PayloadEditorScreenState extends ConsumerState<PayloadEditorScreen> {
   @override
   void initState() {
     super.initState();
-    _loadPayload();
-    _observedScript = _scriptCtrl.text;
     _scriptCtrl.addListener(_onScriptChanged);
+    if (widget.payloadId != null) {
+      ref.listenManual(
+        payloadsControllerProvider,
+        (_, next) => _loadPayload(next.value),
+        fireImmediately: true,
+      );
+    }
   }
 
   @override
@@ -95,9 +101,9 @@ class _PayloadEditorScreenState extends ConsumerState<PayloadEditorScreen> {
   }
 
   Future<void> _showLocalDraft() async {
-    final draft = await showDialog<PayloadDraft>(
-      context: context,
-      builder: (context) => LocalDraftDialog(
+    final draft = await showConfigurationPage<PayloadDraft>(
+      context,
+      (_) => LocalDraftDialog(
         service: ref.read(localDraftsServiceProvider),
         replacing: [_nameCtrl, _descCtrl, _tagsCtrl, _scriptCtrl].any((controller) => controller.text.isNotEmpty),
       ),
@@ -112,27 +118,27 @@ class _PayloadEditorScreenState extends ConsumerState<PayloadEditorScreen> {
     });
   }
 
-  void _loadPayload() {
-    final id = widget.payloadId;
-    if (id == null) return;
+  void _loadPayload(List<Payload>? items) {
+    if (_editReady || items == null) return;
+    final found = items.where((payload) => payload.id == widget.payloadId).firstOrNull;
+    if (found == null) return;
 
-    final async = ref.read(payloadsControllerProvider);
-    final items = async.value ?? [];
-    final found = items.where((e) => e.id == id).firstOrNull;
-
-    if (found != null) {
+    setState(() {
+      _observedScript = found.script;
       _nameCtrl.text = found.name;
       _descCtrl.text = found.description;
       _scriptCtrl.text = found.script;
       _tagsCtrl.text = found.tags.join(', ');
       _params.addAll(found.parameters);
       _isBuiltin = found.isBuiltin;
-
-      final mul = _currentDelayMultiplier();
-      _validationResult = _validator.validate(found.script, delayMultiplier: mul);
+      _validationResult = _validator.validate(
+        found.script,
+        delayMultiplier: _currentDelayMultiplier(),
+      );
       _showValidation = found.script.trim().isNotEmpty;
-      _requestEngineEstimate(found.script);
-    }
+      _editReady = true;
+    });
+    _requestEngineEstimate(found.script);
   }
 
   void _requestEngineEstimate(String script) {
@@ -170,6 +176,18 @@ class _PayloadEditorScreenState extends ConsumerState<PayloadEditorScreen> {
   Widget build(BuildContext context) {
     final isNew = widget.payloadId == null;
     final cs = Theme.of(context).colorScheme;
+
+    if (!isNew && !_editReady) {
+      final payloads = ref.watch(payloadsControllerProvider);
+      return Scaffold(
+        appBar: AppBar(title: const Text('Edit Payload')),
+        body: Center(
+          child: payloads.isLoading
+              ? const CircularProgressIndicator()
+              : Text(payloads.hasError ? 'Could not load payload' : 'Payload unavailable'),
+        ),
+      );
+    }
 
     return PopScope(
       canPop: !_hasChanges,
@@ -322,11 +340,9 @@ class _PayloadEditorScreenState extends ConsumerState<PayloadEditorScreen> {
                           children: [
                             Icon(Icons.code, size: 20, color: cs.primary),
                             const SizedBox(width: 8),
-                            const Text(
-                              'DuckyScript',
-                              style: TextStyle(fontWeight: FontWeight.w600),
+                            const Expanded(
+                              child: Text('DuckyScript', style: TextStyle(fontWeight: FontWeight.w600)),
                             ),
-                            const Spacer(),
                             TextButton.icon(
                               onPressed: () => _showSyntaxHelp(context),
                               icon: const Icon(Icons.help_outline, size: 18),
@@ -364,7 +380,7 @@ class _PayloadEditorScreenState extends ConsumerState<PayloadEditorScreen> {
                 trailing: _isBuiltin
                     ? null
                     : TextButton.icon(
-                        onPressed: _addParameter,
+                        onPressed: _changeParameter,
                         icon: const Icon(Icons.add),
                         label: const Text('Add'),
                       ),
@@ -391,7 +407,7 @@ class _PayloadEditorScreenState extends ConsumerState<PayloadEditorScreen> {
                         for (int i = 0; i < _params.length; i++) ...[
                           _ParameterTile(
                             param: _params[i],
-                            onEdit: _isBuiltin ? null : () => _editParameter(i),
+                            onEdit: _isBuiltin ? null : () => _changeParameter(i),
                             onDelete: _isBuiltin ? null : () => _deleteParameter(i),
                           ),
                           if (i != _params.length - 1) const Divider(height: 1),
@@ -448,9 +464,9 @@ class _PayloadEditorScreenState extends ConsumerState<PayloadEditorScreen> {
 
   void _showValidationDialog(BuildContext context) {
     if (_validationDebounce?.isActive == true) return;
-    showDialog(
-      context: context,
-      builder: (context) => _ValidationDialog(
+    showConfigurationPage<void>(
+      context,
+      (_) => _ValidationDialog(
         result: _validationResult,
         engineEstimateMs: _engineEstimateMs,
         formatDuration: _formatDuration,
@@ -458,33 +474,25 @@ class _PayloadEditorScreenState extends ConsumerState<PayloadEditorScreen> {
     );
   }
 
-  void _addParameter() {
-    showDialog(
-      context: context,
-      builder: (context) => _ParameterDialog(
-        onSave: (param) {
-          setState(() {
-            _params.add(param);
-            _hasChanges = true;
-          });
-        },
-      ),
+  Future<void> _changeParameter([int? index]) async {
+    final initial = index == null ? null : _params[index];
+    final reservedKeys = {
+      for (var i = 0; i < _params.length; i++)
+        if (i != index) _params[i].key,
+    };
+    final parameter = await showConfigurationPage<PayloadParameter>(
+      context,
+      (_) => _ParameterEditor(initial: initial, reservedKeys: reservedKeys),
     );
-  }
-
-  void _editParameter(int index) {
-    showDialog(
-      context: context,
-      builder: (context) => _ParameterDialog(
-        initial: _params[index],
-        onSave: (param) {
-          setState(() {
-            _params[index] = param;
-            _hasChanges = true;
-          });
-        },
-      ),
-    );
+    if (!mounted || parameter == null) return;
+    setState(() {
+      if (index == null) {
+        _params.add(parameter);
+      } else {
+        _params[index] = parameter;
+      }
+      _hasChanges = true;
+    });
   }
 
   void _deleteParameter(int index) {
@@ -809,12 +817,14 @@ class _StatChip extends StatelessWidget {
         children: [
           Icon(icon, size: 14, color: color),
           const SizedBox(width: 4),
-          Text(
-            label,
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
-              color: color,
+          Flexible(
+            child: Text(
+              label,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: color,
+              ),
             ),
           ),
         ],
@@ -839,90 +849,42 @@ class _ValidationDialog extends StatelessWidget {
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
 
-    return AlertDialog(
-      title: const Text('Validation Results'),
-      content: SizedBox(
-        width: double.maxFinite,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: cs.surfaceContainerHighest,
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Icon(Icons.code, size: 16, color: cs.primary),
-                      const SizedBox(width: 8),
-                      Text(
-                        '${result.commandCount} commands',
-                        style: const TextStyle(fontWeight: FontWeight.w600),
-                      ),
+    final estimate = engineEstimateMs == null
+        ? 'Rough estimate: ${result.estimatedDurationFormatted}'
+        : 'Estimated script time: ~${formatDuration(engineEstimateMs!)}';
+    return Scaffold(
+      appBar: AppBar(
+        leading: const CloseButton(),
+        title: const Text('Validation results'),
+      ),
+      body: SafeArea(
+        top: false,
+        child: ListView.builder(
+          padding: const EdgeInsets.all(16),
+          itemCount: result.issues.length + 1,
+          itemBuilder: (context, index) {
+            if (index > 0) return _IssueListTile(issue: result.issues[index - 1]);
+            return Card(
+              color: cs.surfaceContainerHighest,
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('${result.commandCount} commands'),
+                    if (!result.hasErrors) ...[
+                      Text(estimate),
+                      const Text('Excludes host and scheduled waits.'),
                     ],
-                  ),
-                  const SizedBox(height: 8),
-                  if (!result.hasErrors) ...[
-                    Text(
-                      engineEstimateMs != null
-                          ? 'Estimated script time: ~${formatDuration(engineEstimateMs!)}'
-                          : 'Rough estimate: ${result.estimatedDurationFormatted}',
-                      style: const TextStyle(fontWeight: FontWeight.w600),
-                    ),
-                    const Text('Excludes host and scheduled waits.'),
+                    Text('Total delays: ${(result.totalDelayMs / 1000).toStringAsFixed(1)}s'),
+                    Text(result.issues.isEmpty ? 'No issues found' : 'Issues (${result.issues.length})'),
                   ],
-                  const SizedBox(height: 4),
-                  Text(
-                    'Total delays: ${(result.totalDelayMs / 1000).toStringAsFixed(1)}s',
-                    style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant),
-                  ),
-                ],
-              ),
-            ),
-            if (result.issues.isEmpty) ...[
-              const SizedBox(height: 16),
-              Row(
-                children: [
-                  Icon(Icons.check_circle, color: cs.primary),
-                  const SizedBox(width: 12),
-                  const Expanded(
-                    child: Text(
-                      'No issues found. Script is valid!',
-                      style: TextStyle(fontWeight: FontWeight.w600),
-                    ),
-                  ),
-                ],
-              ),
-            ] else ...[
-              const SizedBox(height: 16),
-              Text(
-                'Issues (${result.issues.length})',
-                style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
-              ),
-              const SizedBox(height: 8),
-              Flexible(
-                child: ListView.separated(
-                  shrinkWrap: true,
-                  itemCount: result.issues.length,
-                  separatorBuilder: (_, __) => const Divider(height: 1),
-                  itemBuilder: (context, i) {
-                    final issue = result.issues[i];
-                    return _IssueListTile(issue: issue);
-                  },
                 ),
               ),
-            ],
-          ],
+            );
+          },
         ),
       ),
-      actions: [
-        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Close')),
-      ],
     );
   }
 }
@@ -997,21 +959,14 @@ class _SyntaxItem extends StatelessWidget {
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
-      child: Row(
+      child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          SizedBox(
-            width: 140,
-            child: Text(
-              cmd,
-              style: const TextStyle(
-                fontFamily: 'monospace',
-                fontWeight: FontWeight.w600,
-                fontSize: 12,
-              ),
-            ),
+          Text(
+            cmd,
+            style: const TextStyle(fontFamily: 'monospace', fontWeight: FontWeight.w600),
           ),
-          Expanded(child: Text(desc, style: const TextStyle(fontSize: 12))),
+          Text(desc),
         ],
       ),
     );
@@ -1041,11 +996,13 @@ class _ParameterTile extends StatelessWidget {
           if (onEdit != null)
             IconButton(
               icon: const Icon(Icons.edit, size: 20),
+              tooltip: 'Edit parameter',
               onPressed: onEdit,
             ),
           if (onDelete != null)
             IconButton(
               icon: const Icon(Icons.delete, size: 20),
+              tooltip: 'Delete parameter',
               onPressed: onDelete,
             ),
         ],
@@ -1054,38 +1011,25 @@ class _ParameterTile extends StatelessWidget {
   }
 }
 
-class _ParameterDialog extends StatefulWidget {
-  const _ParameterDialog({this.initial, required this.onSave});
+class _ParameterEditor extends StatefulWidget {
+  const _ParameterEditor({this.initial, required this.reservedKeys});
 
   final PayloadParameter? initial;
-  final ValueChanged<PayloadParameter> onSave;
+  final Set<String> reservedKeys;
 
   @override
-  State<_ParameterDialog> createState() => _ParameterDialogState();
+  State<_ParameterEditor> createState() => _ParameterEditorState();
 }
 
-class _ParameterDialogState extends State<_ParameterDialog> {
+class _ParameterEditorState extends State<_ParameterEditor> {
   final _formKey = GlobalKey<FormState>();
 
-  late final TextEditingController _keyCtrl;
-  late final TextEditingController _labelCtrl;
-  late final TextEditingController _defaultCtrl;
-  late final TextEditingController _descCtrl;
-
-  late String _type;
-  late bool _required;
-
-  @override
-  void initState() {
-    super.initState();
-    final p = widget.initial;
-    _keyCtrl = TextEditingController(text: p?.key ?? '');
-    _labelCtrl = TextEditingController(text: p?.label ?? '');
-    _defaultCtrl = TextEditingController(text: p?.defaultValue ?? '');
-    _descCtrl = TextEditingController(text: p?.description ?? '');
-    _type = p?.type ?? 'text';
-    _required = p?.required ?? false;
-  }
+  late final _keyCtrl = TextEditingController(text: widget.initial?.key);
+  late final _labelCtrl = TextEditingController(text: widget.initial?.label);
+  late final _defaultCtrl = TextEditingController(text: widget.initial?.defaultValue);
+  late final _descCtrl = TextEditingController(text: widget.initial?.description);
+  late String _type = widget.initial?.type ?? 'text';
+  late bool _required = widget.initial?.required ?? false;
 
   @override
   void dispose() {
@@ -1096,90 +1040,118 @@ class _ParameterDialogState extends State<_ParameterDialog> {
     super.dispose();
   }
 
+  void _save() {
+    if (!_formKey.currentState!.validate()) return;
+    Navigator.pop(
+      context,
+      PayloadParameter(
+        key: _keyCtrl.text.trim(),
+        label: _labelCtrl.text.trim(),
+        description: _descCtrl.text.trim(),
+        type: _type,
+        defaultValue: _defaultCtrl.text.trim(),
+        required: _required,
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    return AlertDialog(
-      title: Text(widget.initial == null ? 'Add Parameter' : 'Edit Parameter'),
-      content: SingleChildScrollView(
-        child: Form(
-          key: _formKey,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextFormField(
-                controller: _keyCtrl,
-                decoration: const InputDecoration(
-                  labelText: 'Key',
-                  hintText: 'TARGET_IP',
-                ),
-                validator: (v) => (v?.trim().isEmpty ?? true) ? 'Required' : null,
+    final types = <String, String>{'text': 'Text', 'number': 'Number', 'url': 'URL'};
+    final initialType = widget.initial?.type;
+    if (initialType != null) {
+      types.putIfAbsent(initialType, () => initialType.isEmpty ? 'Unspecified' : initialType);
+    }
+
+    return ConfigurationPage(
+      title: widget.initial == null ? 'Add parameter' : 'Edit parameter',
+      actionLabel: 'Save',
+      onAction: _save,
+      child: Form(
+        key: _formKey,
+        autovalidateMode: AutovalidateMode.onUserInteraction,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            TextFormField(
+              controller: _keyCtrl,
+              autocorrect: false,
+              textInputAction: TextInputAction.next,
+              decoration: const InputDecoration(
+                labelText: 'Key',
+                helperText: 'Use in the script as {{KEY}}.',
+                helperMaxLines: 2,
+                errorMaxLines: 3,
+                border: OutlineInputBorder(),
               ),
-              const SizedBox(height: 12),
-              TextFormField(
-                controller: _labelCtrl,
-                decoration: const InputDecoration(
-                  labelText: 'Label',
-                  hintText: 'Target IP Address',
-                ),
-                validator: (v) => (v?.trim().isEmpty ?? true) ? 'Required' : null,
+              validator: (value) {
+                final key = value?.trim() ?? '';
+                if (key.isEmpty) return 'Enter a key';
+                if (widget.reservedKeys.contains(key) && key != widget.initial?.key) {
+                  return 'This key is already in use';
+                }
+                return null;
+              },
+            ),
+            const SizedBox(height: 16),
+            TextFormField(
+              controller: _labelCtrl,
+              textInputAction: TextInputAction.next,
+              decoration: const InputDecoration(
+                labelText: 'Label',
+                helperText: 'Shown when configuring this payload.',
+                helperMaxLines: 2,
+                border: OutlineInputBorder(),
               ),
-              const SizedBox(height: 12),
-              TextFormField(
-                controller: _descCtrl,
-                decoration: const InputDecoration(
-                  labelText: 'Description',
-                  hintText: 'Optional description',
-                ),
+              validator: (value) => (value?.trim().isEmpty ?? true) ? 'Enter a label' : null,
+            ),
+            const SizedBox(height: 16),
+            DropdownButtonFormField<String>(
+              initialValue: _type,
+              isExpanded: true,
+              items: [
+                for (final entry in types.entries)
+                  DropdownMenuItem(
+                    value: entry.key,
+                    child: Text(entry.value, maxLines: 1, overflow: TextOverflow.ellipsis),
+                  ),
+              ],
+              onChanged: (value) {
+                if (value != null) setState(() => _type = value);
+              },
+              decoration: const InputDecoration(labelText: 'Type', border: OutlineInputBorder()),
+            ),
+            const SizedBox(height: 16),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              value: _required,
+              title: const Text('Required'),
+              onChanged: (value) => setState(() => _required = value),
+            ),
+            const SizedBox(height: 16),
+            TextFormField(
+              controller: _defaultCtrl,
+              minLines: 1,
+              maxLines: 3,
+              decoration: const InputDecoration(
+                labelText: 'Default value',
+                border: OutlineInputBorder(),
               ),
-              const SizedBox(height: 12),
-              DropdownButtonFormField<String>(
-                value: _type,
-                items: const [
-                  DropdownMenuItem(value: 'text', child: Text('Text')),
-                  DropdownMenuItem(value: 'number', child: Text('Number')),
-                  DropdownMenuItem(value: 'url', child: Text('URL')),
-                ],
-                onChanged: (v) => setState(() => _type = v!),
-                decoration: const InputDecoration(labelText: 'Type'),
+            ),
+            const SizedBox(height: 16),
+            TextFormField(
+              controller: _descCtrl,
+              minLines: 2,
+              maxLines: 4,
+              decoration: const InputDecoration(
+                labelText: 'Description',
+                alignLabelWithHint: true,
+                border: OutlineInputBorder(),
               ),
-              const SizedBox(height: 12),
-              TextFormField(
-                controller: _defaultCtrl,
-                decoration: const InputDecoration(
-                  labelText: 'Default Value',
-                  hintText: '192.168.1.1',
-                ),
-              ),
-              const SizedBox(height: 12),
-              CheckboxListTile(
-                value: _required,
-                onChanged: (v) => setState(() => _required = v!),
-                title: const Text('Required'),
-                contentPadding: EdgeInsets.zero,
-              ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
-      actions: [
-        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
-        FilledButton(
-          onPressed: () {
-            if (!_formKey.currentState!.validate()) return;
-            final param = PayloadParameter(
-              key: _keyCtrl.text.trim(),
-              label: _labelCtrl.text.trim(),
-              description: _descCtrl.text.trim(),
-              type: _type,
-              defaultValue: _defaultCtrl.text.trim(),
-              required: _required,
-            );
-            widget.onSave(param);
-            Navigator.pop(context);
-          },
-          child: const Text('Save'),
-        ),
-      ],
     );
   }
 }

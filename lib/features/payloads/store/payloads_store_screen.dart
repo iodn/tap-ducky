@@ -205,8 +205,7 @@ class _PayloadsStoreScreenState extends ConsumerState<PayloadsStoreScreen> {
                               ...files.map(
                                 (it) => _RepoItemTile(
                                   item: it,
-                                  subtitle: it.path,
-                                  trailing: _Badge(fileName: it.name),
+                                  subtitle: '${_fileStatus(it.name)} · ${it.path}',
                                   onTap: () => Navigator.of(context).push(
                                     MaterialPageRoute(
                                       builder: (_) => _FilePreviewScreen(itemPath: it.path),
@@ -407,7 +406,7 @@ class _HeaderCard extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(repoLabel, style: theme.textTheme.titleMedium),
+                      Text(repoLabel, style: theme.textTheme.titleMedium, maxLines: 2, overflow: TextOverflow.ellipsis),
                       const SizedBox(height: 2),
                       Text(
                         repoSub,
@@ -448,22 +447,19 @@ class _HeaderCard extends StatelessWidget {
               onSubmitted: (_) => onBrowse(),
             ),
             const SizedBox(height: 10),
-            Row(
+            OverflowBar(
+              spacing: 10,
+              overflowSpacing: 8,
               children: [
-                Expanded(
-                  child: FilledButton.icon(
-                    onPressed: onBrowse,
-                    icon: const Icon(Icons.search),
-                    label: const Text('Browse'),
-                  ),
+                FilledButton.icon(
+                  onPressed: onBrowse,
+                  icon: const Icon(Icons.search),
+                  label: const Text('Browse'),
                 ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: onAdd,
-                    icon: const Icon(Icons.bookmark_add_outlined),
-                    label: const Text('Save source'),
-                  ),
+                OutlinedButton.icon(
+                  onPressed: onAdd,
+                  icon: const Icon(Icons.bookmark_add_outlined),
+                  label: const Text('Save source'),
                 ),
               ],
             ),
@@ -555,14 +551,12 @@ class _PathAndSearchBar extends StatelessWidget {
 class _RepoItemTile extends StatelessWidget {
   final RepoItem item;
   final String subtitle;
-  final Widget? trailing;
   final VoidCallback onTap;
 
   const _RepoItemTile({
     required this.item,
     required this.subtitle,
     required this.onTap,
-    this.trailing,
   });
 
   @override
@@ -572,9 +566,13 @@ class _RepoItemTile extends StatelessWidget {
 
     return ListTile(
       leading: Icon(icon),
-      title: Text(item.name, overflow: TextOverflow.ellipsis),
-      subtitle: Text(subtitle, maxLines: 1, overflow: TextOverflow.ellipsis),
-      trailing: trailing ?? const Icon(Icons.chevron_right),
+      title: Tooltip(
+        message: item.name,
+        excludeFromSemantics: true,
+        child: Text(item.name, maxLines: 2, overflow: TextOverflow.ellipsis),
+      ),
+      subtitle: Text(subtitle, maxLines: 2, overflow: TextOverflow.ellipsis),
+      trailing: const Icon(Icons.chevron_right),
       onTap: onTap,
     );
   }
@@ -614,41 +612,16 @@ class _SectionHeader extends StatelessWidget {
   }
 }
 
-class _Badge extends StatelessWidget {
-  final String fileName;
-  const _Badge({required this.fileName});
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final cs = theme.colorScheme;
-    final lower = fileName.toLowerCase();
-    final dot = lower.lastIndexOf('.');
-    final ext = dot >= 0 ? lower.substring(dot) : '';
-
-    bool likelySupported = ext == '.json' || ext == '.txt' || ext == '.duck' || ext == '.ino';
-    if (!likelySupported && ext.isEmpty) {
-      // No extension: only hint importable if name contains script hints
-      const hints = ['duck', 'payload', 'script'];
-      likelySupported = hints.any((h) => lower.contains(h));
-    }
-
-    final widgets = <Widget>[];
-    widgets.add(Text(likelySupported ? 'Importable' : 'Not supported', style: TextStyle(color: likelySupported ? Colors.green : cs.outline)));
-    if (ext == '.ino') {
-      widgets.add(const SizedBox(width: 6));
-      widgets.add(Container(
-        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-        decoration: BoxDecoration(
-          color: cs.secondaryContainer,
-          borderRadius: BorderRadius.circular(8),
-        ),
-        child: Text('Converted', style: theme.textTheme.labelSmall?.copyWith(color: cs.onSecondaryContainer)),
-      ));
-    }
-
-    return Row(mainAxisSize: MainAxisSize.min, children: widgets);
+String _fileStatus(String fileName) {
+  final lower = fileName.toLowerCase();
+  final dot = lower.lastIndexOf('.');
+  final ext = dot >= 0 ? lower.substring(dot) : '';
+  if (ext == '.ino') return 'Importable · Converted';
+  if (const ['.json', '.txt', '.duck'].contains(ext) ||
+      (ext.isEmpty && const ['duck', 'payload', 'script'].any(lower.contains))) {
+    return 'Importable';
   }
+  return 'Not supported';
 }
 
 class _EmptyRepoState extends StatelessWidget {
@@ -853,7 +826,33 @@ class _FilePreviewScreenState extends ConsumerState<_FilePreviewScreen> {
           length: tabCount,
           child: Scaffold(
             appBar: AppBar(
-              title: Text(widget.itemPath.split('/').last),
+              title: Text(widget.itemPath.split('/').last, maxLines: 1, overflow: TextOverflow.ellipsis),
+              actions: [
+                IconButton(
+                  tooltip: _wrap ? 'Disable wrap' : 'Enable wrap',
+                  onPressed: () => setState(() => _wrap = !_wrap),
+                  icon: Icon(_wrap ? Icons.wrap_text : Icons.swap_horiz),
+                ),
+                if (preview.wasConverted)
+                  PopupMenuButton<bool>(
+                    tooltip: 'Copy script',
+                    onSelected: (original) async {
+                      await Clipboard.setData(ClipboardData(
+                        text: original ? preview.originalText! : preview.text,
+                      ));
+                      if (context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text(original ? 'Original copied' : 'Converted copied')),
+                        );
+                      }
+                    },
+                    itemBuilder: (_) => [
+                      const PopupMenuItem(value: false, child: Text('Copy converted')),
+                      if (hasOriginal)
+                        const PopupMenuItem(value: true, child: Text('Copy original')),
+                    ],
+                  ),
+              ],
               bottom: hasOriginal
                   ? const TabBar(
                       tabs: [
@@ -875,6 +874,8 @@ class _FilePreviewScreenState extends ConsumerState<_FilePreviewScreen> {
                         Expanded(
                           child: Text(
                             preview.supportReason!,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
                             style: theme.textTheme.bodySmall?.copyWith(
                               color: theme.colorScheme.onSurfaceVariant,
                             ),
@@ -883,54 +884,6 @@ class _FilePreviewScreenState extends ConsumerState<_FilePreviewScreen> {
                       ],
                     ),
                   ),
-
-                // Controls row: copy & wrap
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
-                  child: Row(
-                    children: [
-                      if (preview.wasConverted)
-                        OutlinedButton.icon(
-                          icon: const Icon(Icons.auto_awesome, size: 16),
-                          label: const Text('Copy converted'),
-                          onPressed: () async {
-                          await Clipboard.setData(ClipboardData(text: preview.text));
-                          if (mounted) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                content: Text('Converted copied'),
-                                behavior: SnackBarBehavior.floating,
-                              ),
-                            );
-                          }
-                        },
-                      ),
-                      const SizedBox(width: 8),
-                      if (preview.wasConverted && hasOriginal)
-                        OutlinedButton.icon(
-                          icon: const Icon(Icons.copy_all, size: 16),
-                          label: const Text('Copy original'),
-                          onPressed: () async {
-                            await Clipboard.setData(ClipboardData(text: preview.originalText!));
-                            if (mounted) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(
-                                  content: Text('Original copied'),
-                                  behavior: SnackBarBehavior.floating,
-                                ),
-                              );
-                            }
-                          },
-                        ),
-                      const Spacer(),
-                      IconButton(
-                        tooltip: _wrap ? 'Disable wrap' : 'Enable wrap',
-                        onPressed: () => setState(() => _wrap = !_wrap),
-                        icon: Icon(_wrap ? Icons.wrap_text : Icons.swap_horiz),
-                      ),
-                    ],
-                  ),
-                ),
 
                 Expanded(
                   child: Container(
@@ -953,10 +906,20 @@ class _FilePreviewScreenState extends ConsumerState<_FilePreviewScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       if (preview.issues.isNotEmpty) ...[
-                        Text('Validation summary', style: theme.textTheme.labelLarge),
-                        const SizedBox(height: 6),
-                        _IssuesList(issues: preview.issues),
-                        const SizedBox(height: 10),
+                        TextButton(
+                          onPressed: () => showDialog<void>(
+                            context: context,
+                            builder: (context) => AlertDialog(
+                              title: const Text('Validation summary'),
+                              scrollable: true,
+                              content: _IssuesList(issues: preview.issues),
+                              actions: [
+                                TextButton(onPressed: () => Navigator.pop(context), child: const Text('Close')),
+                              ],
+                            ),
+                          ),
+                          child: Text('Validation issues (${preview.issues.length})'),
+                        ),
                       ],
                       Row(
                         children: [

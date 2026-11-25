@@ -73,7 +73,7 @@ class ScheduleScreen extends ConsumerWidget {
               ),
               Expanded(
                 child: ListView.builder(
-                  padding: const EdgeInsets.all(16),
+                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 88),
                   itemCount: tasks.length,
                   itemBuilder: (context, i) {
                     final t = tasks[i];
@@ -321,12 +321,14 @@ class _ScheduleCard extends StatelessWidget {
                                     color: _triggerColor(task.trigger, cs),
                                   ),
                                   const SizedBox(width: 4),
-                                  Text(
-                                    _triggerLabel(task.trigger),
-                                    style: TextStyle(
-                                      fontSize: 11,
-                                      fontWeight: FontWeight.w700,
-                                      color: _triggerColor(task.trigger, cs),
+                                  Flexible(
+                                    child: Text(
+                                      _triggerLabel(task.trigger),
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.w700,
+                                        color: _triggerColor(task.trigger, cs),
+                                      ),
                                     ),
                                   ),
                                 ],
@@ -375,11 +377,13 @@ class _ScheduleCard extends StatelessWidget {
                             children: [
                               Icon(Icons.event, size: 14, color: cs.onSurfaceVariant),
                               const SizedBox(width: 6),
-                              Text(
-                                _formatRunAt(task.runAt!),
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  color: cs.onSurfaceVariant,
+                              Expanded(
+                                child: Text(
+                                  _formatRunAt(task.runAt!),
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: cs.onSurfaceVariant,
+                                  ),
                                 ),
                               ),
                             ],
@@ -391,11 +395,13 @@ class _ScheduleCard extends StatelessWidget {
                             children: [
                               Icon(Icons.access_time, size: 14, color: cs.onSurfaceVariant),
                               const SizedBox(width: 6),
-                              Text(
-                                'Window: ${task.windowStart}–${task.windowEnd}',
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  color: cs.onSurfaceVariant,
+                              Expanded(
+                                child: Text(
+                                  'Window: ${task.windowStart}–${task.windowEnd}',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: cs.onSurfaceVariant,
+                                  ),
                                 ),
                               ),
                             ],
@@ -407,12 +413,14 @@ class _ScheduleCard extends StatelessWidget {
                             children: [
                               Icon(Icons.history, size: 14, color: cs.primary),
                               const SizedBox(width: 6),
-                              Text(
-                                'Last run: ${_formatLastRun(task.lastRunAt!)}',
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  color: cs.primary,
-                                  fontWeight: FontWeight.w600,
+                              Expanded(
+                                child: Text(
+                                  'Last run: ${_formatLastRun(task.lastRunAt!)}',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: cs.primary,
+                                    fontWeight: FontWeight.w600,
+                                  ),
                                 ),
                               ),
                             ],
@@ -435,14 +443,17 @@ class _ScheduleCard extends StatelessWidget {
                         ),
                       ),
                       const SizedBox(width: 8),
-                      OutlinedButton(
-                        onPressed: onDelete,
-                        style: OutlinedButton.styleFrom(
-                          foregroundColor: cs.error,
-                          side: BorderSide(color: cs.error.withOpacity(0.5)),
-                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                      Tooltip(
+                        message: 'Delete schedule',
+                        child: OutlinedButton(
+                          onPressed: onDelete,
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: cs.error,
+                            side: BorderSide(color: cs.error.withOpacity(0.5)),
+                            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                          ),
+                          child: const Icon(Icons.delete, size: 18),
                         ),
-                        child: const Icon(Icons.delete, size: 18),
                       ),
                     ],
                   ),

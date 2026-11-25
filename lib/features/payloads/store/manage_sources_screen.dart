@@ -1,6 +1,8 @@
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../widgets/configuration_page.dart';
+import '../../../widgets/confirm_dialog.dart';
 import '../../../data/services/github_store/models.dart';
 import '../../../state/controllers/payloads_store_controller.dart';
 
@@ -194,19 +196,11 @@ class _ManageSourcesScreenState extends ConsumerState<ManageSourcesScreen> {
     final alias =
         (refRepo.alias?.trim().isNotEmpty == true) ? refRepo.alias!.trim() : '${refRepo.owner}/${refRepo.repo}';
 
-    final res = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Remove source'),
-        content: Text('Remove "$alias" from your sources?'),
-        actions: [
-          TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Cancel')),
-          FilledButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('Remove'),
-          ),
-        ],
-      ),
+    final res = await showConfirmDialog(
+      context,
+      title: 'Remove source',
+      message: 'Remove "$alias" from your sources?',
+      confirmLabel: 'Remove',
     );
 
     if (res == true) {
@@ -224,67 +218,19 @@ class _ManageSourcesScreenState extends ConsumerState<ManageSourcesScreen> {
   Future<void> _rename(BuildContext context, RepoRef refRepo) async {
     final ctrl = ref.read(payloadsStoreControllerProvider.notifier);
     final current = refRepo.alias ?? '${refRepo.owner}/${refRepo.repo}';
-    final textCtrl = TextEditingController(text: current);
-
-    final res = await showModalBottomSheet<String>(
-      context: context,
-      isScrollControlled: true,
-      showDragHandle: true,
-      builder: (context) {
-        final bottom = MediaQuery.of(context).viewInsets.bottom;
-        return Padding(
-          padding: EdgeInsets.fromLTRB(16, 12, 16, 16 + bottom),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('Rename source', style: Theme.of(context).textTheme.titleLarge),
-              const SizedBox(height: 8),
-              Text(
-                refRepo.originalUrl,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    ),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: textCtrl,
-                autofocus: true,
-                textInputAction: TextInputAction.done,
-                decoration: const InputDecoration(
-                  labelText: 'Display name',
-                  border: OutlineInputBorder(),
-                ),
-                onSubmitted: (_) => Navigator.of(context).pop(textCtrl.text.trim()),
-              ),
-              const SizedBox(height: 12),
-              Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton(
-                      onPressed: () => Navigator.of(context).pop(),
-                      child: const Text('Cancel'),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: FilledButton(
-                      onPressed: () => Navigator.of(context).pop(textCtrl.text.trim()),
-                      child: const Text('Save'),
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        );
-      },
+    final res = await showConfigurationPage<String>(
+      context,
+      (_) => TextConfigurationPage(
+        title: 'Rename source',
+        fieldLabel: 'Display name',
+        actionLabel: 'Save',
+        initialValue: current,
+        multiline: false,
+      ),
     );
 
     if (res == null) return;
-    await ctrl.updateSourceAlias(refRepo, res);
+    await ctrl.updateSourceAlias(refRepo, res.trim());
 
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(

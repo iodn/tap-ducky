@@ -9,6 +9,8 @@ import '../../state/controllers/advanced_settings_controller.dart';
 import '../../state/controllers/app_settings_controller.dart';
 import '../../state/controllers/payloads_controller.dart';
 import '../../state/providers.dart';
+import '../../widgets/configuration_page.dart';
+import '../../widgets/payload_picker.dart';
 import '../../widgets/confirm_dialog.dart';
 import '../../widgets/section_header.dart';
 import 'usb_id_selector_dialog.dart';
@@ -622,30 +624,16 @@ class _BodyState extends ConsumerState<_Body> {
   }
 
   Future<void> _addPresetDialog(BuildContext context, WidgetRef ref) async {
-    final ctrl = TextEditingController();
-    final res = await showDialog<String>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('New preset'),
-        content: TextField(
-          controller: ctrl,
-          maxLines: 8,
-          decoration: const InputDecoration(
-            hintText: 'Example:\nDELAY 250\nSTRING hello\nENTER',
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(null),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(context).pop(ctrl.text),
-            child: const Text('Add'),
-          ),
-        ],
+    final res = await showConfigurationPage<String>(
+      context,
+      (_) => const TextConfigurationPage(
+        title: 'New preset',
+        fieldLabel: 'Command',
+        actionLabel: 'Add',
+        hint: 'STRING hello',
       ),
     );
+    if (!context.mounted) return;
     if (res == null || res.trim().isEmpty) return;
     await ref
         .read(advancedSettingsControllerProvider.notifier)
@@ -721,115 +709,52 @@ class _DialShortcutTile extends StatelessWidget {
         }
       }
     }
-    final hasSelected = selectedPayload != null;
     final subtitle = mode == 'payload'
-        ? (hasSelected ? selectedPayload!.name : 'Select a payload')
+        ? (selectedPayload?.name ?? 'Select a payload')
         : 'Last executed script';
 
     return ExpansionTile(
       tilePadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
       childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
       title: Text('*#*#${binding.code}#*#*'),
-      subtitle: Text(subtitle, style: TextStyle(color: cs.onSurfaceVariant)),
+      subtitle: Tooltip(
+        message: subtitle,
+        excludeFromSemantics: true,
+        child: Text(subtitle, maxLines: 2, overflow: TextOverflow.ellipsis),
+      ),
       trailing: Switch(
         value: binding.enabled,
         onChanged: (v) => onChanged(binding.copyWith(enabled: v)),
       ),
       children: [
-        Row(
-          children: [
-            const Expanded(
-              child: Text(
-                'Target',
-                style: TextStyle(fontWeight: FontWeight.w700),
-              ),
-            ),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-              decoration: BoxDecoration(
-                color: cs.surfaceVariant,
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: DropdownButtonHideUnderline(
-                child: DropdownButton<String>(
-                  value: mode,
-                  style: TextStyle(color: cs.onSurface),
-                  items: const [
-                    DropdownMenuItem(
-                      value: 'last',
-                      child: Text('Last executed'),
-                    ),
-                    DropdownMenuItem(
-                      value: 'payload',
-                      child: Text('Selected payload'),
-                    ),
-                  ],
-                  onChanged: (v) {
-                    if (v == null) return;
-                    onChanged(
-                      binding.copyWith(
-                        mode: v,
-                        payloadId: v == 'payload' ? binding.payloadId : null,
-                        script: v == 'payload' ? binding.script : null,
-                        name: v == 'payload' ? binding.name : null,
-                      ),
-                    );
-                  },
-                ),
-              ),
-            ),
+        DropdownButtonFormField<String>(
+          initialValue: mode,
+          isExpanded: true,
+          decoration: const InputDecoration(labelText: 'Target', border: OutlineInputBorder()),
+          items: const [
+            DropdownMenuItem(value: 'last', child: Text('Last executed')),
+            DropdownMenuItem(value: 'payload', child: Text('Selected payload')),
           ],
+          onChanged: (value) {
+            if (value == null) return;
+            onChanged(
+              binding.copyWith(
+                mode: value,
+                payloadId: value == 'payload' ? binding.payloadId : null,
+                script: value == 'payload' ? binding.script : null,
+                name: value == 'payload' ? binding.name : null,
+              ),
+            );
+          },
         ),
         if (mode == 'payload') ...[
-          const SizedBox(height: 10),
-          Row(
-            children: [
-              const Expanded(
-                child: Text(
-                  'Payload',
-                  style: TextStyle(fontWeight: FontWeight.w700),
-                ),
-              ),
-              Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 10,
-                  vertical: 6,
-                ),
-                decoration: BoxDecoration(
-                  color: cs.surfaceVariant,
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: DropdownButtonHideUnderline(
-                  child: DropdownButton<String>(
-                    value: hasSelected ? selectedPayload!.id : null,
-                    hint: const Text('Select payload'),
-                    style: TextStyle(color: cs.onSurface),
-                    items: payloads
-                        .map(
-                          (p) => DropdownMenuItem(
-                            value: p.id,
-                            child: Text(
-                              p.name,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                        )
-                        .toList(),
-                    onChanged: (v) {
-                      if (v == null) return;
-                      final p = payloads.firstWhere((e) => e.id == v);
-                      onChanged(
-                        binding.copyWith(
-                          payloadId: p.id,
-                          script: p.script,
-                          name: p.name,
-                        ),
-                      );
-                    },
-                  ),
-                ),
-              ),
-            ],
+          const SizedBox(height: 12),
+          PayloadPicker(
+            payloads: payloads,
+            selected: selectedPayload,
+            onChanged: (payload) => onChanged(
+              binding.copyWith(payloadId: payload.id, script: payload.script, name: payload.name),
+            ),
           ),
           if (payloads.isEmpty)
             Padding(
@@ -888,28 +813,16 @@ class _PresetTile extends ConsumerWidget {
   }
 
   Future<void> _edit(BuildContext context, WidgetRef ref) async {
-    final ctrl = TextEditingController(text: preset);
-    final res = await showDialog<String>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text('Edit preset ${index + 1}'),
-        content: TextField(
-          controller: ctrl,
-          maxLines: 10,
-          decoration: const InputDecoration(),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(null),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(context).pop(ctrl.text),
-            child: const Text('Save'),
-          ),
-        ],
+    final res = await showConfigurationPage<String>(
+      context,
+      (_) => TextConfigurationPage(
+        title: 'Edit preset ${index + 1}',
+        fieldLabel: 'Command',
+        actionLabel: 'Save',
+        initialValue: preset,
       ),
     );
+    if (!context.mounted) return;
     if (res == null) return;
     await ref
         .read(advancedSettingsControllerProvider.notifier)

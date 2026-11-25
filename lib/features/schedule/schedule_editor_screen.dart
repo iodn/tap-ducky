@@ -1,24 +1,27 @@
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../data/models/payload.dart';
-import '../../data/models/scheduled_task.dart';
 import '../../state/controllers/payloads_controller.dart';
 import '../../state/controllers/scheduler_controller.dart';
 import '../../widgets/empty_state.dart';
+import '../../widgets/payload_parameter_field.dart';
+import '../../widgets/payload_picker.dart';
 
 class ScheduleEditorScreen extends ConsumerStatefulWidget {
   const ScheduleEditorScreen._({super.key, required this.isNew, this.taskId});
 
-  const ScheduleEditorScreen.newTask({Key? key}) : this._(key: key, isNew: true);
+  const ScheduleEditorScreen.newTask({Key? key})
+    : this._(key: key, isNew: true);
 
   const ScheduleEditorScreen.edit({Key? key, required String taskId})
-      : this._(key: key, isNew: false, taskId: taskId);
+    : this._(key: key, isNew: false, taskId: taskId);
 
   final bool isNew;
   final String? taskId;
 
   @override
-  ConsumerState<ScheduleEditorScreen> createState() => _ScheduleEditorScreenState();
+  ConsumerState<ScheduleEditorScreen> createState() =>
+      _ScheduleEditorScreenState();
 }
 
 class _ScheduleEditorScreenState extends ConsumerState<ScheduleEditorScreen> {
@@ -29,16 +32,19 @@ class _ScheduleEditorScreenState extends ConsumerState<ScheduleEditorScreen> {
   String _trigger = 'one_time';
   String? _payloadId;
   DateTime? _runAt;
-  final Map<String, TextEditingController> _paramCtrls = {};
+  final _parameterControllers = <String, Map<String, TextEditingController>>{};
   bool _loaded = false;
+  bool _saving = false;
 
   @override
   void dispose() {
     _name.dispose();
     _windowStart.dispose();
     _windowEnd.dispose();
-    for (final c in _paramCtrls.values) {
-      c.dispose();
+    for (final controllers in _parameterControllers.values) {
+      for (final controller in controllers.values) {
+        controller.dispose();
+      }
     }
     super.dispose();
   }
@@ -55,9 +61,10 @@ class _ScheduleEditorScreenState extends ConsumerState<ScheduleEditorScreen> {
         _trigger = _normalizeTriggerForEditor(t.trigger);
         _payloadId = t.payloadId;
         _runAt = t.runAt;
-        for (final e in t.params.entries) {
-          _paramCtrls[e.key] = TextEditingController(text: e.value);
-        }
+        _parameterControllers[t.payloadId] = {
+          for (final entry in t.params.entries)
+            entry.key: TextEditingController(text: entry.value),
+        };
       }
     } else {
       _name.text = 'New schedule';
@@ -79,259 +86,211 @@ class _ScheduleEditorScreenState extends ConsumerState<ScheduleEditorScreen> {
   @override
   Widget build(BuildContext context) {
     final payloadsAsync = ref.watch(payloadsControllerProvider);
+    final schedules = widget.isNew
+        ? null
+        : ref.watch(schedulerControllerProvider);
     final schedulesCtrl = ref.read(schedulerControllerProvider.notifier);
+    final canEdit = widget.isNew || schedulesCtrl.byId(widget.taskId!) != null;
+    final availablePayloads = payloadsAsync.value;
     final cs = Theme.of(context).colorScheme;
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(widget.isNew ? 'New Schedule' : 'Edit Schedule'),
+        title: Text(
+          widget.isNew ? 'New Schedule' : 'Edit Schedule',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
         actions: [
           Padding(
-            padding: const EdgeInsets.only(right: 8),
-            child: FilledButton.icon(
-              onPressed: () async {
-                final payloads = payloadsAsync.value ?? const <Payload>[];
-                if (_payloadId == null && payloads.isNotEmpty) {
-                  _payloadId = payloads.first.id;
-                }
-                await _save(schedulesCtrl, payloads);
-              },
-              icon: const Icon(Icons.check, size: 18),
-              label: const Text('Save'),
+            padding: const EdgeInsetsDirectional.only(end: 8),
+            child: TextButton(
+              onPressed:
+                  canEdit &&
+                      !_saving &&
+                      availablePayloads != null &&
+                      availablePayloads.isNotEmpty
+                  ? () => _save(schedulesCtrl, availablePayloads)
+                  : null,
+              child: const Text('Save'),
             ),
           ),
         ],
       ),
-      body: payloadsAsync.when(
-        loading: () => const Center(child: CircularProgressIndicator()),
-        error: (e, st) => Center(
-          child: Padding(
-            padding: const EdgeInsets.all(24),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(Icons.error_outline, size: 64, color: cs.error),
-                const SizedBox(height: 16),
-                Text('Failed to load payloads', style: Theme.of(context).textTheme.titleLarge),
-                const SizedBox(height: 8),
-                Text('$e', textAlign: TextAlign.center),
-              ],
-            ),
-          ),
-        ),
-        data: (payloads) {
-          if (payloads.isEmpty) {
-            return const EmptyState(
-              title: 'No payloads available',
-              subtitle: 'Create a payload first, then create a schedule.',
-              icon: Icons.inventory_2_outlined,
-            );
-          }
-
-          _loadIfNeeded(payloads, schedulesCtrl);
-
-          final selectedPayload = _findPayload(payloads, _payloadId) ?? payloads.first;
-          _payloadId = selectedPayload.id;
-          _syncParamControllers(selectedPayload);
-
-          return ListView(
-            padding: const EdgeInsets.all(16),
-            children: [
-              _SectionCard(
-                icon: Icons.settings,
-                title: 'Basic Configuration',
-                color: cs.primary,
-                children: [
-                  TextField(
-                    controller: _name,
-                    decoration: InputDecoration(
-                      labelText: 'Schedule Name',
-                      hintText: 'e.g., Morning Routine',
-                      border: const OutlineInputBorder(),
-                      prefixIcon: const Icon(Icons.label),
-                      filled: true,
-                      fillColor: cs.surfaceContainerHighest,
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  DropdownButtonFormField<String>(
-                    value: _payloadId,
-                    decoration: InputDecoration(
-                      labelText: 'Payload',
-                      border: const OutlineInputBorder(),
-                      prefixIcon: const Icon(Icons.inventory_2),
-                      filled: true,
-                      fillColor: cs.surfaceContainerHighest,
-                    ),
-                    items: payloads
-                        .map((p) => DropdownMenuItem(
-                              value: p.id,
-                              child: Text(p.name, overflow: TextOverflow.ellipsis),
-                            ))
-                        .toList(),
-                    onChanged: (v) => setState(() => _payloadId = v),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 16),
-              _SectionCard(
-                icon: Icons.flash_on,
-                title: 'Trigger Type',
-                color: cs.primary,
-                children: [
-                  _TriggerSelector(
-                    value: _trigger,
-                    onChanged: (v) => setState(() => _trigger = v),
-                  ),
-                  const SizedBox(height: 12),
-                  _TriggerExplanation(trigger: _trigger),
-                ],
-              ),
-              const SizedBox(height: 16),
-              if (_trigger == 'one_time') ...[
-                _SectionCard(
-                  icon: Icons.event,
-                  title: 'Schedule Time',
-                  color: cs.secondary,
-                  children: [
-                    InkWell(
-                      onTap: () => _pickDateTime(context),
-                      borderRadius: BorderRadius.circular(12),
-                      child: Container(
-                        padding: const EdgeInsets.all(16),
-                        decoration: BoxDecoration(
-                          color: cs.primaryContainer.withOpacity(0.3),
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: cs.primary.withOpacity(0.3), width: 2),
-                        ),
-                        child: Row(
-                          children: [
-                            Container(
-                              padding: const EdgeInsets.all(12),
-                              decoration: BoxDecoration(
-                                color: cs.primary,
-                                borderRadius: BorderRadius.circular(10),
-                              ),
-                              child: Icon(Icons.access_time, color: cs.onPrimary, size: 24),
-                            ),
-                            const SizedBox(width: 16),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    'Execution Time',
-                                    style: TextStyle(
-                                      fontSize: 12,
-                                      fontWeight: FontWeight.w600,
-                                      color: cs.onSurfaceVariant,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 4),
-                                  Text(
-                                    _runAt == null ? 'Tap to set' : _formatDateTime(_runAt!),
-                                    style: TextStyle(
-                                      fontSize: 16,
-                                      fontWeight: FontWeight.w700,
-                                      color: cs.primary,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                            Icon(Icons.edit_calendar, color: cs.primary),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 16),
-              ],
-              _SectionCard(
-                icon: Icons.access_time_filled,
-                title: 'Time Window (Optional)',
-                color: cs.primary,
-                children: [
-                  Text(
-                    'Restrict execution to specific hours of the day',
-                    style: TextStyle(
-                      fontSize: 13,
-                      color: cs.onSurfaceVariant,
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  Row(
+      body: schedules?.isLoading == true && !canEdit
+          ? const Center(child: CircularProgressIndicator())
+          : !canEdit
+          ? const Center(child: Text('Schedule unavailable'))
+          : payloadsAsync.when(
+              loading: () => const Center(child: CircularProgressIndicator()),
+              error: (e, st) => Center(
+                child: Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
                     children: [
-                      Expanded(
-                        child: TextField(
-                          controller: _windowStart,
-                          readOnly: true,
-                          decoration: InputDecoration(
-                            labelText: 'Start Time',
-                            hintText: '09:00',
-                            border: const OutlineInputBorder(),
-                            prefixIcon: const Icon(Icons.wb_twilight),
-                            filled: true,
-                            fillColor: cs.surfaceContainerHighest,
-                          ),
-                          onTap: () => _pickTime(context, _windowStart),
-                        ),
+                      Icon(Icons.error_outline, size: 64, color: cs.error),
+                      const SizedBox(height: 16),
+                      Text(
+                        'Failed to load payloads',
+                        style: Theme.of(context).textTheme.titleLarge,
                       ),
-                      Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 8),
-                        child: Icon(Icons.arrow_forward, color: cs.onSurfaceVariant),
-                      ),
-                      Expanded(
-                        child: TextField(
-                          controller: _windowEnd,
-                          readOnly: true,
-                          decoration: InputDecoration(
-                            labelText: 'End Time',
-                            hintText: '17:00',
-                            border: const OutlineInputBorder(),
-                            prefixIcon: const Icon(Icons.nightlight),
-                            filled: true,
-                            fillColor: cs.surfaceContainerHighest,
-                          ),
-                          onTap: () => _pickTime(context, _windowEnd),
-                        ),
-                      ),
+                      const SizedBox(height: 8),
+                      Text('$e', textAlign: TextAlign.center),
                     ],
                   ),
-                ],
+                ),
               ),
-              if (selectedPayload.parameters.isNotEmpty) ...[
-                const SizedBox(height: 16),
-                _SectionCard(
-                  icon: Icons.tune,
-                  title: 'Parameter Overrides',
-                  color: cs.secondary,
+              data: (payloads) {
+                if (payloads.isEmpty) {
+                  return const EmptyState(
+                    title: 'No payloads available',
+                    subtitle: 'Create a payload first, then create a schedule.',
+                    icon: Icons.inventory_2_outlined,
+                  );
+                }
+
+                _loadIfNeeded(payloads, schedulesCtrl);
+
+                final selectedPayload =
+                    _findPayload(payloads, _payloadId) ?? payloads.first;
+                _payloadId = selectedPayload.id;
+                final parameterControllers = _controllersFor(selectedPayload);
+
+                return ListView(
+                  padding: const EdgeInsets.all(16),
                   children: [
-                    for (int i = 0; i < selectedPayload.parameters.length; i++) ...[
-                      if (i > 0) const SizedBox(height: 12),
-                      TextField(
-                        controller: _paramCtrls[selectedPayload.parameters[i].key],
-                        decoration: InputDecoration(
-                          labelText: selectedPayload.parameters[i].label,
-                          hintText: selectedPayload.parameters[i].defaultValue,
-                          helperText:
-                              'Default: ${selectedPayload.parameters[i].defaultValue}',
-                          border: const OutlineInputBorder(),
-                          prefixIcon: const Icon(Icons.code),
-                          filled: true,
-                          fillColor: cs.surfaceContainerHighest,
+                    _SectionCard(
+                      icon: Icons.settings,
+                      title: 'Schedule details',
+                      color: cs.primary,
+                      children: [
+                        TextField(
+                          controller: _name,
+                          decoration: InputDecoration(
+                            labelText: 'Schedule Name',
+                            hintText: 'e.g., Morning Routine',
+                            border: const OutlineInputBorder(),
+                            prefixIcon: const Icon(Icons.label),
+                            filled: true,
+                            fillColor: cs.surfaceContainerHighest,
+                          ),
                         ),
+                        const SizedBox(height: 16),
+                        PayloadPicker(
+                          payloads: payloads,
+                          selected: selectedPayload,
+                          onChanged: (payload) =>
+                              setState(() => _payloadId = payload.id),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+                    _SectionCard(
+                      icon: Icons.flash_on,
+                      title: 'Trigger',
+                      color: cs.primary,
+                      children: [
+                        _TriggerSelector(
+                          value: _trigger,
+                          onChanged: (v) => setState(() => _trigger = v),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+                    if (_trigger == 'one_time') ...[
+                      _SectionCard(
+                        icon: Icons.event,
+                        title: 'Schedule time',
+                        color: cs.secondary,
+                        children: [
+                          OutlinedButton.icon(
+                            onPressed: () => _pickDateTime(context),
+                            icon: const Icon(Icons.edit_calendar),
+                            label: Text(
+                              _runAt == null
+                                  ? 'Choose date and time'
+                                  : _formatDateTime(_runAt!),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 16),
+                    ],
+                    _SectionCard(
+                      icon: Icons.access_time_filled,
+                      title: 'Time window',
+                      color: cs.primary,
+                      children: [
+                        const Text(
+                          'Optional. Limits when the schedule can run.',
+                        ),
+                        const SizedBox(height: 12),
+                        LayoutBuilder(
+                          builder: (context, constraints) {
+                            final start = _timeField(
+                              'Start time',
+                              _windowStart,
+                            );
+                            final end = _timeField('End time', _windowEnd);
+                            if (constraints.maxWidth <
+                                MediaQuery.textScalerOf(context).scale(320)) {
+                              return Column(
+                                children: [
+                                  start,
+                                  const SizedBox(height: 12),
+                                  end,
+                                ],
+                              );
+                            }
+                            return Row(
+                              children: [
+                                Expanded(child: start),
+                                const SizedBox(width: 12),
+                                Expanded(child: end),
+                              ],
+                            );
+                          },
+                        ),
+                        if (_windowStart.text.isNotEmpty ||
+                            _windowEnd.text.isNotEmpty)
+                          TextButton(
+                            onPressed: () => setState(() {
+                              _windowStart.clear();
+                              _windowEnd.clear();
+                            }),
+                            child: const Text('Clear time window'),
+                          ),
+                      ],
+                    ),
+                    if (selectedPayload.parameters.isNotEmpty) ...[
+                      const SizedBox(height: 16),
+                      _SectionCard(
+                        icon: Icons.tune,
+                        title: 'Parameter Overrides',
+                        color: cs.secondary,
+                        children: [
+                          for (final parameter in selectedPayload.parameters)
+                            Padding(
+                              padding: const EdgeInsets.only(bottom: 12),
+                              child: PayloadParameterField(
+                                key: ValueKey((
+                                  selectedPayload.id,
+                                  parameter.key,
+                                )),
+                                parameter: parameter,
+                                controller:
+                                    parameterControllers[parameter.key]!,
+                              ),
+                            ),
+                        ],
                       ),
                     ],
+                    const SizedBox(height: 80),
                   ],
-                ),
-              ],
-              const SizedBox(height: 80),
-            ],
-          );
-        },
-      ),
+                );
+              },
+            ),
     );
   }
 
@@ -343,15 +302,28 @@ class _ScheduleEditorScreenState extends ConsumerState<ScheduleEditorScreen> {
     return null;
   }
 
-  void _syncParamControllers(Payload payload) {
-    final keys = payload.parameters.map((e) => e.key).toSet();
-    final toRemove = _paramCtrls.keys.where((k) => !keys.contains(k)).toList();
-    for (final k in toRemove) {
-      _paramCtrls.remove(k)?.dispose();
+  Map<String, TextEditingController> _controllersFor(Payload payload) {
+    final controllers = _parameterControllers.putIfAbsent(payload.id, () => {});
+    for (final parameter in payload.parameters) {
+      controllers.putIfAbsent(
+        parameter.key,
+        () => TextEditingController(text: parameter.defaultValue),
+      );
     }
-    for (final p in payload.parameters) {
-      _paramCtrls.putIfAbsent(p.key, () => TextEditingController(text: p.defaultValue));
-    }
+    return controllers;
+  }
+
+  Widget _timeField(String label, TextEditingController controller) {
+    return TextField(
+      controller: controller,
+      readOnly: true,
+      onTap: () => _pickTime(context, controller),
+      decoration: InputDecoration(
+        labelText: label,
+        border: const OutlineInputBorder(),
+        suffixIcon: const Icon(Icons.schedule),
+      ),
+    );
   }
 
   String _formatDateTime(DateTime dt) {
@@ -363,32 +335,48 @@ class _ScheduleEditorScreenState extends ConsumerState<ScheduleEditorScreen> {
     final now = DateTime.now();
     final initial = _runAt ?? now.add(const Duration(minutes: 5));
 
+    final first = now.subtract(const Duration(days: 1));
+    final last = now.add(const Duration(days: 365));
     final date = await showDatePicker(
       context: context,
-      firstDate: now.subtract(const Duration(days: 1)),
-      lastDate: now.add(const Duration(days: 365)),
-      initialDate: initial,
+      firstDate: first,
+      lastDate: last,
+      initialDate: initial.isBefore(first) || initial.isAfter(last)
+          ? now
+          : initial,
     );
 
-    if (date == null) return;
+    if (date == null || !context.mounted) return;
 
     final time = await showTimePicker(
       context: context,
       initialTime: TimeOfDay.fromDateTime(initial),
     );
 
-    if (time == null) return;
+    if (time == null || !mounted) return;
 
     setState(() {
-      _runAt = DateTime(date.year, date.month, date.day, time.hour, time.minute);
+      _runAt = DateTime(
+        date.year,
+        date.month,
+        date.day,
+        time.hour,
+        time.minute,
+      );
     });
   }
 
-  Future<void> _pickTime(BuildContext context, TextEditingController ctrl) async {
+  Future<void> _pickTime(
+    BuildContext context,
+    TextEditingController ctrl,
+  ) async {
     final initial = _parseTime(ctrl.text) ?? TimeOfDay.now();
     final time = await showTimePicker(context: context, initialTime: initial);
-    if (time == null) return;
-    ctrl.text = '${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}';
+    if (time == null || !mounted) return;
+    setState(() {
+      ctrl.text =
+          '${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}';
+    });
   }
 
   TimeOfDay? _parseTime(String s) {
@@ -401,48 +389,62 @@ class _ScheduleEditorScreenState extends ConsumerState<ScheduleEditorScreen> {
   }
 
   Future<void> _save(SchedulerController ctrl, List<Payload> payloads) async {
-    final payloadId = _payloadId ?? (payloads.isNotEmpty ? payloads.first.id : null);
-    if (payloadId == null) return;
+    final payloadId =
+        _payloadId ?? (payloads.isNotEmpty ? payloads.first.id : null);
+    if (_saving || payloadId == null) return;
 
     final params = <String, String>{};
     final payload = _findPayload(payloads, payloadId);
     if (payload != null) {
+      final controllers = _controllersFor(payload);
       for (final p in payload.parameters) {
-        params[p.key] = _paramCtrls[p.key]?.text ?? p.defaultValue;
+        params[p.key] = controllers[p.key]?.text ?? p.defaultValue;
       }
     }
 
-    final windowStart = _windowStart.text.trim().isEmpty ? null : _windowStart.text.trim();
-    final windowEnd = _windowEnd.text.trim().isEmpty ? null : _windowEnd.text.trim();
+    final windowStart = _windowStart.text.trim().isEmpty
+        ? null
+        : _windowStart.text.trim();
+    final windowEnd = _windowEnd.text.trim().isEmpty
+        ? null
+        : _windowEnd.text.trim();
 
-    if (widget.isNew) {
-      await ctrl.createNew(
-        payloadId: payloadId,
-        name: _name.text.trim().isEmpty ? 'Schedule' : _name.text.trim(),
-        trigger: _trigger,
-        runAt: _trigger == 'one_time' ? _runAt : null,
-        windowStart: windowStart,
-        windowEnd: windowEnd,
-        params: params,
-      );
-    } else {
-      final existing = ctrl.byId(widget.taskId!);
-      if (existing == null) return;
+    setState(() => _saving = true);
+    try {
+      if (widget.isNew) {
+        await ctrl.createNew(
+          payloadId: payloadId,
+          name: _name.text.trim().isEmpty ? 'Schedule' : _name.text.trim(),
+          trigger: _trigger,
+          runAt: _trigger == 'one_time' ? _runAt : null,
+          windowStart: windowStart,
+          windowEnd: windowEnd,
+          params: params,
+        );
+      } else {
+        final existing = ctrl.byId(widget.taskId!);
+        if (existing == null) return;
 
-      final updated = existing.copyWith(
-        payloadId: payloadId,
-        name: _name.text.trim().isEmpty ? existing.name : _name.text.trim(),
-        trigger: _trigger,
-        runAt: _trigger == 'one_time' ? _runAt : null,
-        windowStart: windowStart,
-        windowEnd: windowEnd,
-        params: params,
+        final updated = existing.copyWith(
+          payloadId: payloadId,
+          name: _name.text.trim().isEmpty ? existing.name : _name.text.trim(),
+          trigger: _trigger,
+          runAt: _trigger == 'one_time' ? _runAt : null,
+          windowStart: windowStart,
+          windowEnd: windowEnd,
+          params: params,
+        );
+        await ctrl.upsert(updated);
+      }
+      if (mounted) Navigator.of(context).pop();
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not save the schedule')),
       );
-      await ctrl.upsert(updated);
+    } finally {
+      if (mounted) setState(() => _saving = false);
     }
-
-    if (!mounted) return;
-    Navigator.of(context).pop();
   }
 }
 
@@ -479,11 +481,10 @@ class _SectionCard extends StatelessWidget {
                   child: Icon(icon, color: color, size: 20),
                 ),
                 const SizedBox(width: 12),
-                Text(
-                  title,
-                  style: const TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w700,
+                Expanded(
+                  child: Text(
+                    title,
+                    style: Theme.of(context).textTheme.titleMedium,
                   ),
                 ),
               ],
@@ -498,262 +499,50 @@ class _SectionCard extends StatelessWidget {
 }
 
 class _TriggerSelector extends StatelessWidget {
-  const _TriggerSelector({
-    required this.value,
-    required this.onChanged,
-  });
+  const _TriggerSelector({required this.value, required this.onChanged});
 
   final String value;
   final ValueChanged<String> onChanged;
 
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-
-    final triggers = [
-      _TriggerOption(
-        value: 'one_time',
-        icon: Icons.event,
-        label: 'One-time',
-        subtitle: 'Specific date & time',
-        color: cs.primary,
-      ),
-      _TriggerOption(
-        value: 'app_cold_start',
-        icon: Icons.power_settings_new,
-        label: 'App Start',
-        subtitle: 'Cold start only',
-        color: cs.secondary,
-      ),
-      _TriggerOption(
-        value: 'app_foreground',
-        icon: Icons.open_in_new,
-        label: 'App Open',
-        subtitle: 'Foreground entry',
-        color: cs.primary,
-      ),
-      _TriggerOption(
-        value: 'device_connected',
-        icon: Icons.usb,
-        label: 'Session Armed',
-        subtitle: 'USB gadget active',
-        color: cs.primary,
-      ),
-    ];
-
-    return Column(
-      children: [
-        for (int i = 0; i < triggers.length; i++) ...[
-          if (i > 0) const SizedBox(height: 8),
-          _TriggerTile(
-            option: triggers[i],
-            selected: value == triggers[i].value,
-            onTap: () => onChanged(triggers[i].value),
-          ),
-        ],
-      ],
-    );
-  }
-}
-
-class _TriggerOption {
-  const _TriggerOption({
-    required this.value,
-    required this.icon,
-    required this.label,
-    required this.subtitle,
-    required this.color,
-  });
-
-  final String value;
-  final IconData icon;
-  final String label;
-  final String subtitle;
-  final Color color;
-}
-
-class _TriggerTile extends StatelessWidget {
-  const _TriggerTile({
-    required this.option,
-    required this.selected,
-    required this.onTap,
-  });
-
-  final _TriggerOption option;
-  final bool selected;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(12),
-      child: Container(
-        padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(
-          color: selected ? option.color.withOpacity(0.15) : cs.surfaceContainerHighest,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(
-            color: selected ? option.color : cs.outlineVariant,
-            width: selected ? 2 : 1,
-          ),
-        ),
-        child: Row(
-          children: [
-            Container(
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(
-                color: selected ? option.color : cs.surfaceContainerHigh,
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: Icon(
-                option.icon,
-                color: selected ? cs.onPrimary : cs.onSurfaceVariant,
-                size: 22,
-              ),
-            ),
-            const SizedBox(width: 14),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    option.label,
-                    style: TextStyle(
-                      fontWeight: FontWeight.w700,
-                      fontSize: 15,
-                      color: selected ? option.color : cs.onSurface,
-                    ),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    option.subtitle,
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: cs.onSurfaceVariant,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            Radio<bool>(
-              value: true,
-              groupValue: selected,
-              onChanged: (_) => onTap(),
-              activeColor: option.color,
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _TriggerExplanation extends StatelessWidget {
-  const _TriggerExplanation({required this.trigger});
-
-  final String trigger;
-
-  @override
-  Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-
-    String title;
-    String explanation;
-    IconData icon;
-    Color color;
-
-    switch (trigger) {
-      case 'one_time':
-        title = 'One-time Execution';
-        explanation =
-            'Runs once at the specified date and time (if within the optional time window).';
-        icon = Icons.event;
-        color = cs.primary;
-        break;
-      case 'app_cold_start':
-        title = 'App Start (Cold Start)';
-        explanation =
-            'Runs when TapDucky starts from a closed state.';
-        icon = Icons.power_settings_new;
-        color = cs.primary;
-        break;
-      case 'app_foreground':
-        title = 'App Open (Foreground)';
-        explanation =
-            'Runs each time TapDucky comes to the foreground.';
-        icon = Icons.open_in_new;
-        color = cs.primary;
-        break;
-      case 'device_connected':
-        title = 'Session Armed Trigger';
-        explanation =
-            'Runs when a USB HID session is armed.';
-        icon = Icons.usb;
-        color = cs.primary;
-        break;
-      default:
-        title = 'Unknown Trigger';
-        explanation = 'Unknown trigger type.';
-        icon = Icons.help_outline;
-        color = cs.onSurfaceVariant;
-    }
-
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [
-            color.withOpacity(0.1),
-            color.withOpacity(0.05),
-          ],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: color.withOpacity(0.3)),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
+    return RadioGroup<String>(
+      groupValue: value,
+      onChanged: (next) {
+        if (next != null) onChanged(next);
+      },
+      child: const Column(
         children: [
-          Container(
-            padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(
-              color: color.withOpacity(0.2),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Icon(icon, size: 20, color: color),
+          RadioListTile<String>(
+            contentPadding: EdgeInsets.zero,
+            value: 'one_time',
+            secondary: Icon(Icons.event),
+            title: Text('One time'),
+            subtitle: Text('At the selected date and time'),
           ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  style: TextStyle(
-                    fontWeight: FontWeight.w700,
-                    fontSize: 13,
-                    color: color,
-                  ),
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  explanation,
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: cs.onSurfaceVariant,
-                    height: 1.4,
-                  ),
-                ),
-              ],
-            ),
+          RadioListTile<String>(
+            contentPadding: EdgeInsets.zero,
+            value: 'app_cold_start',
+            secondary: Icon(Icons.power_settings_new),
+            title: Text('App start'),
+            subtitle: Text('When TapDucky starts from a closed state'),
+          ),
+          RadioListTile<String>(
+            contentPadding: EdgeInsets.zero,
+            value: 'app_foreground',
+            secondary: Icon(Icons.open_in_new),
+            title: Text('App open'),
+            subtitle: Text('Each time TapDucky comes to the foreground'),
+          ),
+          RadioListTile<String>(
+            contentPadding: EdgeInsets.zero,
+            value: 'device_connected',
+            secondary: Icon(Icons.usb),
+            title: Text('Session armed'),
+            subtitle: Text('When a USB HID session is armed'),
           ),
         ],
       ),
     );
   }
 }
-

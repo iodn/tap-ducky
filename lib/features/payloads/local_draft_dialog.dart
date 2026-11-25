@@ -2,6 +2,7 @@ import 'package:material_ui/material_ui.dart';
 import 'package:flutter/services.dart';
 
 import '../../data/services/local_drafts_service.dart';
+import '../../widgets/configuration_page.dart';
 
 class LocalDraftDialog extends StatefulWidget {
   const LocalDraftDialog({
@@ -65,10 +66,13 @@ class _LocalDraftDialogState extends State<LocalDraftDialog> {
   @override
   Widget build(BuildContext context) {
     final draft = _draft;
-    return AlertDialog(
-      scrollable: true,
-      title: Text(draft == null ? 'Draft with AI' : 'Review draft'),
-      content: Column(
+    return ConfigurationPage(
+      title: draft == null ? 'Draft with AI' : 'Review draft',
+      actionLabel: draft == null ? 'Generate' : 'Use draft',
+      onAction: draft == null
+          ? (_generating ? null : _generate)
+          : () => Navigator.pop(context, draft),
+      child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -92,6 +96,11 @@ class _LocalDraftDialogState extends State<LocalDraftDialog> {
               const Text('Drafting on this device…'),
             ],
           ] else ...[
+            TextButton.icon(
+              onPressed: () => setState(() => _draft = null),
+              icon: const Icon(Icons.edit_outlined),
+              label: const Text('Edit request'),
+            ),
             Text(draft.title, style: Theme.of(context).textTheme.titleMedium),
             const SizedBox(height: 6),
             Text(draft.description),
@@ -113,27 +122,6 @@ class _LocalDraftDialogState extends State<LocalDraftDialog> {
           ],
         ],
       ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text('Close'),
-        ),
-        if (draft == null)
-          FilledButton(
-            onPressed: _generating ? null : _generate,
-            child: const Text('Generate'),
-          )
-        else ...[
-          TextButton(
-            onPressed: () => setState(() => _draft = null),
-            child: const Text('Edit request'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, draft),
-            child: const Text('Use draft'),
-          ),
-        ],
-      ],
     );
   }
 }
