@@ -55,6 +55,8 @@ enum class CommandType {
   WAIT_FOR_BUTTON_PRESS,
   ENABLE_BUTTON,
   DISABLE_BUTTON,
+  BUTTON_DEF,
+  END_BUTTON,
   FUNCTION,
   END_FUNCTION,
   RETURN,
@@ -284,6 +286,11 @@ class DuckyScriptParser {
         }
         "ENABLEBUTTON", "DISABLEBUTTON" -> {
           val type = if (cmd == "ENABLEBUTTON") CommandType.ENABLE_BUTTON else CommandType.DISABLE_BUTTON
+          require(parts.size == 1) { "Line $lineNumber: ${type.name} takes no arguments" }
+          commands.add(DuckyCommand(type, emptyList(), lineNumber))
+        }
+        "BUTTONDEF", "ENDBUTTON" -> {
+          val type = if (cmd == "BUTTONDEF") CommandType.BUTTON_DEF else CommandType.END_BUTTON
           require(parts.size == 1) { "Line $lineNumber: ${type.name} takes no arguments" }
           commands.add(DuckyCommand(type, emptyList(), lineNumber))
         }
@@ -605,6 +612,21 @@ class DuckyScriptParser {
       else -> stringBlockType?.let { "END_${it.name}" }
     }
     require(missingEnd == null) { "Line $blockStart: missing $missingEnd" }
+    var buttonStart: Int? = null
+    for (command in commands) {
+      when (command.type) {
+        CommandType.BUTTON_DEF -> {
+          require(buttonStart == null) { "Line ${command.lineNumber}: nested BUTTON_DEF" }
+          buttonStart = command.lineNumber
+        }
+        CommandType.END_BUTTON -> {
+          require(buttonStart != null) { "Line ${command.lineNumber}: END_BUTTON without BUTTON_DEF" }
+          buttonStart = null
+        }
+        else -> Unit
+      }
+    }
+    require(buttonStart == null) { "Line $buttonStart: missing END_BUTTON" }
     validateExpressions(commands)
     return commands
   }
@@ -716,6 +738,10 @@ class DuckyScriptParser {
   fun getDefaultDelay(): Int = 0
 }
 
+private fun endButtonIndex(commands: List<DuckyCommand>, start: Int, endExclusive: Int): Int =
+  (start + 1 until endExclusive).firstOrNull { commands[it].type == CommandType.END_BUTTON }
+    ?: throw IllegalArgumentException("Line ${commands[start].lineNumber}: missing END_BUTTON in this block")
+
 private class TimingController(
   private val delayMultiplier: Double,
   private val onClamp: (String) -> Unit,
@@ -761,14 +787,19 @@ class DuckyScriptExecutor(
   private var callDepth = 0
   private val internalVariables = DuckyScriptVariables(manager::readScriptUsbVariable, manager::scriptKeyStroke)
   private var scriptButtonRegistered = false
+  private var buttonBody: List<DuckyCommand>? = null
   private val evaluator = ExpressionEvaluator { name ->
-    if (name == "\$_BUTTON_PUSH_RECEIVED" && canShowButtonPrompt && !scriptButtonRegistered &&
+    if (name == "\$_BUTTON_PUSH_RECEIVED") registerScriptButton()
+    internalVariables.read(name)
+  }
+
+  private fun registerScriptButton() {
+    if (canShowButtonPrompt && !scriptButtonRegistered &&
       manager.enableScriptButton(executionId, internalVariables)
     ) {
       scriptButtonRegistered = true
       updateScriptButton()
     }
-    internalVariables.read(name)
   }
 
   private fun updateScriptButton(suspended: Boolean = false) {
@@ -776,7 +807,7 @@ class DuckyScriptExecutor(
     emitExec(mapOf(
       "type" to "button_available",
       "executionId" to executionId,
-      "available" to (!suspended && internalVariables.read(DuckyScriptVariables.BUTTON_ENABLED) == 1),
+      "available" to (!suspended && internalVariables.canPressScriptButton()),
     ))
   }
   private val rng = Random.Default
@@ -891,6 +922,11 @@ class DuckyScriptExecutor(
           functions[funcName] = FunctionDef(funcArgs, funcBody)
         }
 
+        CommandType.BUTTON_DEF, CommandType.END_BUTTON -> {
+          result.add(cmd)
+          lastAdded = null
+        }
+
         CommandType.REPEAT -> {
           val last = lastAdded
           if (last != null) {
@@ -913,10 +949,19 @@ class DuckyScriptExecutor(
   private fun executeRange(commands: List<DuckyCommand>, start: Int, endExclusive: Int) {
     var i = start
     while (i < endExclusive) {
-      if (shouldCancel()) throw CancelSignal()
+      throwIfCancelled()
+      runPendingButtonCallback()
 
       val cmd = commands[i]
       when (cmd.type) {
+        CommandType.BUTTON_DEF -> {
+          val end = endButtonIndex(commands, i, endExclusive)
+          buttonBody = commands.subList(i + 1, end)
+          internalVariables.defineButtonCallback()
+          registerScriptButton()
+          i = end + 1
+          continue
+        }
         CommandType.IF -> {
           val endIf = findMatchingEndIf(commands, i, endExclusive)
           executeIfChain(commands, i, endIf)
@@ -927,8 +972,10 @@ class DuckyScriptExecutor(
         CommandType.WHILE -> {
           val endWhile = findMatchingEndWhile(commands, i, endExclusive)
           val condition = normalizeCondition(cmd.args.firstOrNull() ?: "")
-          while (evaluateCondition(condition, cmd.lineNumber)) {
-            if (shouldCancel()) throw CancelSignal()
+          while (true) {
+            throwIfCancelled()
+            runPendingButtonCallback()
+            if (!evaluateCondition(condition, cmd.lineNumber)) break
             executeRange(commands, i + 1, endWhile)
           }
           i = endWhile + 1
@@ -995,6 +1042,22 @@ class DuckyScriptExecutor(
     if (shouldCancel()) throw CancelSignal()
   }
 
+  private fun runPendingButtonCallback() {
+    val body = buttonBody ?: return
+    if (!internalVariables.beginPendingButtonCallback()) return
+    val interruptedLine = currentLine
+    updateScriptButton()
+    try {
+      executeRange(body, 0, body.size)
+    } catch (r: ReturnSignal) {
+      setExitCode(r.value)
+    } finally {
+      internalVariables.finishButtonCallback()
+    }
+    currentLine = interruptedLine
+    updateScriptButton()
+  }
+
   private fun reportWait(message: String, waitMs: Long, promptId: String? = null) {
     emitExec(mapOf(
       "type" to "wait",
@@ -1006,12 +1069,13 @@ class DuckyScriptExecutor(
     ))
   }
 
-  private fun sleepMsCancellable(totalMs: Long, label: String) {
+  private fun sleepMsCancellable(totalMs: Long, label: String, dispatchButton: Boolean = true) {
     if (totalMs <= 0L) return
     if (totalMs >= 1000L) reportWait(label, totalMs)
     val deadline = android.os.SystemClock.elapsedRealtime() + totalMs
     while (true) {
       throwIfCancelled()
+      if (dispatchButton) runPendingButtonCallback()
       val remaining = deadline - android.os.SystemClock.elapsedRealtime()
       if (remaining <= 0L) break
       Thread.sleep(minOf(cancelPollMs, remaining))
@@ -1033,6 +1097,7 @@ class DuckyScriptExecutor(
     val deadline = android.os.SystemClock.elapsedRealtime() + timeout
     while (true) {
       throwIfCancelled()
+      runPendingButtonCallback()
       val remaining = deadline - android.os.SystemClock.elapsedRealtime()
       if (remaining <= 0L) break
       Thread.sleep(minOf(pollMs.coerceAtLeast(50L), remaining))
@@ -1431,7 +1496,7 @@ class DuckyScriptExecutor(
         val prompt = manager.beginButtonPrompt(executionId, waitMs, internalVariables)
         updateScriptButton(suspended = true)
         try {
-          sleepMsCancellable(prompt.cooldownMs, "Button cooldown")
+          sleepMsCancellable(prompt.cooldownMs, "Button cooldown", dispatchButton = false)
           throwIfCancelled()
           reportWait("Waiting for you to press Continue", waitMs, prompt.id)
           val confirmedAtMs: Long
@@ -2047,6 +2112,11 @@ internal class DuckyScriptEstimator(
           functions[funcName] = FunctionDef(funcArgs, funcBody)
         }
 
+        CommandType.BUTTON_DEF, CommandType.END_BUTTON -> {
+          result.add(cmd)
+          lastAdded = null
+        }
+
         CommandType.REPEAT -> {
           val last = lastAdded
           if (last != null) {
@@ -2075,6 +2145,11 @@ internal class DuckyScriptEstimator(
       val cmd = commands[i]
       currentLine = cmd.lineNumber
       when (cmd.type) {
+        CommandType.BUTTON_DEF -> {
+          internalVariables.defineButtonCallback()
+          i = endButtonIndex(commands, i, endExclusive) + 1
+          continue
+        }
         CommandType.IF -> {
           val endIf = findMatchingEndIf(commands, i, endExclusive)
           executeIfChain(commands, i, endIf)

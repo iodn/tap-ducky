@@ -9,6 +9,46 @@ import org.junit.Test
 
 class DuckyScriptVariablesTest {
   @Test
+  fun queuesDefinedCallbacksOnlyForAcceptedOptionalPresses() {
+    val variables = DuckyScriptVariables({ null }, { null })
+    assertEquals(0, variables.read(DuckyScriptVariables.BUTTON_USER_DEFINED))
+    assertThrows(DuckyVariableException::class.java) {
+      variables.write(DuckyScriptVariables.BUTTON_USER_DEFINED, 1)
+    }
+    variables.defineButtonCallback()
+    assertEquals(1, variables.read(DuckyScriptVariables.BUTTON_USER_DEFINED))
+    variables.recordButtonPress(0)
+    assertFalse(variables.beginPendingButtonCallback())
+    assertTrue(variables.tryRecordButtonPress(1000))
+    assertTrue(variables.beginPendingButtonCallback())
+    assertFalse(variables.tryRecordButtonPress(2000))
+    variables.finishButtonCallback()
+    assertFalse(variables.beginPendingButtonCallback())
+    assertTrue(variables.tryRecordButtonPress(2000))
+    variables.write(DuckyScriptVariables.BUTTON_USER_DEFINED, 0)
+    assertFalse(variables.beginPendingButtonCallback())
+    assertEquals(0, variables.read(DuckyScriptVariables.BUTTON_USER_DEFINED))
+  }
+
+  @Test
+  fun estimatesButtonDefinitionsWithoutRunningTheirBodies() {
+    val variables = DuckyScriptVariables({ null }, { null })
+    val estimator = DuckyScriptEstimator(variables, { _, _ -> 0 }, { 0 })
+    val script = """
+      BUTTON_DEF
+        DELAY 500
+      END_BUTTON
+      IF ${'$'}_BUTTON_USER_DEFINED THEN
+        DELAY 20
+      END_IF
+    """.trimIndent()
+    assertEquals(20L, estimator.estimate(script))
+    for (invalid in listOf("BUTTON_DEF\nDELAY 20", "END_BUTTON", "BUTTON_DEF\nBUTTON_DEF\nEND_BUTTON\nEND_BUTTON")) {
+      assertThrows(IllegalArgumentException::class.java) { DuckyScriptParser().parse(invalid) }
+    }
+  }
+
+  @Test
   fun debouncesManualButtonPressesEvenAfterTheScriptClearsTheFlag() {
     val variables = DuckyScriptVariables({ null }, { null })
     assertTrue(variables.tryRecordButtonPress(100))

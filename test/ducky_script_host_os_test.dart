@@ -4,6 +4,21 @@ import 'package:tap_ducky/data/services/ducky_script_validator.dart';
 void main() {
   final validator = DuckyScriptValidator();
 
+  test('recognizes button definitions and checks their delimiters', () {
+    final result = validator.validate(r'''
+BUTTON_DEF
+  DELAY 20
+END_BUTTON
+IF $_BUTTON_USER_DEFINED THEN
+  $_BUTTON_USER_DEFINED = FALSE
+END_IF
+''');
+    expect(result.issues, isEmpty);
+    for (final script in ['BUTTON_DEF', 'END_BUTTON', 'BUTTON_DEF\nBUTTON_DEF\nEND_BUTTON']) {
+      expect(validator.validate(script).hasErrors, isTrue, reason: script);
+    }
+  });
+
   test('accepts constants and variables in default delay expressions', () {
     final result = validator.validate('DEFINE #WAIT 80\nDEFAULT_DELAY #WAIT\nDELAY 20');
     expect(result.issues, isEmpty);

@@ -192,6 +192,8 @@ class DuckyScriptValidator {
     'WAIT_FOR_BUTTON_PRESS',
     'ENABLE_BUTTON',
     'DISABLE_BUTTON',
+    'BUTTON_DEF',
+    'END_BUTTON',
     'SLEEP_UNTIL',
     'SLEEPUNTIL',
     'RANDOM_LOWERCASE_LETTER',
@@ -415,6 +417,7 @@ class DuckyScriptValidator {
   static const _writableHak5Variables = {
     ..._unsignedHak5Variables,
     r'$_BUTTON_ENABLED',
+    r'$_BUTTON_USER_DEFINED',
     r'$_BUTTON_PUSH_RECEIVED',
   };
   static const _variableName = r'\$(?:[A-Za-z0-9_]+|\?)';
@@ -439,7 +442,7 @@ class DuckyScriptValidator {
   static final _integerLiteral = RegExp(r'^[+-]?(?:0x[0-9a-f]+|\d+)$', caseSensitive: false);
   static final _defineDeclaration = RegExp(r'^DEFINE\s+(\S+)\s(.*)$', caseSensitive: false);
   static const _unsupportedHak5Variables = {
-    r'$_BUTTON_USER_DEFINED', r'$_SYSTEM_LEDS_ENABLED', r'$_STORAGE_LEDS_ENABLED',
+    r'$_SYSTEM_LEDS_ENABLED', r'$_STORAGE_LEDS_ENABLED',
     r'$_LED_CONTINUOUS_SHOW_STORAGE_ACTIVITY', r'$_INJECTING_LEDS_ENABLED',
     r'$_EXFIL_LEDS_ENABLED', r'$_LED_SHOW_CAPS', r'$_LED_SHOW_NUM',
     r'$_LED_SHOW_SCROLL', r'$_JITTER_ENABLED', r'$_JITTER_MAX',
@@ -471,6 +474,7 @@ class DuckyScriptValidator {
     bool inStringBlock = false;
     bool inStringLnBlock = false;
     int? extensionStart;
+    int? buttonStart;
     final warnedVariables = <String>{};
     final defines = <String, String>{};
     RegExp? definePattern;
@@ -873,6 +877,26 @@ class DuckyScriptValidator {
           commitCommand(keyCount: 0, perCharDelayMs: 0, charCount: 0);
           break;
 
+        case 'BUTTON_DEF':
+        case 'END_BUTTON':
+          if (parts.length != 1) {
+            issues.add(ValidationIssue(
+              line: lineNum,
+              severity: IssueSeverity.error,
+              message: '$command takes no arguments',
+            ));
+          } else if (command == 'BUTTON_DEF' && buttonStart != null ||
+              command == 'END_BUTTON' && buttonStart == null) {
+            issues.add(ValidationIssue(
+              line: lineNum,
+              severity: IssueSeverity.error,
+              message: command == 'BUTTON_DEF' ? 'Nested BUTTON_DEF' : 'END_BUTTON without BUTTON_DEF',
+            ));
+          } else {
+            buttonStart = command == 'BUTTON_DEF' ? lineNum : null;
+          }
+          break;
+
         case 'DEFINE':
           final declaration = _defineDeclaration.firstMatch(rawLine.trimLeft());
           if (declaration == null || declaration[2]!.trim().isEmpty) {
@@ -1232,6 +1256,13 @@ class DuckyScriptValidator {
         line: extensionStart,
         severity: IssueSeverity.error,
         message: 'EXTENSION is missing END_EXTENSION',
+      ));
+    }
+    if (buttonStart != null) {
+      issues.add(ValidationIssue(
+        line: buttonStart,
+        severity: IssueSeverity.error,
+        message: 'BUTTON_DEF is missing END_BUTTON',
       ));
     }
 
