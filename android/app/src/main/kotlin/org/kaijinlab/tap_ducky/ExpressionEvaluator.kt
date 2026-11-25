@@ -71,7 +71,10 @@ class ExpressionEvaluator(
         var j = i + 1
         while (j < expr.length) {
           val ch = expr[j]
-          if (ch.isLetterOrDigit() || ch == '_') j++ else break
+          if (ch in 'A'..'Z' || ch in 'a'..'z' || ch in '0'..'9' || ch == '_') j++ else break
+        }
+        if (j == i + 1) {
+          throw DuckyExpressionSyntaxException("Expected a variable name after '\$'")
         }
         val name = expr.substring(i, j)
         out.add(Tok(Kind.VAR, name))

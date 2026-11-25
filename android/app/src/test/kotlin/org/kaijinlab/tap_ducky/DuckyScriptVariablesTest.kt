@@ -108,6 +108,7 @@ class DuckyScriptVariablesTest {
     variables.recordButtonPress(0)
     assertFalse(variables.beginPendingButtonCallback())
     assertTrue(variables.tryRecordButtonPress(1000))
+    assertFalse(variables.tryRecordButtonPress(2000))
     assertTrue(variables.beginPendingButtonCallback())
     assertFalse(variables.tryRecordButtonPress(2000))
     variables.finishButtonCallback()
@@ -390,7 +391,7 @@ class DuckyScriptVariablesTest {
     """.trimIndent()
     assertEquals(2030L, estimator.estimate(script))
 
-    for (line in listOf("VAR \$bad-name = 20", "VAR \$pause =", "\$pause =")) {
+    for (line in listOf("VAR \$bad-name = 20", "VAR \$pause =", "\$pause =", "DELAY \$", "DELAY \$délai")) {
       val error = assertThrows(DuckyExpressionSyntaxException::class.java) {
         estimator.estimate("REM sample\n$line")
       }

@@ -53,7 +53,7 @@ internal class DuckyScriptVariables(
   } ?: 0L
 
   @Synchronized fun tryRecordButtonPress(elapsedMs: Long): Boolean {
-    if (!canPressScriptButton() || buttonCooldownRemainingMs(elapsedMs) > 0) return false
+    if (!canPressScriptButton() || buttonCallbackPending || buttonCooldownRemainingMs(elapsedMs) > 0) return false
     recordButtonPress(elapsedMs)
     if (buttonCallbackEnabled) buttonCallbackPending = true
     return true
