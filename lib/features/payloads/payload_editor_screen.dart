@@ -1,6 +1,6 @@
 import 'dart:async';
 
-import 'package:flutter/services.dart' show PlatformException;
+import 'package:flutter/services.dart' show MissingPluginException;
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -12,6 +12,7 @@ import '../../data/models/payload.dart';
 import '../../data/services/ducky_script.dart';
 import '../../data/services/ducky_script_validator.dart';
 import '../../data/services/local_drafts_service.dart';
+import '../../data/storage/prefs_storage.dart';
 import '../../state/controllers/advanced_settings_controller.dart';
 import '../../state/controllers/app_settings_controller.dart';
 import '../../state/controllers/payloads_controller.dart';
@@ -21,6 +22,7 @@ import '../../widgets/configuration_page.dart';
 import '../../widgets/ducky_script_text.dart';
 import '../settings/widgets/local_draft_settings.dart';
 import 'local_draft_dialog.dart';
+import 'script_line_gutter.dart';
 
 const _uuid = Uuid();
 
@@ -35,8 +37,9 @@ class PayloadEditorScreen extends ConsumerStatefulWidget {
 }
 
 class _PayloadEditorScreenState extends ConsumerState<PayloadEditorScreen>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   late final TabController _tabs;
+  final _scriptField = GlobalKey();
   final _scriptFocus = FocusNode();
   final _scriptScroll = ScrollController();
   final _nameFocus = FocusNode();
@@ -53,6 +56,10 @@ class _PayloadEditorScreenState extends ConsumerState<PayloadEditorScreen>
   bool _isBuiltin = false;
   bool _editReady = false;
   bool _hasChanges = false;
+  PrefsStorage? _draftStorage;
+  Future<void> _draftWrites = Future.value();
+  Timer? _draftDebounce;
+  Object? _pendingDraftUndo;
 
   final _validator = DuckyScriptValidator();
   ValidationResult _validationResult = ValidationResult.empty();
@@ -61,8 +68,14 @@ class _PayloadEditorScreenState extends ConsumerState<PayloadEditorScreen>
   bool _showValidation = false;
   int? _engineEstimateMs;
   ValidationIssue? _engineIssue;
+  String? _nativeValidationScript;
+  Future<ValidationIssue?>? _nativeValidation;
   int _estimateRevision = 0;
   String _observedScript = '';
+  List<int> _scriptLines = const [0];
+
+  String get _draftKey =>
+      'tapducky.editor.draft.${widget.payloadId ?? 'new'}.v1';
 
   double _currentDelayMultiplier() {
     final settings = ref.read(appSettingsControllerProvider).value;
@@ -74,6 +87,7 @@ class _PayloadEditorScreenState extends ConsumerState<PayloadEditorScreen>
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _tabs = TabController(length: 3, vsync: this)..addListener(_changeSection);
     _scriptCtrl.addListener(_onScriptChanged);
     ref.listenManual(
@@ -89,7 +103,9 @@ class _PayloadEditorScreenState extends ConsumerState<PayloadEditorScreen>
       (_, _) => _refreshEstimateForSettings(),
     );
     ref.listenManual(
-      advancedSettingsControllerProvider.select((state) => state.value?.keyboardLayoutBackendId),
+      advancedSettingsControllerProvider.select(
+        (state) => state.value?.keyboardLayoutBackendId,
+      ),
       (_, _) => _refreshEstimateForSettings(),
     );
     if (widget.payloadId != null) {
@@ -98,11 +114,15 @@ class _PayloadEditorScreenState extends ConsumerState<PayloadEditorScreen>
         (_, next) => _loadPayload(next.value),
         fireImmediately: true,
       );
+    } else {
+      unawaited(_restoreDraft());
     }
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _flushDraft();
     _validationDebounce?.cancel();
     _estimateDebounce?.cancel();
     _scriptCtrl.removeListener(_onScriptChanged);
@@ -117,17 +137,120 @@ class _PayloadEditorScreenState extends ConsumerState<PayloadEditorScreen>
     super.dispose();
   }
 
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed) _flushDraft();
+  }
+
+  Map<String, dynamic> _snapshotEditor() => {
+    'name': _nameCtrl.text,
+    'description': _descCtrl.text,
+    'tags': _tagsCtrl.text,
+    'script': _scriptCtrl.text,
+    'parameters': _params.map((parameter) => parameter.toJson()).toList(),
+  };
+
+  void _applySnapshot(Map<String, dynamic> draft) {
+    _nameCtrl.text = draft['name']?.toString() ?? '';
+    _descCtrl.text = draft['description']?.toString() ?? '';
+    _tagsCtrl.text = draft['tags']?.toString() ?? '';
+    final script = draft['script']?.toString() ?? '';
+    _observedScript = script;
+    _scriptLines = scriptLineOffsets(script);
+    _scriptCtrl.text = script;
+    final parameters = draft['parameters'];
+    _params
+      ..clear()
+      ..addAll(
+        parameters is List
+            ? parameters.whereType<Map>().map(
+                (json) =>
+                    PayloadParameter.fromJson(json.cast<String, dynamic>()),
+              )
+            : const [],
+      );
+    _nameError = null;
+    _scriptError = null;
+  }
+
+  Future<void> _restoreDraft() async {
+    Map<String, dynamic>? draft;
+    try {
+      final storage = await ref.read(prefsStorageProvider.future);
+      if (!mounted) return;
+      _draftStorage = storage;
+      if (!_isBuiltin) draft = storage.getJsonMap(_draftKey);
+    } catch (_) {
+      // The editor can still be used when local storage is unavailable.
+    }
+    if (!mounted) return;
+    if (_hasChanges) {
+      _flushDraft();
+      return;
+    }
+    final snapshot = draft;
+    if (snapshot == null) return;
+    setState(() {
+      _applySnapshot(snapshot);
+      _hasChanges = true;
+    });
+    _validateAndRequestEstimate();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Unsaved draft restored')));
+    });
+  }
+
+  void _recordDraftChange() {
+    _pendingDraftUndo = null;
+    if (!_hasChanges) setState(() => _hasChanges = true);
+    _draftDebounce?.cancel();
+    _draftDebounce = Timer(const Duration(milliseconds: 300), _flushDraft);
+  }
+
+  void _flushDraft() {
+    _draftDebounce?.cancel();
+    if (!_hasChanges) return;
+    unawaited(_writeDraft(_snapshotEditor()));
+  }
+
+  Future<void> _writeDraft(Map<String, dynamic>? draft) {
+    final storage = _draftStorage;
+    if (storage == null) return Future.value();
+    final key = _draftKey;
+    return _draftWrites = _draftWrites.then((_) async {
+      try {
+        if (draft == null) {
+          await storage.remove(key);
+        } else {
+          await storage.setJsonMap(key, draft);
+        }
+      } catch (_) {
+        // Keep saved payloads independent of draft storage.
+      }
+    });
+  }
+
+  Future<void> _clearDraft() {
+    _draftDebounce?.cancel();
+    _hasChanges = false;
+    return _writeDraft(null);
+  }
+
   void _onScriptChanged() {
     if (_scriptCtrl.text == _observedScript) return;
     _observedScript = _scriptCtrl.text;
+    _scriptLines = scriptLineOffsets(_observedScript);
     _estimateRevision++;
     _estimateDebounce?.cancel();
     setState(() {
-      _hasChanges = true;
       _scriptError = null;
       _engineEstimateMs = null;
       _engineIssue = null;
     });
+    _recordDraftChange();
     _validationDebounce?.cancel();
     _validationDebounce = Timer(const Duration(milliseconds: 500), () {
       if (mounted) _validateAndRequestEstimate();
@@ -145,17 +268,57 @@ class _PayloadEditorScreenState extends ConsumerState<PayloadEditorScreen>
     setState(() {
       _engineEstimateMs = null;
       _engineIssue = null;
-      _validationResult = _validator.validate(script, delayMultiplier: _currentDelayMultiplier());
+      _validationResult = _validator.validate(
+        script,
+        delayMultiplier: _currentDelayMultiplier(),
+      );
       _showValidation = script.trim().isNotEmpty;
     });
     _requestEngineEstimate(script);
+    unawaited(_updateNativeValidation(script));
+  }
+
+  Future<ValidationIssue?> _getNativeValidation(String script) {
+    if (DuckyScript.hasPlaceholders(script)) return Future.value();
+    if (_nativeValidationScript == script && _nativeValidation != null) {
+      return _nativeValidation!;
+    }
+    _nativeValidationScript = script;
+    return _nativeValidation = _parseWithAndroid(script);
+  }
+
+  Future<ValidationIssue?> _parseWithAndroid(String script) async {
+    try {
+      return await ref
+          .read(platformGadgetServiceProvider)
+          .validateDuckyScript(script);
+    } on MissingPluginException {
+      return null;
+    }
+  }
+
+  Future<void> _updateNativeValidation(String script) async {
+    if (script.trim().isEmpty || _validationResult.hasErrors) return;
+    final revision = _estimateRevision;
+    try {
+      final issue = await _getNativeValidation(script);
+      if (mounted &&
+          revision == _estimateRevision &&
+          _scriptCtrl.text == script) {
+        setState(() => _engineIssue = issue);
+      }
+    } catch (_) {
+      if (mounted && _nativeValidationScript == script)
+        _nativeValidation = null;
+    }
   }
 
   Future<void> _showLocalDraft() async {
-    final draft = await showConfigurationPage<PayloadDraft>(
+    final application = await showConfigurationPage<DraftApplication>(
       context,
       (_) => LocalDraftDialog(
         service: ref.read(localDraftsServiceProvider),
+        editingExisting: widget.payloadId != null,
         replacing: [
           _nameCtrl,
           _descCtrl,
@@ -164,16 +327,44 @@ class _PayloadEditorScreenState extends ConsumerState<PayloadEditorScreen>
         ].any((controller) => controller.text.isNotEmpty),
       ),
     );
-    if (!mounted || draft == null) return;
+    if (!mounted || application == null) return;
+    final previous = _snapshotEditor();
+    final hadChanges = _hasChanges;
+    final draft = application.draft;
     setState(() {
-      _nameCtrl.text = draft.title;
-      _descCtrl.text = draft.description;
-      _tagsCtrl.text = draft.tags.join(', ');
-      _scriptCtrl.text = draft.script;
-      _nameError = null;
-      _scriptError = null;
-      _hasChanges = true;
+      _applySnapshot({
+        ...previous,
+        if (!application.scriptOnly) ...{
+          'name': draft.title,
+          'description': draft.description,
+          'tags': draft.tags.join(', '),
+        },
+        'script': draft.script,
+      });
     });
+    _recordDraftChange();
+    _validateAndRequestEstimate();
+    final undo = _pendingDraftUndo = Object();
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: const Text('Draft applied'),
+          action: SnackBarAction(
+            label: 'Undo',
+            onPressed: () {
+              if (!mounted || _pendingDraftUndo != undo || _saving) return;
+              setState(() {
+                _applySnapshot(previous);
+                _hasChanges = hadChanges;
+              });
+              _recordDraftChange();
+              if (!hadChanges) unawaited(_clearDraft());
+              _validateAndRequestEstimate();
+            },
+          ),
+        ),
+      );
   }
 
   void _loadPayload(List<Payload>? items) {
@@ -185,6 +376,7 @@ class _PayloadEditorScreenState extends ConsumerState<PayloadEditorScreen>
 
     setState(() {
       _observedScript = found.script;
+      _scriptLines = scriptLineOffsets(found.script);
       _nameCtrl.text = found.name;
       _descCtrl.text = found.description;
       _scriptCtrl.text = found.script;
@@ -199,6 +391,8 @@ class _PayloadEditorScreenState extends ConsumerState<PayloadEditorScreen>
       _editReady = true;
     });
     _requestEngineEstimate(found.script);
+    unawaited(_updateNativeValidation(found.script));
+    unawaited(_restoreDraft());
   }
 
   void _requestEngineEstimate(String script) {
@@ -209,8 +403,14 @@ class _PayloadEditorScreenState extends ConsumerState<PayloadEditorScreen>
         DuckyScript.hasPlaceholders(script))
       return;
     final mul = _currentDelayMultiplier();
-    final layout = ref.read(advancedSettingsControllerProvider).value?.keyboardLayoutBackendId;
+    final layout = ref
+        .read(advancedSettingsControllerProvider)
+        .value
+        ?.keyboardLayoutBackendId;
     _estimateDebounce = Timer(const Duration(milliseconds: 600), () async {
+      if (!mounted || revision != _estimateRevision || _engineIssue != null) {
+        return;
+      }
       final service = ref.read(platformGadgetServiceProvider);
       try {
         final ms = await service.estimateDuckyScriptDurationMs(
@@ -220,19 +420,6 @@ class _PayloadEditorScreenState extends ConsumerState<PayloadEditorScreen>
         );
         if (!mounted || revision != _estimateRevision) return;
         setState(() => _engineEstimateMs = ms);
-      } on PlatformException catch (error) {
-        if (!mounted || revision != _estimateRevision) return;
-        final line = error.details;
-        if (error.code == 'DUCKY_EXPRESSION_SYNTAX' && line is int) {
-          setState(() {
-            _engineEstimateMs = null;
-            _engineIssue = ValidationIssue(
-              line: line,
-              severity: IssueSeverity.warning,
-              message: error.message ?? 'Invalid expression',
-            );
-          });
-        }
       } catch (_) {
         if (!mounted || revision != _estimateRevision) return;
         setState(() => _engineEstimateMs = null);
@@ -267,11 +454,10 @@ class _PayloadEditorScreenState extends ConsumerState<PayloadEditorScreen>
         ),
       );
     }
-
     return PopScope(
-      canPop: !_hasChanges,
+      canPop: !_hasChanges && !_saving,
       onPopInvoked: (didPop) async {
-        if (didPop) return;
+        if (didPop || _saving) return;
         final ok = await showConfirmDialog(
           context,
           title: 'Discard changes?',
@@ -280,7 +466,8 @@ class _PayloadEditorScreenState extends ConsumerState<PayloadEditorScreen>
           dangerous: true,
         );
         if (ok && context.mounted) {
-          Navigator.of(context).pop();
+          await _clearDraft();
+          if (context.mounted) Navigator.of(context).pop();
         }
       },
       child: Scaffold(
@@ -293,6 +480,7 @@ class _PayloadEditorScreenState extends ConsumerState<PayloadEditorScreen>
             if (!isNew)
               PopupMenuButton<String>(
                 tooltip: 'Payload actions',
+                enabled: !_saving,
                 onSelected: (action) async {
                   switch (action) {
                     case 'duplicate':
@@ -332,11 +520,14 @@ class _PayloadEditorScreenState extends ConsumerState<PayloadEditorScreen>
         ),
         body: SafeArea(
           top: false,
-          child: switch (_section) {
-            0 => _scriptSection(context),
-            1 => _detailsSection(),
-            _ => _parametersSection(),
-          },
+          child: AbsorbPointer(
+            absorbing: _saving,
+            child: switch (_section) {
+              0 => _scriptSection(context),
+              1 => _detailsSection(),
+              _ => _parametersSection(),
+            },
+          ),
         ),
       ),
     );
@@ -358,7 +549,11 @@ class _PayloadEditorScreenState extends ConsumerState<PayloadEditorScreen>
   Widget _scriptSection(BuildContext context) {
     final model = ref.watch(localModelStatusProvider).value;
     final theme = Theme.of(context);
-    final issueCount = _validationResult.issues.length + (_engineIssue == null ? 0 : 1);
+    final issueCount =
+        _validationResult.issues.length + (_engineIssue == null ? 0 : 1);
+    final textScaler = MediaQuery.textScalerOf(context);
+    final gutterWidth =
+        14 + textScaler.scale(12) * _scriptLines.length.toString().length;
     return LayoutBuilder(
       builder: (context, constraints) => Padding(
         padding: EdgeInsets.fromLTRB(
@@ -413,7 +608,9 @@ class _PayloadEditorScreenState extends ConsumerState<PayloadEditorScreen>
                           issueCount == 0
                               ? Icons.fact_check_outlined
                               : Icons.report_problem_outlined,
-                          color: _validationResult.hasErrors
+                          color:
+                              _validationResult.hasErrors ||
+                                  _engineIssue != null
                               ? theme.colorScheme.error
                               : null,
                         ),
@@ -423,36 +620,56 @@ class _PayloadEditorScreenState extends ConsumerState<PayloadEditorScreen>
               ),
             const SizedBox(height: 4),
             Expanded(
-              child: TextFormField(
-                key: const ValueKey('payload-script-editor'),
-                controller: _scriptCtrl,
-                focusNode: _scriptFocus,
-                scrollController: _scriptScroll,
-                expands: true,
-                maxLines: null,
-                textAlignVertical: TextAlignVertical.top,
-                keyboardType: TextInputType.multiline,
-                textInputAction: TextInputAction.newline,
-                autocorrect: false,
-                enableSuggestions: false,
-                smartDashesType: SmartDashesType.disabled,
-                smartQuotesType: SmartQuotesType.disabled,
-                readOnly: _isBuiltin,
-                style: const TextStyle(
-                  fontFamily: 'monospace',
-                  fontSize: 14,
-                  height: 1.45,
+              child: CustomPaint(
+                key: _scriptField,
+                foregroundPainter: ScriptLineGutter(
+                  editor: _scriptField,
+                  offsets: _scriptLines,
+                  style: TextStyle(
+                    fontFamily: 'monospace',
+                    fontSize: 12,
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                  textScaler: textScaler,
+                  scrollController: _scriptScroll,
                 ),
-                decoration: InputDecoration(
-                  labelText: 'DuckyScript',
-                  alignLabelWithHint: true,
-                  hintText:
-                      'REM Write your script here\nSTRING Hello world\nENTER',
-                  errorText: _scriptError,
-                  border: const OutlineInputBorder(),
-                  filled: true,
-                  fillColor: theme.colorScheme.surfaceContainerLow,
-                  contentPadding: const EdgeInsets.all(12),
+                child: TextFormField(
+                  key: const ValueKey('payload-script-editor'),
+                  controller: _scriptCtrl,
+                  focusNode: _scriptFocus,
+                  scrollController: _scriptScroll,
+                  expands: true,
+                  maxLines: null,
+                  textDirection: TextDirection.ltr,
+                  textAlignVertical: TextAlignVertical.top,
+                  keyboardType: TextInputType.multiline,
+                  textInputAction: TextInputAction.newline,
+                  autocorrect: false,
+                  enableSuggestions: false,
+                  smartDashesType: SmartDashesType.disabled,
+                  smartQuotesType: SmartQuotesType.disabled,
+                  readOnly: _isBuiltin,
+                  style: const TextStyle(
+                    fontFamily: 'monospace',
+                    fontSize: 14,
+                    height: 1.45,
+                  ),
+                  decoration: InputDecoration(
+                    labelText: 'DuckyScript',
+                    alignLabelWithHint: true,
+                    hintText:
+                        'REM Write your script here\nSTRING Hello world\nENTER',
+                    errorText: _scriptError,
+                    border: const OutlineInputBorder(),
+                    filled: true,
+                    fillColor: theme.colorScheme.surfaceContainerLow,
+                    contentPadding: EdgeInsets.fromLTRB(
+                      gutterWidth,
+                      12,
+                      12,
+                      12,
+                    ),
+                  ),
                 ),
               ),
             ),
@@ -486,10 +703,10 @@ class _PayloadEditorScreenState extends ConsumerState<PayloadEditorScreen>
           focusNode: _nameFocus,
           readOnly: _isBuiltin,
           textInputAction: TextInputAction.next,
-          onChanged: (_) => setState(() {
-            _nameError = null;
-            _hasChanges = true;
-          }),
+          onChanged: (_) {
+            if (_nameError != null) setState(() => _nameError = null);
+            _recordDraftChange();
+          },
           decoration: InputDecoration(
             labelText: 'Name',
             errorText: _nameError,
@@ -500,7 +717,7 @@ class _PayloadEditorScreenState extends ConsumerState<PayloadEditorScreen>
         TextFormField(
           controller: _descCtrl,
           readOnly: _isBuiltin,
-          onChanged: (_) => _hasChanges = true,
+          onChanged: (_) => _recordDraftChange(),
           minLines: 2,
           maxLines: 4,
           decoration: const InputDecoration(
@@ -512,7 +729,7 @@ class _PayloadEditorScreenState extends ConsumerState<PayloadEditorScreen>
         TextFormField(
           controller: _tagsCtrl,
           readOnly: _isBuiltin,
-          onChanged: (_) => _hasChanges = true,
+          onChanged: (_) => _recordDraftChange(),
           decoration: const InputDecoration(
             labelText: 'Tags',
             hintText: 'Separate tags with commas',
@@ -554,8 +771,11 @@ class _PayloadEditorScreenState extends ConsumerState<PayloadEditorScreen>
     );
   }
 
-  void _showValidationDialog(BuildContext context) {
-    if (_validationDebounce?.isActive == true) return;
+  Future<void> _showValidationDialog(BuildContext context) async {
+    if (_validationDebounce?.isActive == true) {
+      _validationDebounce?.cancel();
+      _validateAndRequestEstimate();
+    }
     final issue = _engineIssue;
     final result = issue == null
         ? _validationResult
@@ -564,17 +784,41 @@ class _PayloadEditorScreenState extends ConsumerState<PayloadEditorScreen>
             commandCount: _validationResult.commandCount,
             estimatedDurationMs: _validationResult.estimatedDurationMs,
             totalDelayMs: _validationResult.totalDelayMs,
-            hasErrors: _validationResult.hasErrors,
-            hasWarnings: true,
+            hasErrors: true,
+            hasWarnings: _validationResult.hasWarnings,
           );
-    showConfigurationPage<void>(
+    final line = await showConfigurationPage<int>(
       context,
       (_) => _ValidationDialog(
         result: result,
         engineEstimateMs: _engineEstimateMs,
         formatDuration: _formatDuration,
+        hasParameters: DuckyScript.hasPlaceholders(_scriptCtrl.text),
       ),
     );
+    if (mounted && line != null) _jumpToLine(line);
+  }
+
+  void _jumpToLine(int line) {
+    if (line < 1 || line > _scriptLines.length) return;
+    final script = _scriptCtrl.text;
+    final start = _scriptLines[line - 1];
+    var end = line < _scriptLines.length ? _scriptLines[line] : script.length;
+    while (end > start && [0x0A, 0x0D].contains(script.codeUnitAt(end - 1))) {
+      end--;
+    }
+    _tabs.animateTo(0);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _scriptCtrl.text != script) return;
+      _scriptFocus.requestFocus();
+      _scriptCtrl.selection = TextSelection(
+        baseOffset: start,
+        extentOffset: end,
+      );
+      findScriptEditable(
+        _scriptField.currentContext,
+      )?.bringIntoView(TextPosition(offset: start));
+    });
   }
 
   Future<void> _changeParameter([int? index]) async {
@@ -594,15 +838,15 @@ class _PayloadEditorScreenState extends ConsumerState<PayloadEditorScreen>
       } else {
         _params[index] = parameter;
       }
-      _hasChanges = true;
     });
+    _recordDraftChange();
   }
 
   void _deleteParameter(int index) {
     setState(() {
       _params.removeAt(index);
-      _hasChanges = true;
     });
+    _recordDraftChange();
   }
 
   Future<void> _save() async {
@@ -626,7 +870,7 @@ class _PayloadEditorScreenState extends ConsumerState<PayloadEditorScreen>
     }
     if (result.hasErrors) {
       _tabs.animateTo(0);
-      _showValidationDialog(context);
+      unawaited(_showValidationDialog(context));
       return;
     }
     if (_nameError != null) {
@@ -650,8 +894,19 @@ class _PayloadEditorScreenState extends ConsumerState<PayloadEditorScreen>
       isBuiltin: _isBuiltin,
     );
 
+    FocusManager.instance.primaryFocus?.unfocus();
     setState(() => _saving = true);
+    var syntaxChecked = false;
     try {
+      final issue = await _getNativeValidation(script);
+      syntaxChecked = true;
+      if (!mounted) return;
+      if (issue != null) {
+        setState(() => _engineIssue = issue);
+        _tabs.animateTo(0);
+        unawaited(_showValidationDialog(context));
+        return;
+      }
       if (widget.payloadId == null) {
         await ref.read(payloadsControllerProvider.notifier).create(payload);
       } else {
@@ -659,6 +914,7 @@ class _PayloadEditorScreenState extends ConsumerState<PayloadEditorScreen>
             .read(payloadsControllerProvider.notifier)
             .updatePayload(payload);
       }
+      await _clearDraft();
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -669,9 +925,16 @@ class _PayloadEditorScreenState extends ConsumerState<PayloadEditorScreen>
       );
       context.go(const PayloadsRoute().location);
     } catch (_) {
+      if (!syntaxChecked) _nativeValidation = null;
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Could not save the payload')),
+          SnackBar(
+            content: Text(
+              syntaxChecked
+                  ? 'Could not save the payload'
+                  : 'Could not check script syntax. Try again.',
+            ),
+          ),
         );
       }
     } finally {
@@ -692,6 +955,7 @@ class _PayloadEditorScreenState extends ConsumerState<PayloadEditorScreen>
     await ref
         .read(payloadsControllerProvider.notifier)
         .delete(widget.payloadId!);
+    await _clearDraft();
 
     if (mounted) {
       context.go(const PayloadsRoute().location);
@@ -862,11 +1126,13 @@ class _ValidationDialog extends StatelessWidget {
     required this.result,
     required this.engineEstimateMs,
     required this.formatDuration,
+    required this.hasParameters,
   });
 
   final ValidationResult result;
   final int? engineEstimateMs;
   final String Function(int) formatDuration;
+  final bool hasParameters;
 
   @override
   Widget build(BuildContext context) {
@@ -900,6 +1166,10 @@ class _ValidationDialog extends StatelessWidget {
                       Text(estimate),
                       const Text('Excludes host and scheduled waits.'),
                     ],
+                    if (hasParameters)
+                      const Text(
+                        'Android checks syntax when parameter values are supplied.',
+                      ),
                     Text(
                       'Total delays: ${(result.totalDelayMs / 1000).toStringAsFixed(1)}s',
                     ),
@@ -947,6 +1217,8 @@ class _IssueListTile extends StatelessWidget {
     }
 
     return ListTile(
+      onTap: issue.line > 0 ? () => Navigator.pop(context, issue.line) : null,
+      trailing: issue.line > 0 ? const Icon(Icons.chevron_right) : null,
       dense: true,
       leading: Icon(icon, size: 20, color: color),
       title: Text(

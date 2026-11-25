@@ -1,5 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../data/models/host_os.dart';
+import '../../data/models/usb_restore_phase.dart';
 import '../../data/services/platform_gadget_service.dart';
 import '../providers.dart';
 import 'advanced_settings_controller.dart';
@@ -22,6 +23,7 @@ class HidStatus {
     this.gadgetBound = false,
     this.prepared = false,
     this.usbRestoring = false,
+    this.usbRestorePhase = UsbRestorePhase.idle,
     this.pcConnected = false,
     this.inferredHostOs = HostOs.unknown,
     this.hostOsDetectionAvailable = false,
@@ -44,6 +46,7 @@ class HidStatus {
   final bool gadgetBound;
   final bool prepared;
   final bool usbRestoring;
+  final UsbRestorePhase usbRestorePhase;
   final bool pcConnected;
   final HostOs inferredHostOs;
   final bool hostOsDetectionAvailable;
@@ -73,6 +76,7 @@ class HidStatus {
     bool? gadgetBound,
     bool? prepared,
     bool? usbRestoring,
+    UsbRestorePhase? usbRestorePhase,
     bool? pcConnected,
     HostOs? inferredHostOs,
     bool? hostOsDetectionAvailable,
@@ -95,6 +99,7 @@ class HidStatus {
       gadgetBound: gadgetBound ?? this.gadgetBound,
       prepared: prepared ?? this.prepared,
       usbRestoring: usbRestoring ?? this.usbRestoring,
+      usbRestorePhase: usbRestorePhase ?? this.usbRestorePhase,
       pcConnected: pcConnected ?? this.pcConnected,
       inferredHostOs: inferredHostOs ?? this.inferredHostOs,
       hostOsDetectionAvailable:
@@ -128,6 +133,10 @@ class HidStatus {
       gadgetBound: gs.gadgetBound,
       prepared: gs.prepared,
       usbRestoring: gs.state == 'RESTORING',
+      usbRestorePhase: UsbRestorePhase.fromStatus(
+        gs.usbRestorePhase,
+        state: gs.state,
+      ),
     );
   }
 }

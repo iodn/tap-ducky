@@ -5,15 +5,19 @@ import '../../data/services/local_drafts_service.dart';
 import '../../widgets/ducky_script_text.dart';
 import '../../widgets/configuration_page.dart';
 
+typedef DraftApplication = ({PayloadDraft draft, bool scriptOnly});
+
 class LocalDraftDialog extends StatefulWidget {
   const LocalDraftDialog({
     super.key,
     required this.service,
     required this.replacing,
+    required this.editingExisting,
   });
 
   final LocalDraftsService service;
   final bool replacing;
+  final bool editingExisting;
 
   @override
   State<LocalDraftDialog> createState() => _LocalDraftDialogState();
@@ -24,6 +28,7 @@ class _LocalDraftDialogState extends State<LocalDraftDialog> {
   PayloadDraft? _draft;
   String? _error;
   bool _generating = false;
+  late bool _scriptOnly = widget.editingExisting;
 
   @override
   void dispose() {
@@ -72,7 +77,10 @@ class _LocalDraftDialogState extends State<LocalDraftDialog> {
       actionLabel: draft == null ? 'Generate' : 'Use draft',
       onAction: draft == null
           ? (_generating ? null : _generate)
-          : () => Navigator.pop(context, draft),
+          : () => Navigator.pop<DraftApplication>(context, (
+              draft: draft,
+              scriptOnly: _scriptOnly,
+            )),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
@@ -102,6 +110,18 @@ class _LocalDraftDialogState extends State<LocalDraftDialog> {
               icon: const Icon(Icons.edit_outlined),
               label: const Text('Edit request'),
             ),
+            if (widget.editingExisting || widget.replacing)
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Replace script only'),
+                subtitle: Text(
+                  _scriptOnly
+                      ? 'Keep the current name, description, and tags.'
+                      : 'Use the draft’s name, description, and tags too.',
+                ),
+                value: _scriptOnly,
+                onChanged: (value) => setState(() => _scriptOnly = value),
+              ),
             Text(draft.title, style: Theme.of(context).textTheme.titleMedium),
             const SizedBox(height: 6),
             Text(draft.description),
@@ -111,12 +131,6 @@ class _LocalDraftDialogState extends State<LocalDraftDialog> {
             ],
             const SizedBox(height: 12),
             DuckyScriptText(draft.script, selectable: true),
-            if (widget.replacing) ...[
-              const SizedBox(height: 12),
-              const Text(
-                'Applying this draft replaces the title, description, tags, and script.',
-              ),
-            ],
           ],
         ],
       ),

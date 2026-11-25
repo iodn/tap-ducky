@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/services.dart';
 import '../models/advanced_settings.dart';
 import '../models/app_settings.dart';
+import 'ducky_script_validator.dart';
 
 class KeyboardLayoutInfo {
   const KeyboardLayoutInfo({required this.id, required this.name});
@@ -173,6 +174,7 @@ class GadgetStatus {
     this.inferredHostOs,
     this.hostOsDetectionAvailable = false,
     this.hostOsDetecting = false,
+    this.usbRestorePhase,
   });
 
   final bool rootAvailable;
@@ -195,6 +197,7 @@ class GadgetStatus {
   final String? inferredHostOs;
   final bool hostOsDetectionAvailable;
   final bool hostOsDetecting;
+  final String? usbRestorePhase;
 
   Map<String, dynamic> toMap() => {
     'rootAvailable': rootAvailable,
@@ -204,6 +207,7 @@ class GadgetStatus {
     if (inferredHostOs != null) 'inferredHostOs': inferredHostOs,
     'hostOsDetectionAvailable': hostOsDetectionAvailable,
     'hostOsDetecting': hostOsDetecting,
+    if (usbRestorePhase != null) 'usbRestorePhase': usbRestorePhase,
     'isActive': isActive,
     'state': state,
     'activeProfileId': activeProfileId,
@@ -261,6 +265,7 @@ class GadgetStatus {
       inferredHostOs: m['inferredHostOs']?.toString(),
       hostOsDetectionAvailable: b('hostOsDetectionAvailable'),
       hostOsDetecting: b('hostOsDetecting'),
+      usbRestorePhase: m['usbRestorePhase']?.toString(),
       isActive: isActive,
       state: state,
       activeProfileId: m['activeProfileId']?.toString(),
@@ -410,8 +415,11 @@ class PlatformGadgetService {
     await _methods.invokeMethod<void>('deactivate');
   }
 
-  Future<void> panicStop() async {
-    await _methods.invokeMethod<void>('panicStop');
+  Future<bool> panicStop({String? executionId}) async {
+    return await _methods.invokeMethod<bool>(
+      'panicStop',
+      {if (executionId != null) 'executionId': executionId},
+    ) ?? false;
   }
 
   Future<void> retryOpenHidWriters() async {
@@ -456,6 +464,19 @@ class PlatformGadgetService {
       'delayMultiplier': delayMultiplier,
       'executionId': executionId,
     });
+  }
+
+  Future<ValidationIssue?> validateDuckyScript(String script) async {
+    final diagnostic = await _methods.invokeMapMethod<String, dynamic>(
+      'validateDuckyScript',
+      {'script': script},
+    );
+    if (diagnostic == null) return null;
+    return ValidationIssue(
+      line: (diagnostic['line'] as num?)?.toInt() ?? 0,
+      severity: IssueSeverity.error,
+      message: diagnostic['message'] as String? ?? 'Invalid script',
+    );
   }
 
   Future<int> estimateDuckyScriptDurationMs({

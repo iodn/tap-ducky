@@ -4,6 +4,7 @@ import 'package:uuid/uuid.dart';
 
 import '../../data/models/log_entry.dart';
 import '../providers.dart';
+import 'run_observation_controller.dart';
 
 final logsControllerProvider = AsyncNotifierProvider<LogsController, List<LogEntry>>(
   LogsController.new,
@@ -44,6 +45,7 @@ class LogsController extends AsyncNotifier<List<LogEntry>> {
   Future<void> clear() async {
     final repo = await ref.read(logRepositoryProvider.future);
     await repo.clear();
+    await ref.read(runObservationProvider.notifier).clearRecordings();
     state = const AsyncData(<LogEntry>[]);
   }
 

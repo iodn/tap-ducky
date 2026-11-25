@@ -2,6 +2,8 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:uuid/uuid.dart';
+import '../../data/models/execution_outcome.dart';
+import '../../data/models/run_recording.dart';
 import '../../data/models/log_entry.dart';
 import '../../data/models/payload.dart';
 import '../../data/services/ducky_script.dart';
@@ -11,6 +13,7 @@ import 'advanced_settings_controller.dart';
 import 'app_settings_controller.dart';
 import 'hid_status_controller.dart';
 import 'logs_controller.dart';
+import 'run_observation_controller.dart';
 
 enum ScriptIndicator { off, red, green }
 
@@ -34,6 +37,8 @@ class ExecutionState {
     this.startedAt,
     this.finishedAt,
     this.success,
+    this.outcome,
+    this.inputReleaseUnconfirmed = false,
     this.tail = const <LogEntry>[],
   });
 
@@ -55,6 +60,8 @@ class ExecutionState {
   final DateTime? startedAt;
   final DateTime? finishedAt;
   final bool? success;
+  final ExecutionOutcome? outcome;
+  final bool inputReleaseUnconfirmed;
   final List<LogEntry> tail;
 
   ExecutionState copyWith({
@@ -77,6 +84,8 @@ class ExecutionState {
     DateTime? startedAt,
     DateTime? finishedAt,
     bool? success,
+    ExecutionOutcome? outcome,
+    bool? inputReleaseUnconfirmed,
     List<LogEntry>? tail,
   }) {
     return ExecutionState(
@@ -98,6 +107,8 @@ class ExecutionState {
       startedAt: startedAt ?? this.startedAt,
       finishedAt: finishedAt ?? this.finishedAt,
       success: success ?? this.success,
+      outcome: outcome ?? this.outcome,
+      inputReleaseUnconfirmed: inputReleaseUnconfirmed ?? this.inputReleaseUnconfirmed,
       tail: tail ?? this.tail,
     );
   }
@@ -126,6 +137,9 @@ class ExecutionController extends Notifier<ExecutionState> {
   String? _waitingButtonPromptId;
   Timer? _panicTimer;
   Timer? _autoPanicTimer;
+  String? _timedOutExecutionId;
+  String? _panicStoppingId;
+  bool _logCurrentRun = false;
 
   int _tailSeq = 0;
   DateTime? _lastStepTailAt;
@@ -186,33 +200,62 @@ class ExecutionController extends Notifier<ExecutionState> {
   }) async {
     if (_activeExecutionId != executionId) return;
     final cancelled = event['cancelled'] == true;
-    final ok = event['type'] == 'done' && event['success'] == true && !cancelled;
+    final runFinished = event['type'] == 'done' && event['success'] == true && !cancelled;
+    final inputReleased = event['inputReleased'];
+    final releaseUnconfirmed = inputReleased == false || (runFinished && inputReleased != true);
+    final outcome = switch ((_timedOutExecutionId == executionId, cancelled, runFinished && !releaseUnconfirmed)) {
+      (true, _, _) => ExecutionOutcome.timedOut,
+      (_, true, _) => ExecutionOutcome.stopped,
+      (_, _, true) => ExecutionOutcome.completed,
+      _ => ExecutionOutcome.failed,
+    };
+    final ok = outcome == ExecutionOutcome.completed;
     final finishedAt = DateTime.now();
     final durationMs = (event['elapsedMs'] as num?)?.toInt();
     final reason = event['message']?.toString().trim() ?? '';
     final line = event['lineNumber'];
     final location = line is int ? ' at line $line' : '';
-    final message = switch ((cancelled, ok, reason.isEmpty)) {
-      (true, _, _) => 'Execution cancelled',
-      (_, true, _) => 'Execution completed',
-      (_, _, true) => 'Execution failed$location',
-      _ => 'Execution failed$location: $reason',
+    final message = switch (outcome) {
+      ExecutionOutcome.timedOut => 'Execution timed out',
+      ExecutionOutcome.stopped => 'Execution stopped',
+      ExecutionOutcome.completed => 'Execution completed',
+      ExecutionOutcome.failed when releaseUnconfirmed && event['type'] == 'done' => 'Script finished',
+      _ => 'Execution failed$location${reason.isEmpty ? '' : ': $reason'}',
     };
-    final level = cancelled ? 'warn' : ok ? 'info' : 'error';
+    final level = ok ? 'info' : outcome == ExecutionOutcome.stopped ? 'warn' : 'error';
+    final status = switch (outcome) {
+      ExecutionOutcome.failed => message,
+      _ => outcome.label,
+    };
+    const releaseWarning = 'Input release could not be confirmed.';
+    final payloadId = payload?.id ?? state.payloadId;
+    final payloadName = payload?.name ?? state.payloadName;
     final meta = {
       'executionId': executionId,
       'startedAt': startedAt.toIso8601String(),
       'finishedAt': finishedAt.toIso8601String(),
       'cancelled': cancelled.toString(),
+      'outcome': outcome.name,
+      if (releaseUnconfirmed) 'inputReleased': 'false'
+      else if (inputReleased == true) 'inputReleased': 'true',
       if (durationMs != null) 'durationMs': durationMs.toString(),
       if (event['error_code'] case final String code) 'error_code': code,
       if (line is int) 'lineNumber': line.toString(),
       if (event['completed'] case final int steps) 'completedSteps': steps.toString(),
     };
+    final observation = ref.read(runObservationProvider.notifier);
+    final recording = observation.isRecording(executionId);
+    final recorded = observation.finish(
+      executionId,
+      RunEventKind.forOutcome(outcome),
+      releaseUnconfirmed: releaseUnconfirmed,
+    ).then((_) => recording, onError: (Object _, StackTrace _) => false);
 
     final subscription = _execSub;
     _execSub = null;
     _activeExecutionId = null;
+    _timedOutExecutionId = null;
+    _panicStoppingId = null;
     _timeoutTimer?.cancel();
     _timeoutTimer = null;
     _waitingButtonPromptId = null;
@@ -225,34 +268,56 @@ class ExecutionController extends Notifier<ExecutionState> {
       isRunning: false,
       systemIndicatorStep: state.systemIndicatorStep + 1,
       progress: ok ? 1.0 : state.progress,
-      status: cancelled ? 'Cancelled' : ok ? 'Completed' : message,
+      status: releaseUnconfirmed ? '$status. $releaseWarning' : status,
       finishedAt: finishedAt,
       success: ok,
+      outcome: outcome,
+      inputReleaseUnconfirmed: releaseUnconfirmed,
       stopRequested: false,
       panicAvailable: false,
       clearButtonPrompt: true,
+      scriptButtonAvailable: false,
     );
-    final detail = durationMs == null ? message : '$message ($durationMs ms on device)';
+    final resultMessage = releaseUnconfirmed ? '$message. $releaseWarning' : message;
+    final detail = durationMs == null ? resultMessage : '$resultMessage ($durationMs ms on device)';
     _pushTail(_mkTail(
       executionId: executionId,
       level: level,
       message: detail,
       success: ok,
-      payloadId: payload?.id,
-      payloadName: payload?.name,
+      payloadId: payloadId,
+      payloadName: payloadName,
       meta: meta,
     ));
     await subscription?.cancel();
-    if (enableLogging) {
+    final recordingSaved = await recorded;
+    if (recording && !recordingSaved) {
+      if (ref.mounted && state.executionId == executionId && !state.isRunning) {
+        _pushTail(_mkTail(
+          executionId: executionId,
+          level: 'warn',
+          message: 'Could not save the run recording.',
+          success: false,
+        ));
+      }
+    }
+    if (enableLogging || recordingSaved) {
+      final savedMeta = enableLogging ? meta : {
+        'executionId': executionId,
+        'startedAt': startedAt.toIso8601String(),
+        'finishedAt': finishedAt.toIso8601String(),
+        'outcome': outcome.name,
+        if (releaseUnconfirmed) 'inputReleased': 'false',
+      };
       await _emitAndPersist(LogEntry(
         id: '$executionId-end',
         timestamp: finishedAt,
         level: level,
-        message: message,
+        message: enableLogging ? resultMessage : outcome.label,
         success: ok,
-        payloadId: payload?.id,
-        payloadName: payload?.name,
-        meta: meta,
+        payloadId: enableLogging ? payloadId : null,
+        payloadName: enableLogging ? payloadName : 'Recorded run',
+        meta: {...savedMeta, if (recordingSaved) 'hasRecording': 'true'},
       ));
     }
   }
@@ -400,6 +465,7 @@ class ExecutionController extends Notifier<ExecutionState> {
       if (!state.isRunning || state.stopRequested) return;
 
       final timedOutAt = DateTime.now();
+      _timedOutExecutionId = executionId;
       unawaited(_requestStop('Timed out. Stopping…'));
 
       _pushTail(_mkTail(
@@ -554,6 +620,8 @@ class ExecutionController extends Notifier<ExecutionState> {
 
     final executionId = _uuid.v4();
     _activeExecutionId = executionId;
+    ref.read(runObservationProvider.notifier).start(executionId);
+    _logCurrentRun = enableLogging;
 
     await _execSub?.cancel();
     _execSub = null;
@@ -580,9 +648,14 @@ class ExecutionController extends Notifier<ExecutionState> {
 
     _execSub = service.execStream.listen((evt) async {
       final id = evt['executionId']?.toString();
-      if (id != executionId) return;
+      if (id != executionId || _activeExecutionId != executionId) return;
+      if (!state.stopRequested) ref.read(runObservationProvider.notifier).observe(executionId, evt);
 
       final type = evt['type']?.toString() ?? '';
+      if (type == 'phase' && !state.stopRequested) {
+        if (state.status != 'Running…') state = state.copyWith(status: 'Running…');
+        return;
+      }
       if (type == 'script_indicator') {
         if (_activeExecutionId == executionId) {
           final indicator = switch (evt['color']) {
@@ -611,6 +684,7 @@ class ExecutionController extends Notifier<ExecutionState> {
         return;
       }
       if (type == 'start') {
+        if (state.stopRequested) return;
         final msg = (evt['message']?.toString() ?? '').trim();
         final m = msg.isNotEmpty ? msg : 'Executing…';
         state = state.copyWith(progress: 0, status: m, systemIndicatorStep: state.systemIndicatorStep + 1);
@@ -619,6 +693,7 @@ class ExecutionController extends Notifier<ExecutionState> {
       }
 
       if (type == 'step') {
+        if (state.stopRequested) return;
         final p = (evt['progress'] as num?)?.toDouble() ?? state.progress;
         final msg = (evt['message']?.toString() ?? '').trim();
         state = state.copyWith(
@@ -695,7 +770,7 @@ class ExecutionController extends Notifier<ExecutionState> {
     }
   }
 
-  Future<void> runPayload(Payload payload, Map<String, String> params) async {
+  Future<void> runPayload(Payload payload, Map<String, String> params, {bool recordTimeline = false}) async {
     if (state.isRunning || _activeExecutionId != null) return;
 
     final settings = ref.read(appSettingsControllerProvider).value ?? AppSettings.defaults();
@@ -737,6 +812,8 @@ class ExecutionController extends Notifier<ExecutionState> {
 
     final executionId = _uuid.v4();
     _activeExecutionId = executionId;
+    ref.read(runObservationProvider.notifier).start(executionId, record: recordTimeline);
+    _logCurrentRun = enableLogging;
 
     try {
       final prefs = await ref.read(prefsStorageProvider.future);
@@ -771,9 +848,14 @@ class ExecutionController extends Notifier<ExecutionState> {
 
     _execSub = service.execStream.listen((evt) async {
       final id = evt['executionId']?.toString();
-      if (id != executionId) return;
+      if (id != executionId || _activeExecutionId != executionId) return;
+      if (!state.stopRequested) ref.read(runObservationProvider.notifier).observe(executionId, evt);
 
       final type = evt['type']?.toString() ?? '';
+      if (type == 'phase' && !state.stopRequested) {
+        if (state.status != 'Running…') state = state.copyWith(status: 'Running…');
+        return;
+      }
       if (type == 'script_indicator') {
         if (_activeExecutionId == executionId) {
           final indicator = switch (evt['color']) {
@@ -802,6 +884,7 @@ class ExecutionController extends Notifier<ExecutionState> {
         return;
       }
       if (type == 'start') {
+        if (state.stopRequested) return;
         final msg = (evt['message']?.toString() ?? '').trim();
         final m = msg.isNotEmpty ? msg : 'Executing…';
         state = state.copyWith(progress: 0, status: m, systemIndicatorStep: state.systemIndicatorStep + 1);
@@ -817,6 +900,7 @@ class ExecutionController extends Notifier<ExecutionState> {
       }
 
       if (type == 'step') {
+        if (state.stopRequested) return;
         final p = (evt['progress'] as num?)?.toDouble() ?? state.progress;
         final msg = (evt['message']?.toString() ?? '').trim();
         state = state.copyWith(
@@ -936,6 +1020,7 @@ class ExecutionController extends Notifier<ExecutionState> {
     final id = _activeExecutionId;
     if (id == null) return;
     final service = ref.read(platformGadgetServiceProvider);
+    ref.read(runObservationProvider.notifier).stopRequested(id);
     state = state.copyWith(
       status: status,
       stopRequested: true,
@@ -948,6 +1033,7 @@ class ExecutionController extends Notifier<ExecutionState> {
       await service.cancelExecution(id);
     } catch (_) {
       if (_activeExecutionId != id || !state.isRunning) return;
+      ref.read(runObservationProvider.notifier).stopFailed(id);
       _pushTail(_mkTail(
         executionId: id,
         level: 'warn',
@@ -960,7 +1046,11 @@ class ExecutionController extends Notifier<ExecutionState> {
   Future<void> panicStop() async {
     if (!state.isRunning) return;
     final service = ref.read(platformGadgetServiceProvider);
-    final execId = _activeExecutionId ?? state.executionId;
+    final execId = _activeExecutionId;
+    final startedAt = state.startedAt;
+    if (execId == null || startedAt == null || _panicStoppingId == execId) return;
+    _panicStoppingId = execId;
+    ref.read(runObservationProvider.notifier).stopEscalated(execId);
 
     state = state.copyWith(
       status: 'Panic stopping…',
@@ -968,44 +1058,27 @@ class ExecutionController extends Notifier<ExecutionState> {
       panicAvailable: false,
     );
 
+    final bool inputReleased;
     try {
-      await service.cancelExecution('*');
-    } catch (_) {}
-    try {
-      await service.panicStop();
-    } catch (_) {}
-
-    final finishedAt = DateTime.now();
-    state = state.copyWith(
-      isRunning: false,
-      progress: 1.0,
-      status: 'Stopped (panic)',
-      finishedAt: finishedAt,
-      success: false,
-      stopRequested: false,
-      panicAvailable: false,
+      inputReleased = await service.panicStop(executionId: execId);
+    } catch (_) {
+      if (_activeExecutionId != execId) return;
+      _panicStoppingId = null;
+      state = state.copyWith(
+        status: 'Stop could not be confirmed. Try Panic Stop again.',
+        panicAvailable: true,
+      );
+      try {
+        await service.cancelExecution(execId);
+      } catch (_) {}
+      return;
+    }
+    await _finishFromNative(
+      execId,
+      {'type': 'done', 'cancelled': true, 'inputReleased': inputReleased},
+      startedAt,
+      _logCurrentRun,
     );
-
-    _pushTail(_mkTail(
-      executionId: execId,
-      level: 'warn',
-      message: 'Execution panic-stopped',
-      success: false,
-      payloadId: state.payloadId,
-      payloadName: state.payloadName,
-    ));
-
-    await _execSub?.cancel();
-    _execSub = null;
-    _activeExecutionId = null;
-
-    _timeoutTimer?.cancel();
-    _timeoutTimer = null;
-    _waitingButtonPromptId = null;
-    _panicTimer?.cancel();
-    _panicTimer = null;
-    _autoPanicTimer?.cancel();
-    _autoPanicTimer = null;
   }
 
   Future<void> _emitAndPersist(LogEntry entry) async {

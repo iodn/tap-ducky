@@ -49,6 +49,7 @@ class GadgetManager(
   private val executionLock = Any()
   private var activeExecutionId: String? = null
   private var cancelledExecutionId: String? = null
+  private var pendingCancelledExecutionId: String? = null
   private var buttonPrompt: DuckyButtonPrompt? = null
   private var scriptButton: DuckyScriptVariables? = null
   private var activeKeyboardMarker: File? = null
@@ -66,6 +67,8 @@ class GadgetManager(
     val errorCode: String,
     message: String
   ) : RuntimeException(message)
+
+  enum class UsbRestorePhase { RESTORING, WAITING_FOR_UNPLUG, VERIFYING, VERIFIED, FINISHED, FAILED }
 
   data class Status(
     val rootAvailable: Boolean,
@@ -90,6 +93,7 @@ class GadgetManager(
     val scriptVid: Int? = null,
     val scriptPid: Int? = null,
     val scriptAttackMode: Int? = null,
+    val usbRestorePhase: UsbRestorePhase? = null,
   ) {
     val isActive: Boolean get() = desiredArmed
 
@@ -120,6 +124,7 @@ class GadgetManager(
       "hostOsDetecting" to hostOsDetecting,
       "udcState" to udcState,
       "hostConfigurationRequestCount" to hostConfigurationRequestCount,
+      "usbRestorePhase" to usbRestorePhase?.name,
     )
   }
 
@@ -236,13 +241,16 @@ class GadgetManager(
   private fun requestExecutionCancellation(executionId: String? = null) {
     synchronized(executionLock) {
       val active = activeExecutionId
-      if (active == null || executionId == null || executionId == active) {
-        cancelledExecutionId = executionId ?: active
-        buttonPrompt?.cancel()
-        activeKeyboardMarker?.let { marker ->
-          if (!marker.delete() && marker.exists()) {
-            log.logError("kbd", "Could not cancel the active keyboard batch")
-          }
+      if (executionId != null && executionId != active) {
+        pendingCancelledExecutionId = executionId
+        return
+      }
+      if (active == null) return
+      cancelledExecutionId = active
+      buttonPrompt?.cancel()
+      activeKeyboardMarker?.let { marker ->
+        if (!marker.delete() && marker.exists()) {
+          log.logError("kbd", "Could not cancel the active keyboard batch")
         }
       }
     }
@@ -312,7 +320,8 @@ class GadgetManager(
       synchronized(executionLock) { cancelPendingButtonPrompt() }
       log.log("udc", "TapDucky no longer configured (state=${udcState ?: "unknown"})")
     }
-    if (probe == null || udcState == "not attached") {
+    // A failed probe does not establish whether the host still sees held input.
+    if (udcState == "not attached") {
       keyboardMayBeHeld = false
       mouseButtonsMayBeHeld = false
     }
@@ -350,6 +359,11 @@ class GadgetManager(
       desiredArmed = armed,
       gadgetBound = probe != null,
       prepared = probe != null,
+      usbRestorePhase = when {
+        armed -> null
+        prefs.pendingSharedGadget -> current.usbRestorePhase ?: UsbRestorePhase.RESTORING
+        else -> current.usbRestorePhase
+      },
     )
   }
 
@@ -478,6 +492,7 @@ class GadgetManager(
     val profile = parseProfile(profileMap)
     desiredProfile = profile
     prefs.armed = true
+    statusRef.updateAndGet { it.copy(usbRestorePhase = null) }
     prefs.desiredRole = profile.roleType
     prepareAttempted = false
 
@@ -666,6 +681,7 @@ class GadgetManager(
       hostOsDetecting = false,
       state = if (restoring) "RESTORING" else "IDLE",
       message = if (restoring) "Restoring the original USB configuration…" else null,
+      usbRestorePhase = if (restoring) UsbRestorePhase.RESTORING else current.usbRestorePhase,
     )
     statusRef.set(next)
     emit(next)
@@ -692,42 +708,72 @@ class GadgetManager(
     val dir = prefs.pendingGadgetDir?.takeIf { prefs.pendingSharedGadget } ?: return
     if (prefs.armed) return
     statusRef.updateAndGet(Status::withoutScriptUsbInfo)
+    updateUsbRestorePhase(UsbRestorePhase.RESTORING, "Restoring the original USB configuration…")
     restoreAttempted = true
     restoreDeferred = false
     val udc = prefs.sharedController ?: readActiveUdcName() ?: readAnyUdcName()
+    val layout = prefs.originalStockLayout
     val result = udc?.let {
       val original = prefs.originalStockUdc ?: it
       val restored = changeStockUsb(it, Configfs.buildRestoreStockScript(dir, original, usbDataMarker.path))
-      val layout = prefs.originalStockLayout
       if (restored.ok && layout != null) {
+        updateUsbRestorePhase(UsbRestorePhase.VERIFYING, "Verifying original USB settings…")
         changeStockUsb(udc, Configfs.buildVerifyStockLayoutScript(dir, layout, usbDataMarker.path))
       } else {
         restored
       }
     }
     if (result?.ok == true) {
+      // The restored stock configuration has retired TapDucky's HID interfaces.
+      keyboardMayBeHeld = false
+      mouseButtonsMayBeHeld = false
       prefs.clearSessionArtifacts()
       stopForeground()
+      updateUsbRestorePhase(
+        if (layout != null) UsbRestorePhase.VERIFIED else UsbRestorePhase.FINISHED,
+        null,
+      )
       log.log("usb", "Restored the original stock USB configuration")
     } else {
       restoreDeferred = result == null || result.exitCode == Configfs.HOST_ATTACHED_REFUSED
-      val detail = if (restoreDeferred) {
-        "USB restoration will finish after you unplug the cable."
-      } else {
-        "USB restoration incomplete (exit=${result?.exitCode}). ${result?.stderr?.trim().orEmpty()}"
+      val waitingForUnplug = result?.exitCode == Configfs.HOST_ATTACHED_REFUSED
+      val detail = when {
+        waitingForUnplug -> "USB restoration will finish after you unplug the cable."
+        result == null -> "Android could not find the USB controller to restore."
+        else -> "USB restoration incomplete (exit=${result.exitCode}). ${result.stderr.trim()}"
       }
-      setState("RESTORING", null, detail)
+      updateUsbRestorePhase(
+        if (waitingForUnplug) UsbRestorePhase.WAITING_FOR_UNPLUG else UsbRestorePhase.FAILED,
+        detail,
+      )
       log.logError("usb", detail)
     }
     refreshAndEmitStatus()
   }
 
-  fun panicStop() {
+  private fun updateUsbRestorePhase(phase: UsbRestorePhase, message: String?) {
+    val next = statusRef.updateAndGet {
+      it.copy(
+        state = if (prefs.pendingSharedGadget) "RESTORING" else "IDLE",
+        usbRestorePhase = phase,
+        activeProfileId = null,
+        message = message,
+      )
+    }
+    emit(next)
+  }
+
+  fun panicStop(executionId: String? = null): Boolean {
     // Emergency brake for reports only. It must never touch the UDC or the
     // stock USB configuration; the session stays armed until the user disarms.
-    requestExecutionCancellation()
-    releaseHeldInputBestEffort()
+    requestExecutionCancellation(executionId)
     log.log("usb", "Panic stop requested")
+    return synchronized(this) {
+      val anotherRunIsActive = executionId != null && synchronized(executionLock) {
+        activeExecutionId?.let { it != executionId } == true
+      }
+      !anotherRunIsActive && releaseHeldInputBestEffort()
+    }
   }
 
   private fun readActiveUdcName(): String? {
@@ -946,7 +992,8 @@ class GadgetManager(
         activeKeyboardMarker = marker
         keyboardMarkerForWorker.set(marker)
         activeExecutionId = id
-        if (cancelledExecutionId != id) cancelledExecutionId = null
+        cancelledExecutionId = id.takeIf { pendingCancelledExecutionId == it }
+        if (cancelledExecutionId != null) pendingCancelledExecutionId = null
         reserved = true
       }
       requireReportsAllowed()
@@ -1279,13 +1326,13 @@ class GadgetManager(
   }
 
   @Synchronized
-  internal fun releaseHeldInputBestEffort() {
-    if (!keyboardMayBeHeld && !mouseButtonsMayBeHeld) return
+  internal fun releaseHeldInputBestEffort(): Boolean {
+    if (!keyboardMayBeHeld && !mouseButtonsMayBeHeld) return true
     try {
-      val dir = prefs.activeGadgetDir ?: return
-      val probe = probeSavedSession(dir) as? SessionProbe.Bound ?: return
-      if (probe.udcState != "configured" || !probe.devicesReady) return
-      val udc = readActiveUdcName() ?: return
+      val dir = prefs.activeGadgetDir ?: return false
+      val probe = probeSavedSession(dir) as? SessionProbe.Bound ?: return false
+      if (probe.udcState != "configured" || !probe.devicesReady) return false
+      val udc = readActiveUdcName() ?: return false
       if (keyboardMayBeHeld) {
         keyboardMayBeHeld = !sendReleaseReport(udc, probe.keyboard, keyboardReport(0, emptyList()))
       }
@@ -1295,13 +1342,15 @@ class GadgetManager(
       if (keyboardMayBeHeld || mouseButtonsMayBeHeld) {
         log.logError("hid", "Could not send all release reports")
       }
+      return !keyboardMayBeHeld && !mouseButtonsMayBeHeld
     } catch (t: Exception) {
       log.logError("hid", "Could not release held input: ${t.message}")
+      return false
     }
   }
 
   private fun sendReleaseReport(udc: String, path: String?, bytes: ByteArray): Boolean {
-    if (path == null) return true
+    if (path == null) return false
     val quotedPath = shQuote(path)
     return root.exec(
       "[ \"\$(cat /sys/class/udc/$udc/state)\" = configured ] && [ -c $quotedPath ] && " +

@@ -4,11 +4,15 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:tap_ducky/data/models/app_settings.dart';
+import 'package:tap_ducky/data/models/execution_outcome.dart';
 import 'package:tap_ducky/data/models/payload.dart';
+import 'package:tap_ducky/data/models/run_recording.dart';
 import 'package:tap_ducky/data/services/platform_gadget_service.dart';
 import 'package:tap_ducky/state/controllers/app_settings_controller.dart';
 import 'package:tap_ducky/state/controllers/execution_controller.dart';
 import 'package:tap_ducky/state/controllers/hid_status_controller.dart';
+import 'package:tap_ducky/state/controllers/logs_controller.dart';
+import 'package:tap_ducky/state/controllers/run_observation_controller.dart';
 import 'package:tap_ducky/state/providers.dart';
 
 class _TestSettings extends AppSettingsController {
@@ -37,6 +41,9 @@ class _SilentGadget extends PlatformGadgetService {
   Stream<Map<String, dynamic>> get execStream =>
       events?.stream ?? const Stream.empty();
 
+  @override
+  Stream<Map<String, dynamic>> get logsStream => const Stream.empty();
+
   String? startedId;
   final startedScripts = <String>[];
   final cancelledIds = <String>[];
@@ -46,6 +53,9 @@ class _SilentGadget extends PlatformGadgetService {
   Completer<void>? layoutStarted;
   Completer<void>? layoutPending;
   int panicCount = 0;
+  String? panicExecutionId;
+  bool panicInputReleased = true;
+  bool panicThrows = false;
 
   @override
   Future<void> setKeyboardLayout(int layoutId) async {
@@ -82,8 +92,11 @@ class _SilentGadget extends PlatformGadgetService {
   }
 
   @override
-  Future<void> panicStop() async {
+  Future<bool> panicStop({String? executionId}) async {
     panicCount++;
+    panicExecutionId = executionId;
+    if (panicThrows) throw StateError('Panic stop unavailable');
+    return panicInputReleased;
   }
 }
 
@@ -130,7 +143,9 @@ void main() {
     await start;
 
     expect(service.startedScripts, isEmpty);
-    expect(container.read(executionControllerProvider).status, 'Cancelled');
+    final stopped = container.read(executionControllerProvider);
+    expect(stopped.outcome, ExecutionOutcome.stopped);
+    expect(stopped.status, 'Stopped');
   });
 
   testWidgets('activity indicator updates leave execution progress active', (tester) async {
@@ -187,7 +202,7 @@ void main() {
     await tester.pump();
     await controller.pressScriptButton(id);
     expect(service.buttonPresses, [id]);
-    events.add({'type': 'done', 'executionId': id, 'success': true});
+    events.add({'type': 'done', 'executionId': id, 'success': true, 'inputReleased': true});
     await tester.pump();
   });
 
@@ -284,13 +299,39 @@ void main() {
       'type': 'done',
       'executionId': service.startedId,
       'success': true,
+      'inputReleased': true,
       'elapsedMs': 101,
     });
     await tester.pump();
     final completed = container.read(executionControllerProvider);
     expect(completed.success, isTrue);
+    expect(completed.outcome, ExecutionOutcome.completed);
     expect(completed.progress, 1);
     expect(completed.tail.last.meta?['durationMs'], '101');
+  });
+
+  testWidgets('finishing without confirmed release flags cleanup and withholds completion', (tester) async {
+    final events = StreamController<Map<String, dynamic>>.broadcast();
+    addTearDown(events.close);
+    final service = _SilentGadget(events: events);
+    final container = await _createContainer(service);
+    await container.read(executionControllerProvider.notifier).sendRawCommand('DELAY 20');
+
+    events.add({
+      'type': 'done',
+      'executionId': service.startedId,
+      'success': false,
+      'inputReleased': false,
+      'error_code': 'INPUT_RELEASE_UNCONFIRMED',
+    });
+    await tester.pump();
+    final state = container.read(executionControllerProvider);
+    expect(state.outcome, ExecutionOutcome.failed);
+    expect(state.success, isFalse);
+    expect(state.inputReleaseUnconfirmed, isTrue);
+    expect(state.status, contains('Input release could not be confirmed'));
+    expect(state.tail.last.meta?['inputReleased'], 'false');
+    expect(state.tail.last.meta?['outcome'], 'failed');
   });
 
   testWidgets('watchdog allows the wait announced by Android', (tester) async {
@@ -324,10 +365,11 @@ void main() {
     });
     await tester.pump();
     expect(container.read(executionControllerProvider).isRunning, isFalse);
+    expect(container.read(executionControllerProvider).outcome, ExecutionOutcome.timedOut);
   });
 
   testWidgets('timeout keeps execution busy until stop escalates', (tester) async {
-    final service = _SilentGadget();
+    final service = _SilentGadget()..panicInputReleased = false;
     final container = await _createContainer(service);
     final controller = container.read(executionControllerProvider.notifier);
 
@@ -344,9 +386,32 @@ void main() {
     expect(service.cancelledIds, [id]);
 
     await tester.pump(const Duration(seconds: 6));
-    expect(service.cancelledIds, [id, '*']);
+    expect(service.cancelledIds, [id]);
     expect(service.panicCount, 1);
+    expect(service.panicExecutionId, id);
     expect(container.read(executionControllerProvider).isRunning, isFalse);
+    expect(container.read(executionControllerProvider).outcome, ExecutionOutcome.timedOut);
+    expect(container.read(executionControllerProvider).inputReleaseUnconfirmed, isTrue);
+  });
+
+  test('failed panic transport leaves the same run stoppable', () async {
+    final service = _SilentGadget()..panicThrows = true;
+    final container = await _createContainer(service);
+    final controller = container.read(executionControllerProvider.notifier);
+
+    await controller.sendRawCommand('DELAY 100');
+    final id = service.startedId!;
+    await controller.panicStop();
+    final pending = container.read(executionControllerProvider);
+    expect(pending.isRunning, isTrue);
+    expect(pending.outcome, isNull);
+    expect(pending.panicAvailable, isTrue);
+    expect(service.cancelledIds, [id]);
+
+    service.panicThrows = false;
+    await controller.panicStop();
+    expect(container.read(executionControllerProvider).outcome, ExecutionOutcome.stopped);
+    expect(service.panicExecutionId, id);
   });
 
   test('a payload reserves execution before saving preferences', () async {
@@ -368,5 +433,46 @@ void main() {
     await controller.panicStop();
 
     expect(service.startedScripts, ['DELAY 100']);
+  });
+
+  test('a recorded payload keeps a redacted history entry when normal history is off', () async {
+    final events = StreamController<Map<String, dynamic>>.broadcast();
+    addTearDown(events.close);
+    final service = _SilentGadget(events: events);
+    final container = await _createContainer(service);
+    await container.read(logsControllerProvider.future);
+    final saved = Completer<void>();
+    final logs = container.listen(logsControllerProvider, (_, next) {
+      if (!saved.isCompleted && next.value?.any((log) => log.meta?['hasRecording'] == 'true') == true) {
+        saved.complete();
+      }
+    });
+    addTearDown(logs.close);
+    final controller = container.read(executionControllerProvider.notifier);
+    await controller.runPayload(const Payload(
+      id: 'private-payload',
+      name: 'Private title',
+      description: '',
+      script: 'DELAY 2000',
+      tags: [],
+      parameters: [],
+      isBuiltin: false,
+    ), {}, recordTimeline: true);
+    final id = service.startedId!;
+    events.add({
+      'type': 'wait', 'executionId': id, 'waitMs': 2000, 'lineNumber': 1,
+      'message': 'Private runtime text',
+    });
+    events.add({'type': 'done', 'executionId': id, 'success': true, 'inputReleased': true});
+    await saved.future.timeout(const Duration(seconds: 5));
+
+    final record = (await container.read(runRecordingProvider(id).future))!;
+    expect(record.events.map((event) => event.kind), containsAllInOrder([
+      RunEventKind.started, RunEventKind.timedWait, RunEventKind.completed,
+    ]));
+    final history = container.read(logsControllerProvider).requireValue;
+    expect(history.single.payloadName, 'Recorded run');
+    expect(history.single.payloadId, isNull);
+    expect(history.single.message, 'Completed');
   });
 }

@@ -23,6 +23,7 @@ import 'package:tap_ducky/state/controllers/execution_controller.dart';
 import 'package:tap_ducky/state/controllers/hid_status_controller.dart';
 import 'package:tap_ducky/state/controllers/logs_controller.dart';
 import 'package:tap_ducky/state/controllers/payloads_controller.dart';
+import 'package:tap_ducky/state/controllers/run_observation_controller.dart';
 import 'package:tap_ducky/state/controllers/scheduler_controller.dart';
 import 'package:tap_ducky/widgets/ducky_script_text.dart';
 import 'package:tap_ducky/widgets/task_bar.dart';
@@ -132,7 +133,10 @@ class _RunningExecution extends ExecutionController {
   ExecutionState build() => ExecutionState.idle();
 
   @override
-  Future<void> runPayload(Payload payload, Map<String, String> params) async {
+  Future<void> runPayload(Payload payload, Map<String, String> params, {bool recordTimeline = false}) async {
+    ref.read(runObservationProvider.notifier)
+      ..start('test')
+      ..observe('test', {'type': 'start', 'progressDeterminate': true});
     state = ExecutionState(
       isRunning: true,
       progress: 0.25,
@@ -469,7 +473,7 @@ void main() {
     tester.state<ScrollableState>(scrollable).position.jumpTo(0);
     await tester.pumpAndSettle();
 
-    expect(find.text('~25%'), findsOneWidget);
+    expect(find.text('25%'), findsOneWidget);
     expect(
       tester.widgetList<Text>(find.text(_longPayload.name))
           .any((text) => text.maxLines == 2 && text.overflow == TextOverflow.ellipsis),
@@ -707,12 +711,11 @@ void main() {
     const channel = MethodChannel('org.kaijinlab.tap_ducky/gadget');
     final messenger = TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
     messenger.setMockMethodCallHandler(channel, (call) async {
-      if (call.method == 'estimateDuckyScriptDuration') {
-        throw PlatformException(
-          code: 'DUCKY_EXPRESSION_SYNTAX',
-          message: 'Missing closing parenthesis in expression',
-          details: 2,
-        );
+      if (call.method == 'validateDuckyScript') {
+        return {
+          'message': 'Missing closing parenthesis in expression',
+          'line': 2,
+        };
       }
       return null;
     });
@@ -814,7 +817,13 @@ void main() {
       tester.getRect(run).bottom,
       lessThan(tester.getRect(find.text('Script pauses')).top),
     );
-    await tester.scrollUntilVisible(find.text('Command'), 200);
+    final console = find.text('Console and live events');
+    await tester.scrollUntilVisible(console.hitTestable(), 160);
+    await tester.pumpAndSettle();
+    expect(find.text('Command'), findsNothing);
+    await tester.tap(console);
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(find.text('Command'), 180, scrollable: find.byType(Scrollable).first);
     final send = find.widgetWithIcon(IconButton, Icons.send);
     await tester.ensureVisible(send);
     await tester.pumpAndSettle();

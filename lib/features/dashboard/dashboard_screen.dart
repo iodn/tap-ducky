@@ -7,8 +7,11 @@ import 'package:go_router/go_router.dart';
 import '../../app/router.dart';
 import '../../app/theme.dart';
 import '../../data/models/payload.dart';
+import '../../data/models/usb_restore_phase.dart';
 import '../../state/controllers/app_settings_controller.dart';
 import '../../state/controllers/execution_controller.dart';
+import '../../state/controllers/run_observation_controller.dart';
+import '../../widgets/run_status_text.dart';
 import '../../state/controllers/hid_status_controller.dart';
 import '../../state/controllers/host_os_controller.dart';
 import '../../state/controllers/payloads_controller.dart';
@@ -23,7 +26,7 @@ class DashboardScreen extends ConsumerWidget {
 
   Future<void> _armIfNeeded(WidgetRef ref) async {
     final hid = ref.read(hidStatusControllerProvider);
-    if (hid.sessionArmed) return;
+    if (hid.sessionArmed || hid.usbRestoring) return;
 
     final s = ref.read(appSettingsControllerProvider).value;
     final lastType = (s?.lastProfileType ?? 'composite').toLowerCase();
@@ -91,7 +94,7 @@ class DashboardScreen extends ConsumerWidget {
       );
     }
 
-    if (!hid.rootAvailable) {
+    if (!hid.rootAvailable && !hid.usbRestoring) {
       return Scaffold(
         appBar: AppBar(
           title: const Text('TapDucky'),
@@ -189,7 +192,7 @@ class DashboardScreen extends ConsumerWidget {
                         child: _PayloadCard(
                           payload: p,
                           onTap: () => context.go('${const PayloadsRoute().location}/${p.id}/edit'),
-                          onRun: exec.isRunning
+                          onRun: exec.isRunning || hid.usbRestoring
                               ? null
                               : () {
                                   unawaited(_runRecentPayload(ref, p));
@@ -225,19 +228,38 @@ class _HeroStatusCard extends ConsumerWidget {
     final cs = Theme.of(context).colorScheme;
     final subtitle = _statusDetail();
     final host = ref.watch(hostOsControllerProvider);
+    final restorePhase = hid.usbRestoring && hid.usbRestorePhase == UsbRestorePhase.idle
+        ? UsbRestorePhase.restoring
+        : hid.usbRestorePhase;
+    final showStatusIcon = restorePhase == UsbRestorePhase.idle ||
+        MediaQuery.textScalerOf(context).scale(16) <= 24;
+    final live = ref.watch(runObservationProvider);
+    final observation = live?.id == exec.executionId ? live : null;
+    final showProgress = observation?.determinate == true && observation?.waitUntil == null;
 
     String statusText;
     IconData statusIcon;
     Color statusColor;
 
-    if (!hid.rootAvailable || !hid.hidSupported) {
+    if (restorePhase != UsbRestorePhase.idle) {
+      statusText = switch (restorePhase) {
+        UsbRestorePhase.waitingForUnplug => 'Unplug to finish',
+        UsbRestorePhase.verifying => 'Verifying original USB settings…',
+        UsbRestorePhase.verified => 'Original USB restored',
+        UsbRestorePhase.finished => 'USB restoration finished',
+        UsbRestorePhase.failed => 'USB restoration incomplete',
+        _ => 'Restoring original USB settings…',
+      };
+      (statusIcon, statusColor) = switch (restorePhase) {
+        UsbRestorePhase.verified => (Icons.check_circle, cs.success),
+        UsbRestorePhase.failed => (Icons.error_outline, cs.error),
+        UsbRestorePhase.waitingForUnplug => (Icons.usb_off, cs.warning),
+        _ => (Icons.settings_input_component, cs.tertiary),
+      };
+    } else if (!hid.rootAvailable || !hid.hidSupported) {
       statusText = 'System Not Ready';
       statusIcon = Icons.error_outline;
       statusColor = cs.error;
-    } else if (hid.usbRestoring) {
-      statusText = 'Restoring USB';
-      statusIcon = Icons.settings_input_component;
-      statusColor = cs.warning;
     } else if (!hid.sessionArmed) {
       statusText = 'Session Disarmed';
       statusIcon = Icons.lock_outline;
@@ -268,24 +290,29 @@ class _HeroStatusCard extends ConsumerWidget {
           children: [
             Row(
               children: [
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: statusColor.withOpacity(0.1),
-                    shape: BoxShape.circle,
+                if (showStatusIcon) ...[
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: statusColor.withOpacity(0.1),
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(statusIcon, size: 32, color: statusColor),
                   ),
-                  child: Icon(statusIcon, size: 32, color: statusColor),
-                ),
-                const SizedBox(width: 16),
+                  const SizedBox(width: 16),
+                ],
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
-                        statusText,
-                        style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                              fontWeight: FontWeight.w600,
-                            ),
+                      Semantics(
+                        liveRegion: restorePhase != UsbRestorePhase.idle,
+                        child: Text(
+                          statusText,
+                          style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                                fontWeight: FontWeight.w600,
+                              ),
+                        ),
                       ),
                       if (subtitle != null) ...[
                         const SizedBox(height: 4),
@@ -321,57 +348,81 @@ class _HeroStatusCard extends ConsumerWidget {
                           style: const TextStyle(fontWeight: FontWeight.w600),
                         ),
                       ),
-                      const SizedBox(width: 12),
-                      Text(
-                        '~${(exec.progress * 100).clamp(0, 100).toStringAsFixed(0)}%',
-                        semanticsLabel: 'Approximate command progress: ${(exec.progress * 100).clamp(0, 100).round()} percent',
-                        style: TextStyle(
-                          fontWeight: FontWeight.w600,
-                          color: cs.primary,
+                      if (showProgress) ...[
+                        const SizedBox(width: 12),
+                        Text(
+                          '${(exec.progress * 100).round()}%',
+                          style: TextStyle(
+                            fontWeight: FontWeight.w600,
+                            color: cs.primary,
+                          ),
                         ),
-                      ),
+                      ],
                     ],
                   ),
-                  const SizedBox(height: 8),
-                  LinearProgressIndicator(value: exec.progress),
+                  if (showProgress) ...[
+                    const SizedBox(height: 8),
+                    LinearProgressIndicator(value: exec.progress),
+                  ],
                   const SizedBox(height: 4),
-                  Text(
-                    exec.status,
+                  RunStatusText(
+                    status: exec.status,
+                    observation: observation,
                     style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant),
                   ),
                 ],
               ),
             ],
-            const SizedBox(height: 16),
-            Row(
-              children: [
-                Expanded(
-                  child: FilledButton.icon(
-                    onPressed: hid.rootAvailable && hid.hidSupported && !hid.usbRestoring
-                        ? onArmToggle
-                        : null,
-                    icon: Icon(hid.sessionArmed ? Icons.lock_open : Icons.lock_outline),
-                    label: Text(hid.sessionArmed ? 'Disarm' : 'Arm Session'),
-                    style: FilledButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(vertical: 14),
+            if (restorePhase == UsbRestorePhase.failed) ...[
+              const SizedBox(height: 16),
+              Wrap(
+                spacing: 8,
+                children: [
+                  if (hid.rootAvailable && hid.hidSupported)
+                    FilledButton(
+                      onPressed: () => _retryRestoration(context, ref),
+                      child: const Text('Retry restoration'),
                     ),
-                  ),
-                ),
-                if (exec.isRunning) ...[
-                  const SizedBox(width: 12),
-                  FilledButton.icon(
-                    onPressed: onStop,
-                    icon: const Icon(Icons.stop),
-                    label: const Text('Stop'),
-                    style: FilledButton.styleFrom(
-                      backgroundColor: cs.error,
-                      foregroundColor: cs.onError,
-                      padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 20),
-                    ),
+                  TextButton(
+                    onPressed: () => _showRestorationDetails(context),
+                    child: const Text('Details'),
                   ),
                 ],
-              ],
-            ),
+              ),
+            ],
+            if (!hid.usbRestoring || exec.isRunning) ...[
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  if (!hid.usbRestoring)
+                    Expanded(
+                      child: FilledButton.icon(
+                        onPressed: hid.rootAvailable && hid.hidSupported
+                            ? onArmToggle
+                            : null,
+                        icon: Icon(hid.sessionArmed ? Icons.lock_open : Icons.lock_outline),
+                        label: Text(hid.sessionArmed ? 'Disarm' : 'Arm Session'),
+                        style: FilledButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                        ),
+                      ),
+                    ),
+                  if (exec.isRunning) ...[
+                    if (!hid.usbRestoring) const SizedBox(width: 12),
+                    FilledButton.icon(
+                      onPressed: onStop,
+                      icon: const Icon(Icons.stop),
+                      label: const Text('Stop'),
+                      style: FilledButton.styleFrom(
+                        backgroundColor: cs.error,
+                        foregroundColor: cs.onError,
+                        padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 20),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ],
           ],
         ),
       ),
@@ -379,14 +430,53 @@ class _HeroStatusCard extends ConsumerWidget {
   }
 
   String? _statusDetail() {
+    if (hid.usbRestorePhase == UsbRestorePhase.waitingForUnplug) {
+      return 'Disconnect the USB cable. Restoration will continue automatically.';
+    }
+    if (hid.usbRestorePhase == UsbRestorePhase.finished) {
+      return 'No saved USB layout was available for verification.';
+    }
     if (!hid.rootAvailable) return 'Root access required';
     if (!hid.hidSupported) return 'USB gadget support required';
+    if (hid.usbRestorePhase == UsbRestorePhase.failed) {
+      return hid.pcConnected
+          ? 'Unplug the cable, then retry restoration.'
+          : 'Retry to restore the saved USB settings.';
+    }
+    if (hid.usbRestoring) return null;
     final message = hid.message;
     if (message != null && message.isNotEmpty) return message;
     if (!hid.sessionArmed || exec.isRunning) return null;
     final profile = hid.activeProfileType;
     return profile == null ? null : GadgetProfileType.fromName(profile).label;
   }
+
+  Future<void> _retryRestoration(BuildContext context, WidgetRef ref) async {
+    try {
+      await ref.read(hidStatusControllerProvider.notifier).deactivate();
+    } catch (_) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not retry USB restoration')),
+      );
+    }
+  }
+
+  Future<void> _showRestorationDetails(BuildContext context) => showDialog<void>(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: const Text('USB restoration details'),
+      content: SingleChildScrollView(
+        child: SelectableText(hid.message ?? 'Android reported no details.'),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Close'),
+        ),
+      ],
+    ),
+  );
 }
 
 class _PayloadCard extends StatelessWidget {

@@ -13,6 +13,7 @@ import '../../state/controllers/execution_controller.dart';
 import '../../state/controllers/hid_status_controller.dart';
 import '../../state/controllers/logs_controller.dart';
 import '../../state/controllers/payloads_controller.dart';
+import '../../state/controllers/run_observation_controller.dart';
 import '../../state/controllers/selection_controller.dart';
 import '../../state/providers.dart';
 import '../../widgets/ducky_script_text.dart';
@@ -20,6 +21,8 @@ import '../../widgets/configuration_page.dart';
 import '../../widgets/payload_parameter_field.dart';
 import '../../widgets/payload_picker.dart';
 import '../../widgets/empty_state.dart';
+import '../../widgets/run_status_text.dart';
+import 'run_recording_screen.dart';
 
 class ExecuteScreen extends ConsumerStatefulWidget {
   const ExecuteScreen({super.key});
@@ -33,6 +36,7 @@ class _ExecuteScreenState extends ConsumerState<ExecuteScreen> with SingleTicker
   final _parameterControllers = <String, Map<String, TextEditingController>>{};
   late TabController _tabController;
   final _validator = DuckyScriptValidator();
+  bool _recordNextRun = false;
 
   @override
   void initState() {
@@ -58,6 +62,7 @@ class _ExecuteScreenState extends ConsumerState<ExecuteScreen> with SingleTicker
     final selectedId = ref.watch(selectedPayloadIdProvider);
     final hid = ref.watch(hidStatusControllerProvider);
     final exec = ref.watch(executionControllerProvider);
+    final observation = ref.watch(runObservationProvider);
     final logsAsync = ref.watch(logsControllerProvider);
 
     return Scaffold(
@@ -189,10 +194,24 @@ class _ExecuteScreenState extends ConsumerState<ExecuteScreen> with SingleTicker
                       _ExecutionControlCard(
                         exec: exec,
                         hid: hid,
+                        observation: observation?.id == exec.executionId ? observation : null,
                         missingParameters: missing,
-                        onRun: () => ref.read(executionControllerProvider.notifier).runPayload(payload, params),
+                        onRun: () {
+                          final record = _recordNextRun;
+                          setState(() => _recordNextRun = false);
+                          ref.read(executionControllerProvider.notifier).runPayload(
+                            payload, params, recordTimeline: record,
+                          );
+                        },
                         onStop: () => ref.read(executionControllerProvider.notifier).stop(),
                       ),
+                      if (!exec.isRunning)
+                        SwitchListTile(
+                          title: const Text('Record this run'),
+                          subtitle: const Text('Save a timeline of waits and USB events'),
+                          value: _recordNextRun,
+                          onChanged: (value) => setState(() => _recordNextRun = value),
+                        ),
                       const SizedBox(height: 16),
                       _ExecutionSpeedCard(
                         script: missing ? null : DuckyScript.resolvePlaceholders(payload.script, params),
@@ -203,15 +222,22 @@ class _ExecuteScreenState extends ConsumerState<ExecuteScreen> with SingleTicker
                 },
               ),
               const SizedBox(height: 16),
-              _ConsoleTabs(
-                tabController: _tabController,
-                rawController: _rawCtrl,
-                exec: exec,
-                onSendCommand: (cmd) async {
-                  await ref.read(executionControllerProvider.notifier).sendRawCommand(cmd);
-                  _rawCtrl.clear();
-                  setState(() {});
-                },
+              if (!exec.isRunning && exec.outcome != null)
+                _RecordedRunLink(executionId: exec.executionId),
+              ExpansionTile(
+                leading: const Icon(Icons.terminal),
+                title: const Text('Console and live events'),
+                children: [
+                  _ConsoleTabs(
+                    tabController: _tabController,
+                    rawController: _rawCtrl,
+                    exec: exec,
+                    onSendCommand: (cmd) async {
+                      await ref.read(executionControllerProvider.notifier).sendRawCommand(cmd);
+                      if (mounted) _rawCtrl.clear();
+                    },
+                  ),
+                ],
               ),
             ],
           );
@@ -545,6 +571,7 @@ class _ExecutionControlCard extends StatelessWidget {
     required this.onRun,
     required this.onStop,
     required this.missingParameters,
+    required this.observation,
   });
 
   final ExecutionState exec;
@@ -552,6 +579,7 @@ class _ExecutionControlCard extends StatelessWidget {
   final VoidCallback onRun;
   final VoidCallback onStop;
   final bool missingParameters;
+  final RunObservation? observation;
 
   @override
   Widget build(BuildContext context) {
@@ -562,9 +590,9 @@ class _ExecutionControlCard extends StatelessWidget {
         : blockReason ??
             (missingParameters
                 ? 'Fill in required parameters'
-                : hid.deviceConnected
-                    ? null
-                    : 'Waiting for USB host');
+                : exec.outcome != null
+                    ? exec.status
+                    : hid.deviceConnected ? null : 'Waiting for USB host');
 
     return Card(
       child: Padding(
@@ -572,10 +600,10 @@ class _ExecutionControlCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            if (exec.isRunning) ...[
+            if (exec.isRunning && observation?.determinate == true && observation?.waitUntil == null) ...[
               LinearProgressIndicator(
                 value: exec.progress,
-                semanticsLabel: 'Approximate command progress',
+                semanticsLabel: 'Run progress',
               ),
               const SizedBox(height: 12),
             ],
@@ -591,13 +619,17 @@ class _ExecutionControlCard extends StatelessWidget {
               )
             else
               FilledButton.icon(
-                onPressed: blockReason == null ? onRun : null,
+                onPressed: blockReason == null && !missingParameters ? onRun : null,
                 icon: const Icon(Icons.play_arrow),
                 label: const Text('Run Payload'),
               ),
             if (status != null) ...[
               const SizedBox(height: 8),
-              Text(status, style: Theme.of(context).textTheme.bodyMedium),
+              RunStatusText(
+                status: status,
+                observation: observation,
+                style: Theme.of(context).textTheme.bodyMedium,
+              ),
             ],
           ],
         ),
@@ -612,6 +644,25 @@ class _ExecutionControlCard extends StatelessWidget {
     if (!hid.sessionArmed) return 'Arm a session from Dashboard';
     if (!hid.gadgetBound) return hid.message ?? 'Preparing USB HID…';
     return null;
+  }
+}
+
+class _RecordedRunLink extends ConsumerWidget {
+  const _RecordedRunLink({required this.executionId});
+
+  final String executionId;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    if (ref.watch(runRecordingProvider(executionId)).value == null) return const SizedBox.shrink();
+    return ListTile(
+      leading: const Icon(Icons.receipt_long_outlined),
+      title: const Text('View run details'),
+      trailing: const Icon(Icons.chevron_right),
+      onTap: () => showConfigurationPage<void>(
+        context, (_) => RunRecordingScreen(executionId: executionId),
+      ),
+    );
   }
 }
 

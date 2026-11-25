@@ -2,9 +2,12 @@ import 'package:material_ui/material_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../app/router.dart';
+import '../data/models/execution_outcome.dart';
 import 'arm_profile_sheet.dart';
 import '../state/controllers/execution_controller.dart';
 import '../state/controllers/hid_status_controller.dart';
+import '../state/controllers/run_observation_controller.dart';
+import 'run_status_text.dart';
 
 class TaskBarExpandedNotifier extends Notifier<bool> {
   @override
@@ -25,21 +28,32 @@ class TaskBar extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final expanded = ref.watch(taskBarExpandedProvider);
     final exec = ref.watch(executionControllerProvider);
+    final live = ref.watch(runObservationProvider);
+    final observation = live?.id == exec.executionId ? live : null;
     final hid = ref.watch(hidStatusControllerProvider);
     final cs = Theme.of(context).colorScheme;
     final bg = cs.surfaceContainerHighest;
+    final outcome = exec.outcome;
+    final outcomeIcon = switch (outcome) {
+      ExecutionOutcome.completed => Icons.check_circle_outline,
+      ExecutionOutcome.stopped => Icons.stop_circle_outlined,
+      ExecutionOutcome.timedOut => Icons.timer_off_outlined,
+      ExecutionOutcome.failed => Icons.error_outline,
+      ExecutionOutcome.interrupted => Icons.remove_circle_outline,
+      null => null,
+    };
 
     final title = exec.isRunning
         ? 'Executing: ${exec.payloadName ?? 'payload'}'
-        : (exec.success == null
-              ? 'Execution'
-              : (exec.success == true
-                    ? 'Last run: success'
-                    : 'Last run: error'));
+        : outcome == null
+        ? 'Execution'
+        : 'Last run: ${outcome.label}';
 
     final subtitle = exec.isRunning
-        ? '${(exec.progress * 100).clamp(0, 100).toStringAsFixed(0)}% · ${exec.status}'
-        : exec.success == null
+        ? observation?.determinate == true && observation?.waitUntil == null
+            ? '${(exec.progress * 100).round()}% · ${exec.status}'
+            : exec.status
+        : outcome == null || exec.status == outcome.label
         ? null
         : exec.status;
     final buttonPromptId = exec.isRunning && !exec.stopRequested ? exec.buttonPromptId : null;
@@ -73,6 +87,18 @@ class TaskBar extends ConsumerWidget {
                   ok: hid.rootAvailable && hid.hidSupported,
                   pulseKey: pulseKey,
                 ),
+                if (!exec.isRunning && outcomeIcon != null) ...[
+                  const SizedBox(width: 6),
+                  Icon(
+                    outcomeIcon,
+                    size: 16,
+                    color: switch (outcome) {
+                      ExecutionOutcome.completed => cs.primary,
+                      ExecutionOutcome.failed => cs.error,
+                      _ => cs.onSurfaceVariant,
+                    },
+                  ),
+                ],
                 if (exec.isRunning && exec.scriptIndicator != ScriptIndicator.off) ...[
                   const SizedBox(width: 6),
                   Semantics(
@@ -102,10 +128,10 @@ class TaskBar extends ConsumerWidget {
                       ),
                       if (subtitle != null) ...[
                         const SizedBox(height: 2),
-                        Text(
-                          subtitle,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
+                        RunStatusText(
+                          status: subtitle,
+                          observation: observation,
+                          maxLines: exec.inputReleaseUnconfirmed ? null : 1,
                           style: const TextStyle(fontSize: 11, height: 1.2),
                         ),
                       ],

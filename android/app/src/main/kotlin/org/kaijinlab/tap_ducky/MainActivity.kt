@@ -7,12 +7,14 @@ import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodChannel
+import java.util.concurrent.Executor
 import java.util.concurrent.Executors
 
 class MainActivity : FlutterActivity() {
   private val mainHandler = Handler(Looper.getMainLooper())
   private val executor = Executors.newSingleThreadExecutor()
   private val scriptExecutor = Executors.newSingleThreadExecutor()
+  private val validationExecutor = Executors.newSingleThreadExecutor()
   private lateinit var logBus: LogBus
   private lateinit var manager: GadgetManager
   private val localDrafts by lazy { LocalDrafts(this) }
@@ -51,7 +53,10 @@ class MainActivity : FlutterActivity() {
           runAsync(result) { manager.activate(map); null }
         }
         "deactivate" -> runAsync(result) { manager.deactivate(); null }
-        "panicStop" -> runAsync(result) { manager.panicStop(); null }
+        "panicStop" -> {
+          val executionId = call.argument<String>("executionId")
+          runAsync(result) { manager.panicStop(executionId) }
+        }
         "retryOpenHidWriters" -> runAsync(result) { manager.retryOpenHidWriters(); null }
         "cancelExecution" -> {
           val args = call.arguments as? Map<*, *> ?: emptyMap<String, Any>()
@@ -104,6 +109,24 @@ class MainActivity : FlutterActivity() {
           }
 
           result.success(null)
+        }
+        "validateDuckyScript" -> {
+          val script = call.argument<String>("script").orEmpty()
+          runAsync(result, validationExecutor) {
+            try {
+              DuckyScriptParser().parse(script)
+              null
+            } catch (e: DuckyExpressionSyntaxException) {
+              mapOf("line" to e.lineNumber, "message" to e.message)
+            } catch (e: IllegalArgumentException) {
+              val message = e.message ?: "Invalid script"
+              val location = Regex("^Line ([0-9]+):\\s*").find(message)
+              mapOf(
+                "line" to location?.groupValues?.get(1)?.toIntOrNull(),
+                "message" to (location?.let { message.substring(it.range.last + 1) } ?: message),
+              )
+            }
+          }
         }
         "estimateDuckyScriptDuration" -> {
           val args = call.arguments as? Map<*, *>
@@ -238,8 +261,8 @@ class MainActivity : FlutterActivity() {
     return super.dispatchKeyEvent(event)
   }
 
-  private fun runAsync(result: MethodChannel.Result, block: () -> Any?) {
-    executor.execute {
+  private fun runAsync(result: MethodChannel.Result, taskExecutor: Executor = executor, block: () -> Any?) {
+    taskExecutor.execute {
       try {
         val value = block()
         mainHandler.post { result.success(value) }
@@ -260,6 +283,7 @@ class MainActivity : FlutterActivity() {
   override fun onDestroy() {
     detachExecutionSink()
     localDrafts.close()
+    validationExecutor.shutdownNow()
     super.onDestroy()
   }
 

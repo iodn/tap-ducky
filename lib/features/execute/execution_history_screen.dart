@@ -1,9 +1,13 @@
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../data/models/execution_group.dart';
+import '../../data/models/execution_outcome.dart';
 import '../../data/models/log_entry.dart';
+import '../../state/controllers/execution_controller.dart';
 import '../../state/controllers/logs_controller.dart';
 import '../../widgets/empty_state.dart';
+import '../../widgets/configuration_page.dart';
+import 'run_recording_screen.dart';
 
 class ExecutionHistoryScreen extends ConsumerWidget {
   const ExecutionHistoryScreen({super.key});
@@ -11,6 +15,9 @@ class ExecutionHistoryScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final logsAsync = ref.watch(logsControllerProvider);
+    final activeId = ref.watch(executionControllerProvider.select(
+      (state) => state.isRunning ? state.executionId : null,
+    ));
 
     return Scaffold(
       appBar: AppBar(
@@ -64,7 +71,11 @@ class ExecutionHistoryScreen extends ConsumerWidget {
                   padding: const EdgeInsets.symmetric(vertical: 8),
                   itemCount: groups.length,
                   separatorBuilder: (_, __) => const Divider(height: 1, indent: 72),
-                  itemBuilder: (context, i) => _ExecutionGroupTile(group: groups[i]),
+                  itemBuilder: (context, i) => _ExecutionGroupTile(
+                    key: ValueKey(groups[i].executionId),
+                    group: groups[i],
+                    isRunning: groups[i].executionId == activeId,
+                  ),
                 ),
               ),
             ],
@@ -109,8 +120,8 @@ class _StatisticsBar extends StatelessWidget {
     final cs = Theme.of(context).colorScheme;
 
     final total = groups.length;
-    final successful = groups.where((g) => g.success).length;
-    final failed = total - successful;
+    final successful = groups.where((g) => g.outcome == ExecutionOutcome.completed).length;
+    final failed = groups.where((g) => g.outcome == ExecutionOutcome.failed).length;
     final last24h = ExecutionGroup.countRecent(groups, const Duration(hours: 24));
 
     return Container(
@@ -130,7 +141,7 @@ class _StatisticsBar extends StatelessWidget {
           const SizedBox(width: 12),
           _StatChip(
             icon: Icons.check_circle,
-            label: 'Success',
+            label: 'Completed',
             value: '$successful',
             color: cs.primary,
           ),
@@ -204,9 +215,14 @@ class _StatChip extends StatelessWidget {
 }
 
 class _ExecutionGroupTile extends StatefulWidget {
-  const _ExecutionGroupTile({required this.group});
+  const _ExecutionGroupTile({
+    super.key,
+    required this.group,
+    required this.isRunning,
+  });
 
   final ExecutionGroup group;
+  final bool isRunning;
 
   @override
   State<_ExecutionGroupTile> createState() => _ExecutionGroupTileState();
@@ -219,6 +235,15 @@ class _ExecutionGroupTileState extends State<_ExecutionGroupTile> {
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     final g = widget.group;
+    final (icon, containerColor, iconColor) = switch (g.outcome) {
+      _ when widget.isRunning => (Icons.hourglass_top, cs.secondaryContainer, cs.onSecondaryContainer),
+      ExecutionOutcome.completed => (Icons.check_circle, cs.primaryContainer, cs.onPrimaryContainer),
+      ExecutionOutcome.stopped => (Icons.stop_circle_outlined, cs.secondaryContainer, cs.onSecondaryContainer),
+      ExecutionOutcome.timedOut => (Icons.timer_off_outlined, cs.tertiaryContainer, cs.onTertiaryContainer),
+      ExecutionOutcome.interrupted => (Icons.remove_circle_outline, cs.tertiaryContainer, cs.onTertiaryContainer),
+      ExecutionOutcome.failed => (Icons.error_outline, cs.errorContainer, cs.onErrorContainer),
+    };
+    final outcomeLabel = widget.isRunning ? 'Running' : g.outcome.label;
 
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
@@ -234,16 +259,12 @@ class _ExecutionGroupTileState extends State<_ExecutionGroupTile> {
                   Container(
                     padding: const EdgeInsets.all(10),
                     decoration: BoxDecoration(
-                      color: g.success
-                          ? cs.primaryContainer
-                          : cs.errorContainer,
+                      color: containerColor,
                       borderRadius: BorderRadius.circular(8),
                     ),
                     child: Icon(
-                      g.success ? Icons.check_circle : Icons.error,
-                      color: g.success
-                          ? cs.onPrimaryContainer
-                          : cs.onErrorContainer,
+                      icon,
+                      color: iconColor,
                       size: 20,
                     ),
                   ),
@@ -270,56 +291,33 @@ class _ExecutionGroupTileState extends State<_ExecutionGroupTile> {
                           ),
                         ),
                         const SizedBox(height: 4),
-                        Row(
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 4,
                           children: [
-                            Icon(Icons.timer, size: 14, color: cs.onSurfaceVariant),
-                            const SizedBox(width: 4),
                             Text(
-                              g.durationFormatted,
+                              outcomeLabel,
                               style: TextStyle(
                                 fontSize: 12,
                                 fontWeight: FontWeight.w600,
                                 color: cs.onSurfaceVariant,
                               ),
                             ),
-                            const SizedBox(width: 12),
-                            Icon(Icons.article, size: 14, color: cs.onSurfaceVariant),
-                            const SizedBox(width: 4),
-                            Text(
-                              '${g.totalEvents} events',
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: cs.onSurfaceVariant,
-                              ),
-                            ),
-                            if (g.errorCount > 0) ...[
-                              const SizedBox(width: 12),
-                              Icon(Icons.error_outline, size: 14, color: cs.error),
-                              const SizedBox(width: 4),
+                            if (!widget.isRunning && g.outcome != ExecutionOutcome.interrupted)
                               Text(
-                                '${g.errorCount}',
+                                g.durationFormatted,
                                 style: TextStyle(
                                   fontSize: 12,
-                                  color: cs.error,
-                                  fontWeight: FontWeight.w600,
+                                  color: cs.onSurfaceVariant,
                                 ),
                               ),
-                            ],
-                            if (g.warningCount > 0) ...[
-                              const SizedBox(width: 12),
-                              Icon(Icons.warning_amber, size: 14, color: cs.tertiary),
-                              const SizedBox(width: 4),
-                              Text(
-                                '${g.warningCount}',
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  color: cs.tertiary,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                            ],
                           ],
                         ),
+                        if (g.inputReleaseUnconfirmed)
+                          Text(
+                            'Input release could not be confirmed.',
+                            style: TextStyle(fontSize: 12, color: cs.error),
+                          ),
                       ],
                     ),
                   ),
@@ -356,7 +354,7 @@ class _ExecutionGroupTileState extends State<_ExecutionGroupTile> {
                   const SizedBox(height: 8),
                   _DetailRow(
                     label: 'Execution ID',
-                    value: g.executionId.substring(0, 8),
+                    value: g.executionId.characters.take(8).toString(),
                   ),
                   _DetailRow(
                     label: 'Started',
@@ -364,12 +362,18 @@ class _ExecutionGroupTileState extends State<_ExecutionGroupTile> {
                   ),
                   _DetailRow(
                     label: 'Finished',
-                    value: _formatFullTimestamp(g.endTime),
+                    value: widget.isRunning || g.outcome == ExecutionOutcome.interrupted
+                        ? '—'
+                        : _formatFullTimestamp(g.endTime),
                   ),
-                  _DetailRow(
-                    label: 'Duration',
-                    value: g.durationFormatted,
-                  ),
+                  if (g.events.any((event) => event.meta?['hasRecording'] == 'true'))
+                    TextButton.icon(
+                      onPressed: () => showConfigurationPage<void>(
+                        context, (_) => RunRecordingScreen(executionId: g.executionId),
+                      ),
+                      icon: const Icon(Icons.receipt_long_outlined),
+                      label: const Text('View run details'),
+                    ),
                   const SizedBox(height: 12),
                   Row(
                     children: [
@@ -468,11 +472,7 @@ class _EventRow extends StatelessWidget {
     IconData icon;
     Color color;
 
-    if (!event.success) {
-      icon = Icons.error;
-      color = cs.error;
-    } else {
-      switch (event.level) {
+    switch (event.level) {
         case 'error':
           icon = Icons.error_outline;
           color = cs.error;
@@ -488,7 +488,6 @@ class _EventRow extends StatelessWidget {
         default:
           icon = Icons.info_outline;
           color = cs.primary;
-      }
     }
 
     return Padding(

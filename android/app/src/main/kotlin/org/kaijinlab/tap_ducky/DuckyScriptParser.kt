@@ -860,6 +860,7 @@ class DuckyScriptExecutor(
 
   private var totalSteps = 0
   private var completedSteps = 0
+  private var determinateProgress = false
   private var currentLine: Int? = null
   private val timing = TimingController(delayMultiplier) { log.log("ducky", it) }
 
@@ -872,6 +873,11 @@ class DuckyScriptExecutor(
     val processed = preprocessCommands(commands)
     totalSteps = processed.count { isExecutable(it.type) }.coerceAtLeast(1)
     completedSteps = 0
+    determinateProgress = !parser.readsButtonPress && processed.all {
+      it.type == CommandType.STRING || it.type == CommandType.STRINGLN ||
+        it.type == CommandType.DELAY || it.type == CommandType.REM ||
+        it.type == CommandType.KEY || it.type == CommandType.ENTER
+    }
 
     emitExec(
       mapOf(
@@ -880,6 +886,7 @@ class DuckyScriptExecutor(
         "total" to totalSteps,
         "completed" to completedSteps,
         "progress" to 0.0,
+        "progressDeterminate" to determinateProgress,
         "message" to "Starting",
         "timestampMs" to System.currentTimeMillis(),
       )
@@ -896,13 +903,14 @@ class DuckyScriptExecutor(
       runPendingButtonCallback()
       throwIfCancelled()
     } catch (e: CancelSignal) {
-      manager.releaseHeldInputBestEffort()
+      val inputReleased = manager.releaseHeldInputBestEffort()
       emitExec(
         mapOf(
           "type" to "done",
           "executionId" to executionId,
           "success" to false,
           "cancelled" to true,
+          "inputReleased" to inputReleased,
           "total" to totalSteps,
           "completed" to completedSteps,
           "progress" to currentProgress(),
@@ -917,13 +925,14 @@ class DuckyScriptExecutor(
       setExitCode(0)
     } catch (e: Exception) {
       log.logError("ducky", "Execution failed: ${e.message}")
-      manager.releaseHeldInputBestEffort()
+      val inputReleased = manager.releaseHeldInputBestEffort()
       emitExec(
         mapOf(
           "type" to "error",
           "executionId" to executionId,
           "message" to (e.message ?: "Execution failed"),
           "error_code" to ((e as? GadgetManager.HidWriteException)?.errorCode),
+          "inputReleased" to inputReleased,
           "lineNumber" to currentLine,
           "total" to totalSteps,
           "completed" to completedSteps,
@@ -936,19 +945,25 @@ class DuckyScriptExecutor(
       internalVariables.closeScriptButtonInput()
     }
 
-    manager.releaseHeldInputBestEffort()
-    log.log("ducky", "=== Execution complete ===")
+    val inputReleased = manager.releaseHeldInputBestEffort()
+    if (inputReleased) {
+      log.log("ducky", "=== Execution complete ===")
+    } else {
+      log.logError("ducky", "Execution ended with input release unconfirmed")
+    }
 
     emitExec(
       mapOf(
         "type" to "done",
         "executionId" to executionId,
-        "success" to true,
+        "success" to inputReleased,
         "cancelled" to false,
+        "inputReleased" to inputReleased,
+        "error_code" to if (inputReleased) null else "INPUT_RELEASE_UNCONFIRMED",
         "total" to totalSteps,
         "completed" to completedSteps,
-        "progress" to 1.0,
-        "message" to "Completed",
+        "progress" to if (inputReleased) 1.0 else currentProgress(),
+        "message" to if (inputReleased) "Completed" else "Input release could not be confirmed",
         "timestampMs" to System.currentTimeMillis(),
       )
     )
@@ -1070,6 +1085,9 @@ class DuckyScriptExecutor(
 
         else -> {
           currentLine = cmd.lineNumber
+          if (!determinateProgress && isExecutable(cmd.type)) {
+            emitExec(mapOf("type" to "phase", "executionId" to executionId, "lineNumber" to cmd.lineNumber))
+          }
           if (requiresHost(cmd.type)) {
             if (!manager.isHostConnected()) {
               val ok = waitForPredicateCancellable(10_000L, "Waiting for USB host") { manager.isHostConnected() }
@@ -1111,13 +1129,19 @@ class DuckyScriptExecutor(
     updateScriptButton()
   }
 
-  private fun reportWait(message: String, waitMs: Long? = null, promptId: String? = null) {
+  private fun reportWait(
+    message: String,
+    waitMs: Long? = null,
+    promptId: String? = null,
+    condition: Boolean = false,
+  ) {
     emitExec(mapOf(
       "type" to "wait",
       "executionId" to executionId,
       "lineNumber" to currentLine,
       "message" to message,
       "waitMs" to waitMs,
+      "waitKind" to if (condition) "condition" else "duration",
       "promptId" to promptId,
     ))
   }
@@ -1146,7 +1170,7 @@ class DuckyScriptExecutor(
     val timeout = timeoutMs.coerceAtLeast(0L)
     if (timeout == 0L) return predicate()
 
-    reportWait(label, timeout)
+    reportWait(label, timeout, condition = true)
     val deadline = android.os.SystemClock.elapsedRealtime() + timeout
     while (true) {
       throwIfCancelled()
@@ -2010,6 +2034,12 @@ class DuckyScriptExecutor(
           heldKeyCodes.add(code)
         } else {
           log.log("kbd", "HOLD ignored ($KEYBOARD_KEY_SLOTS-key rollover): $upper")
+          emitExec(mapOf(
+            "type" to "warning",
+            "executionId" to executionId,
+            "code" to "KEY_ROLLOVER",
+            "lineNumber" to currentLine,
+          ))
         }
       } else {
         heldKeyCodes.remove(code)
