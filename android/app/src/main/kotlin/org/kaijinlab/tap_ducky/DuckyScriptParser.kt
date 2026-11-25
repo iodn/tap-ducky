@@ -948,9 +948,9 @@ class DuckyScriptExecutor(
             }
           }
           throwIfCancelled()
-          executeCommand(cmd)
+          val stepMessage = executeCommand(cmd)
           throwIfCancelled()
-          markStep(cmd)
+          markStep(cmd, stepMessage)
           if (defaultDelay > 0) {
             sleepMsCancellable(timing.scaleMs(defaultDelay).toLong(), "Default script pause")
           }
@@ -1011,7 +1011,7 @@ class DuckyScriptExecutor(
     return predicate()
   }
 
-  private fun markStep(cmd: DuckyCommand) {
+  private fun markStep(cmd: DuckyCommand, stepMessage: String?) {
     if (!isExecutable(cmd.type)) return
     completedSteps++
     emitExec(
@@ -1023,7 +1023,7 @@ class DuckyScriptExecutor(
         "progress" to currentProgress(),
         "lineNumber" to cmd.lineNumber,
         "command" to cmd.type.name,
-        "message" to describeCommand(cmd),
+        "message" to (stepMessage ?: describeCommand(cmd)),
         "timestampMs" to System.currentTimeMillis(),
       )
     )
@@ -1050,7 +1050,6 @@ class DuckyScriptExecutor(
         val t = cmd.args.getOrNull(1) ?: ""
         "STRING_DELAY ${d}ms per char (${t.length} chars)"
       }
-      CommandType.DELAY -> "DELAY ${timing.scaleMs(cmd.args.getOrNull(0)?.toIntOrNull() ?: 0, reportClamp = false)}ms"
       CommandType.DEFAULTDELAY,
       CommandType.DEFAULT_DELAY -> "DEFAULT_DELAY ${timing.scaleMs(defaultDelay, reportClamp = false)}ms"
       CommandType.MODIFIER_COMBO -> "COMBO ${cmd.args.getOrNull(0) ?: ""}".trim()
@@ -1357,7 +1356,7 @@ class DuckyScriptExecutor(
     return sent
   }
 
-  private fun executeCommand(cmd: DuckyCommand) {
+  private fun executeCommand(cmd: DuckyCommand): String? {
     when (cmd.type) {
       CommandType.STRING -> {
         val text = cmd.args.getOrNull(0) ?: ""
@@ -1382,9 +1381,10 @@ class DuckyScriptExecutor(
       }
 
       CommandType.DELAY -> {
-        val ms = evaluator.evaluate(cmd.args.first(), currentVarsView())
-        sleepMsCancellable(timing.scaleMs(ms).toLong(), "Script pause")
+        val delayMs = timing.scaleMs(evaluator.evaluate(cmd.args.first(), currentVarsView()))
+        sleepMsCancellable(delayMs.toLong(), "Script pause")
         setExitCode(0)
+        return "DELAY ${delayMs}ms"
       }
 
       CommandType.DETECT_OS -> {
@@ -1692,6 +1692,7 @@ class DuckyScriptExecutor(
 
       else -> setExitCode(0)
     }
+    return null
   }
 
   private fun callFunction(name: String, argsPassed: List<String>) {
