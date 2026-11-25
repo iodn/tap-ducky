@@ -9,6 +9,20 @@ import org.junit.Test
 
 class DuckyScriptVariablesTest {
   @Test
+  fun estimatesDefaultDelaySetFromAnExpression() {
+    val estimator = DuckyScriptEstimator(DuckyScriptVariables({ null }, { null }), { _, _ -> 0 }, { 0 })
+    val script = """
+      VAR ${'$'}step = 60
+      DEFAULT_DELAY (${'$'}step + 20)
+      DELAY 20
+      DEFAULTDELAY 0
+      DELAY 20
+    """.trimIndent()
+    assertEquals(200L, estimator.estimate(script))
+    assertThrows(DuckyExpressionSyntaxException::class.java) { DuckyScriptParser().parse("DEFAULT_DELAY") }
+  }
+
+  @Test
   fun rejectsUnsupportedWritesBeforeRunningAnyCommands() {
     for (assignment in listOf("\$_JITTER_MAX = 20", "VAR \$_BUTTON_ENABLED = TRUE")) {
       val error = assertThrows(DuckyExpressionSyntaxException::class.java) {

@@ -4,6 +4,14 @@ import 'package:tap_ducky/data/services/ducky_script_validator.dart';
 void main() {
   final validator = DuckyScriptValidator();
 
+  test('accepts constants and variables in default delay expressions', () {
+    final result = validator.validate('DEFINE #WAIT 80\nDEFAULT_DELAY #WAIT\nDELAY 20');
+    expect(result.issues, isEmpty);
+    expect(result.totalDelayMs, 100);
+    expect(validator.validate(r'VAR $step = 60' '\n' r'DEFAULTDELAY ($step + 20)').issues, isEmpty);
+    expect(validator.validate('DEFAULT_DELAY').hasErrors, isTrue);
+  });
+
   test('reports unsupported writes once as errors', () {
     for (final script in [r'$_JITTER_MAX = 20', r'VAR $_BUTTON_ENABLED = TRUE']) {
       final result = validator.validate(script);

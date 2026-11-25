@@ -305,8 +305,9 @@ class DuckyScriptParser {
         }
 
         "DEFAULTDELAY" -> {
-          val ms = parts.getOrNull(1)?.toIntOrNull() ?: 0
-          commands.add(DuckyCommand(CommandType.DEFAULTDELAY, listOf(ms.toString()), lineNumber))
+          val expression = line.drop(parts[0].length).trim()
+          if (expression.isEmpty()) variableSyntaxError(lineNumber, "DEFAULT_DELAY requires a time expression")
+          commands.add(DuckyCommand(CommandType.DEFAULTDELAY, listOf(expression), lineNumber))
         }
 
         "HOLD" -> {
@@ -606,7 +607,8 @@ class DuckyScriptParser {
     for (command in commands) {
       val expressions = when (command.type) {
         CommandType.VAR, CommandType.CALL_FUNCTION -> command.args.drop(1)
-        CommandType.DELAY, CommandType.INJECT_VAR, CommandType.RETURN,
+        CommandType.DELAY, CommandType.DEFAULTDELAY, CommandType.DEFAULT_DELAY,
+        CommandType.INJECT_VAR, CommandType.RETURN,
         CommandType.IF, CommandType.ELSE_IF, CommandType.WHILE -> command.args
         else -> continue
       }
@@ -1457,8 +1459,7 @@ class DuckyScriptExecutor(
 
       CommandType.DEFAULTDELAY,
       CommandType.DEFAULT_DELAY -> {
-        val ms = cmd.args.firstOrNull()?.toIntOrNull() ?: 0
-        defaultDelay = ms
+        defaultDelay = evaluator.evaluate(cmd.args.first(), currentVarsView())
         setExitCode(0)
       }
 
@@ -2252,8 +2253,7 @@ internal class DuckyScriptEstimator(
 
       CommandType.DEFAULTDELAY,
       CommandType.DEFAULT_DELAY -> {
-        val ms = cmd.args.firstOrNull()?.toIntOrNull() ?: 0
-        defaultDelay = ms
+        defaultDelay = evaluator.evaluate(cmd.args.first(), currentVarsView())
         setExitCode(0)
       }
 

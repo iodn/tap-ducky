@@ -429,6 +429,10 @@ class DuckyScriptValidator {
     caseSensitive: false,
   );
   static final _delayExpressionOperators = RegExp(r'^[\s()+*/%^<>=!&|\-]*$');
+  static bool _looksLikeDelayExpression(String expression) {
+    final operators = expression.replaceAll(_delayValueToken, '');
+    return operators != expression && _delayExpressionOperators.hasMatch(operators);
+  }
   static final _integerLiteral = RegExp(r'^[+-]?(?:0x[0-9a-f]+|\d+)$', caseSensitive: false);
   static final _defineDeclaration = RegExp(r'^DEFINE\s+(\S+)\s(.*)$', caseSensitive: false);
   static const _unsupportedHak5Variables = {
@@ -643,7 +647,7 @@ class DuckyScriptValidator {
           ? null
           : _functionCallPattern.firstMatch(trimmed);
 
-      if (const {'IF', 'ELSE', 'ELSE_IF', 'WHILE', 'RETURN', 'DELAY', 'INJECT_VAR'}
+      if (const {'IF', 'ELSE', 'ELSE_IF', 'WHILE', 'RETURN', 'DELAY', 'DEFAULTDELAY', 'DEFAULT_DELAY', 'INJECT_VAR'}
               .contains(command) ||
           declaration != null || assignMatch != null || functionCall != null) {
         final references = declaration != null
@@ -760,15 +764,16 @@ class DuckyScriptValidator {
 
         case 'DEFAULTDELAY':
         case 'DEFAULT_DELAY':
-          final ms = parts.length > 1 ? int.tryParse(parts[1]) : null;
-          if (ms == null) {
+          final expression = expandDefines(trimmed.substring(command.length)).trim();
+          final ms = int.tryParse(expression);
+          if (ms == null && !_looksLikeDelayExpression(expression)) {
             issues.add(ValidationIssue(
               line: lineNum,
               severity: IssueSeverity.error,
-              message: 'DEFAULTDELAY requires a numeric value',
+              message: 'DEFAULT_DELAY requires a time expression',
             ));
           } else {
-            defaultDelayMs = max(0, ms);
+            defaultDelayMs = max(0, ms ?? 0);
           }
           break;
 
@@ -786,8 +791,7 @@ class DuckyScriptValidator {
           final expression = expandDefines(trimmed.substring(command.length).trim());
           final delayValue = int.tryParse(expression);
           if (delayValue == null) {
-            final operators = expression.replaceAll(_delayValueToken, '');
-            if (operators == expression || !_delayExpressionOperators.hasMatch(operators)) {
+            if (!_looksLikeDelayExpression(expression)) {
               issues.add(ValidationIssue(
                 line: lineNum,
                 severity: IssueSeverity.error,
