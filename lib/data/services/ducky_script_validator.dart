@@ -482,6 +482,7 @@ class DuckyScriptValidator {
     int? extensionStart;
     int? buttonStart;
     (int, int, int, int)? buttonScope;
+    (int, int, int, int)? buttonTiming;
     final warnedVariables = <String>{};
     final defines = <String, String>{};
     RegExp? definePattern;
@@ -928,8 +929,22 @@ class DuckyScriptValidator {
               message: command == 'BUTTON_DEF' ? 'Nested BUTTON_DEF' : 'END_BUTTON without BUTTON_DEF',
             ));
           } else {
-            buttonStart = command == 'BUTTON_DEF' ? lineNum : null;
-            buttonScope = command == 'BUTTON_DEF' ? scope : null;
+            if (command == 'BUTTON_DEF') {
+              buttonStart = lineNum;
+              buttonScope = scope;
+              buttonTiming = (totalDelayMs, keyTimeMs, overheadMs, defaultDelayMs);
+            } else {
+              if (buttonTiming case (final delays, final keys, final overhead, final defaultDelay)) {
+                totalDelayMs = delays;
+                keyTimeMs = keys;
+                overheadMs = overhead;
+                defaultDelayMs = defaultDelay;
+              }
+              buttonStart = null;
+              buttonScope = null;
+              buttonTiming = null;
+            }
+            lastCommandTotalMs = 0;
           }
           break;
 

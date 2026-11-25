@@ -4,6 +4,23 @@ import 'package:tap_ducky/data/services/ducky_script_validator.dart';
 void main() {
   final validator = DuckyScriptValidator();
 
+  test('fallback estimates exclude button callbacks and their default delays', () {
+    final baseline = validator.validate('DEFAULT_DELAY 30\nDELAY 100\nDELAY 20');
+    final result = validator.validate(r'''
+DEFAULT_DELAY 30
+DELAY 100
+BUTTON_DEF
+  DEFAULT_DELAY 900
+  VAR $lock = $_CAPSLOCK_ON
+  DELAY 800
+END_BUTTON
+DELAY 20
+''');
+    expect(result.totalDelayMs, baseline.totalDelayMs);
+    expect(result.estimatedDurationMs, baseline.estimatedDurationMs);
+    expect(result.issues.single.message, contains(r'$_CAPSLOCK_ON'));
+  });
+
   test('variable reference permissions match the editor for all documented names', () {
     const readOnly = DuckyScriptValidator.readOnlyHak5Variables;
     const writable = DuckyScriptValidator.writableHak5Variables;
