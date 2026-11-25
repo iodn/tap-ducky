@@ -348,7 +348,8 @@ class ExpressionEvaluator(
       if (id != null) {
         if (id.text.equals("TRUE", ignoreCase = true)) return 1
         if (id.text.equals("FALSE", ignoreCase = true)) return 0
-        return DuckyScriptHostOs.constant(id.text) ?: 0
+        return DuckyScriptHostOs.constant(id.text)
+          ?: throw DuckyExpressionSyntaxException("Unknown constant '${id.text}'")
       }
 
       if (match(Kind.LPAREN) != null) {

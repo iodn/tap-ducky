@@ -6,6 +6,17 @@ import org.junit.Test
 
 class DuckyScriptHostOsTest {
   @Test
+  fun rejectsMisspelledConstantsInsteadOfTreatingThemAsUnknownOs() {
+    val script = "REM sample\nIF (\$_OS == WINDWOS) THEN\nDELAY 20\nEND_IF"
+    val error = assertThrows(DuckyExpressionSyntaxException::class.java) {
+      DuckyScriptParser().parse(script)
+    }
+    assertEquals(2, error.lineNumber)
+    assertEquals("Unknown constant 'WINDWOS'", error.message)
+    assertEquals(1, ExpressionEvaluator().evaluate("\$_OS == UNKNOWN", emptyMap()))
+  }
+
+  @Test
   fun comparesTheCurrentFingerprintWithHak5Names() {
     var host: String? = null
     val evaluator = ExpressionEvaluator {
