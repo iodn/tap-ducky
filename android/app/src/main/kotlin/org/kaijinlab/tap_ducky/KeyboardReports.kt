@@ -2,10 +2,28 @@ package org.kaijinlab.tap_ducky
 
 import java.io.File
 import java.util.Locale
+import kotlin.math.roundToInt
 
 internal const val KEYBOARD_KEY_SLOTS = 6
 internal const val KEYBOARD_BATCH_CANCELLED = 76
 internal const val KEYBOARD_BATCH_KILLED = 137
+internal const val DEFAULT_KEY_HOLD_US = 4000
+
+internal class KeyboardReportTiming(factor: Double, val allowShorterTimings: Boolean) {
+  val factor = (if (factor.isFinite()) factor else 1.0).coerceIn(0.1, 10.0)
+  val interKeyUs = (600 * this.factor).roundToInt().coerceIn(if (allowShorterTimings) 40 else 180, 50_000)
+  val estimatedReportOverheadUs = if (allowShorterTimings) 800 else 1500
+
+  fun holdUs(requestedUs: Int = DEFAULT_KEY_HOLD_US): Int =
+    (requestedUs * factor).roundToInt().coerceIn(if (allowShorterTimings) 300 else 1500, 150_000)
+
+  fun delaysFor(reportCount: Int, requestedHoldUs: Int = DEFAULT_KEY_HOLD_US): List<Int> {
+    val holdUs = holdUs(requestedHoldUs)
+    return List((reportCount - 1).coerceAtLeast(0)) { index ->
+      if (index % 2 == 0) interKeyUs else holdUs
+    }
+  }
+}
 
 internal fun keyboardReport(modifiers: Int, keys: List<Int>): ByteArray {
   require(keys.size <= KEYBOARD_KEY_SLOTS) { "A USB keyboard report holds at most $KEYBOARD_KEY_SLOTS keys" }
@@ -65,7 +83,9 @@ internal fun buildKeyboardBatchWrites(
     append("printf '${toPrintfEsc(report)}' >&3\n")
     val delayUs = delaysUs.getOrNull(index) ?: 0
     if (index != reports.lastIndex && delayUs > 0) {
-      appendLine("if [ -n \"\$USLP\" ]; then \$USLP $delayUs; else sleep 0.01; fi")
+      val fallbackUs = maxOf(delayUs, 10_000)
+      val fallbackSeconds = String.format(Locale.US, "%d.%06d", fallbackUs / 1_000_000, fallbackUs % 1_000_000)
+      appendLine("if [ -n \"\$USLP\" ]; then \$USLP $delayUs; else sleep $fallbackSeconds; fi")
     }
   }
 }

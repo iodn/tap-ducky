@@ -30,16 +30,11 @@ class GadgetManager(
   private val usbDataMarker = java.io.File(context.filesDir, "resume-usb-data")
   private val udcNameRegex = Regex("^[A-Za-z0-9._-]+$")
 
-  private val baseKeyDownHoldUs: Int = 4000
-  private val baseInterKeyDelayUs: Int = 600
-  private var minKeyDownHoldUs: Int = 1500
-  private var minInterKeyDelayUs: Int = 180
-  private val maxKeyDownHoldUs: Int = 150000
-  private val maxInterKeyDelayUs: Int = 50000
-  private val minTypingSpeedFactor: Double = 0.1
-  private val maxTypingSpeedFactor: Double = 10.0
-
-  @Volatile private var typingSpeedFactor: Double = normalizeTypingSpeedFactor(prefs.typingSpeedFactor.toDouble())
+  private val keyboardTimingLock = Any()
+  @Volatile private var keyboardTiming = KeyboardReportTiming(
+    prefs.typingSpeedFactor.toDouble(),
+    prefs.riskyFastMode,
+  )
 
   private val maxTypedCharsPerBatch: Int = 60
   private val flushEveryChars: Int = 120
@@ -64,8 +59,6 @@ class GadgetManager(
   @Volatile private var cachedUsleepSupport: Boolean? = null
   @Volatile private var calibratedDelayFloorUs: Int? = null
 
-  private var consecutiveWriteFailures = 0
-  private var lastWriteFailureAtMs: Long? = null
   private var keyboardMayBeHeld = false
   private var mouseButtonsMayBeHeld = false
 
@@ -158,7 +151,6 @@ class GadgetManager(
 
   init {
     lifecycleExecutor.execute { refreshAndEmitStatus() }
-    setRiskyFastMode(prefs.riskyFastMode)
   }
 
   fun attachStatusSink(sink: EventChannel.EventSink) {
@@ -402,16 +394,14 @@ class GadgetManager(
     log.log("keyboard", "Layout changed to: ${KeyboardLayout.getLayoutName(layout)}")
   }
 
-  fun getTypingSpeedFactor(): Double {
-    return normalizeTypingSpeedFactor(typingSpeedFactor)
-  }
+  fun getTypingSpeedFactor(): Double = keyboardTiming.factor
 
-  fun setTypingSpeedFactor(factor: Double): Double {
-    val applied = normalizeTypingSpeedFactor(factor)
-    typingSpeedFactor = applied
-    prefs.typingSpeedFactor = applied.toFloat()
-    log.log("kbd", "Typing speed factor set to $applied")
-    return applied
+  fun setTypingSpeedFactor(factor: Double): Double = synchronized(keyboardTimingLock) {
+    val timing = KeyboardReportTiming(factor, keyboardTiming.allowShorterTimings)
+    prefs.typingSpeedFactor = timing.factor.toFloat()
+    keyboardTiming = timing
+    log.log("kbd", "Typing speed factor set to ${timing.factor}")
+    timing.factor
   }
 
   fun setHidGraceWindowMs(ms: Long): Long {
@@ -431,31 +421,26 @@ class GadgetManager(
     return unicodeFallbackMode
   }
 
-  fun setRiskyFastMode(enabled: Boolean) {
+  fun setRiskyFastMode(enabled: Boolean) = synchronized(keyboardTimingLock) {
     prefs.riskyFastMode = enabled
-    if (enabled) {
-      minInterKeyDelayUs = 40
-      minKeyDownHoldUs = 300
-      log.log("kbd", "Risky fast mode enabled")
-    } else {
-      minInterKeyDelayUs = 180
-      minKeyDownHoldUs = 1500
-      log.log("kbd", "Risky fast mode disabled")
-    }
+    keyboardTiming = KeyboardReportTiming(keyboardTiming.factor, enabled)
+    log.log("kbd", if (enabled) "Risky fast mode enabled" else "Risky fast mode disabled")
   }
 
   fun estimateKeyTapDurationMs(): Long {
-    val interUs = effectiveDelayUsForEstimate(scaledInterKeyDelayUs())
-    val downUs = effectiveDelayUsForEstimate(scaledDownHoldUs(baseKeyDownHoldUs))
-    val overheadUs = estimateReportOverheadUs() * 3
+    val timing = keyboardTiming
+    val interUs = effectiveDelayUsForEstimate(timing.interKeyUs)
+    val downUs = effectiveDelayUsForEstimate(timing.holdUs())
+    val overheadUs = timing.estimatedReportOverheadUs * 3
     val totalUs = interUs + downUs + overheadUs
     return kotlin.math.max(0L, (totalUs / 1000.0).roundToInt().toLong())
   }
 
   fun estimateTypeStringDurationMs(text: String, perCharDelayMs: Int): Long {
     if (text.isEmpty()) return 0
-    val interUs = effectiveDelayUsForEstimate(scaledInterKeyDelayUs())
-    val downUs = effectiveDelayUsForEstimate(scaledDownHoldUs(baseKeyDownHoldUs))
+    val timing = keyboardTiming
+    val interUs = effectiveDelayUsForEstimate(timing.interKeyUs)
+    val downUs = effectiveDelayUsForEstimate(timing.holdUs())
     var count = 0
     for (ch in text) {
       if (keyboardMapper.getStrokeForChar(ch) != null) {
@@ -468,39 +453,13 @@ class GadgetManager(
     val baseMs = ((interUs + downUs) * count) / 1000.0
     val delayMs = perCharDelayMs.coerceAtLeast(0) * count.toLong()
     val reportCount = 1L + (count.toLong() * 2L)
-    val overheadMs = (reportCount * estimateReportOverheadUs()) / 1000.0
+    val overheadMs = (reportCount * timing.estimatedReportOverheadUs) / 1000.0
     var extraMs = 0L
     if (perCharDelayMs <= 0 && flushEveryChars > 0 && flushDelayMs > 0) {
       val flushes = text.length / flushEveryChars
       extraMs = flushes * flushDelayMs
     }
     return baseMs.roundToInt().toLong() + delayMs + extraMs + overheadMs.roundToInt().toLong()
-  }
-
-  private fun applySessionSlowdown(multiplier: Double) {
-    val next = normalizeTypingSpeedFactor(typingSpeedFactor * multiplier)
-    if (next == typingSpeedFactor) return
-    typingSpeedFactor = next
-    log.log("kbd", "Auto-slow typing speed factor to $next")
-  }
-
-  private fun recordWriteSuccess() {
-    consecutiveWriteFailures = 0
-    lastWriteFailureAtMs = null
-  }
-
-  private fun recordWriteFailure() {
-    val now = System.currentTimeMillis()
-    val last = lastWriteFailureAtMs
-    consecutiveWriteFailures = if (last != null && now - last <= 10_000L) {
-      consecutiveWriteFailures + 1
-    } else {
-      1
-    }
-    lastWriteFailureAtMs = now
-    if (consecutiveWriteFailures >= 2) {
-      applySessionSlowdown(0.85)
-    }
   }
 
   @Synchronized
@@ -823,7 +782,7 @@ class GadgetManager(
     if (trimmed.isEmpty()) return
     val code = HidSpec.keyCodeFor(trimmed)
     if (code != null) {
-      writeKeyboardTap(path, mods = 0x00, key = code, downHoldUs = scaledDownHoldUs(baseKeyDownHoldUs))
+      writeKeyboardTap(path, mods = 0x00, key = code)
       log.log("test", "Keyboard key=$trimmed code=0x${Integer.toHexString(code)}")
       return
     }
@@ -856,8 +815,7 @@ class GadgetManager(
     extraKeys: List<Int>,
     shouldCancel: (() -> Boolean)?,
   ) {
-    val interUs = scaledInterKeyDelayUs()
-    val downUs = scaledDownHoldUs(baseKeyDownHoldUs)
+    val timing = keyboardTiming
     for (ch in text) {
       if (shouldCancel?.invoke() == true) return
       val stroke = keyboardMapper.getStrokeForChar(ch)
@@ -868,7 +826,7 @@ class GadgetManager(
         writeKeyboardReportsWithDelays(
           path,
           reports = reports,
-          delaysUs = strokeDelays(reports.size, interUs, downUs)
+          delaysUs = timing.delaysFor(reports.size)
         )
         if (delayMs > 0 && !sleepCancellable(delayMs.toLong(), shouldCancel)) return
       } else {
@@ -897,7 +855,6 @@ class GadgetManager(
       path,
       mods = mods,
       key = key,
-      downHoldUs = scaledDownHoldUs(baseKeyDownHoldUs),
       heldModifiers = heldModifiers,
       extraKeys = extraKeys,
     )
@@ -909,7 +866,7 @@ class GadgetManager(
     val path = prefs.activeKeyboardDev ?: throw IllegalStateException("Keyboard HID device not available")
     val mods = 0x01 or 0x04
     val del = HidSpec.keyCodeFor("DELETE") ?: 0x4C
-    writeKeyboardTap(path, mods = mods, key = del, downHoldUs = scaledDownHoldUs(12000))
+    writeKeyboardTap(path, mods = mods, key = del, requestedHoldUs = 12000)
     log.log("test", "Ctrl+Alt+Del sent")
   }
 
@@ -950,10 +907,8 @@ class GadgetManager(
     while (attempt < 3) {
       val r = root.exec(script, timeoutSec = 5)
       if (r.ok) {
-        recordWriteSuccess()
         return true
       }
-      recordWriteFailure()
       if (attempt < 2) {
         Thread.sleep(200L * (1L shl attempt))
         waitForActive(hidActiveGraceMs)
@@ -1347,7 +1302,7 @@ class GadgetManager(
     path: String,
     mods: Int,
     key: Int,
-    downHoldUs: Int,
+    requestedHoldUs: Int = DEFAULT_KEY_HOLD_US,
     heldModifiers: Int = 0,
     extraKeys: List<Int> = emptyList(),
   ) {
@@ -1356,7 +1311,7 @@ class GadgetManager(
     writeKeyboardReportsWithDelays(
       path,
       reports = listOf(baseline, down, baseline),
-      delaysUs = listOf(scaledInterKeyDelayUs(), downHoldUs)
+      delaysUs = keyboardTiming.delaysFor(3, requestedHoldUs)
     )
   }
 
@@ -1402,15 +1357,14 @@ class GadgetManager(
     }
     if (strokes.isEmpty()) return
 
-    val interUs = scaledInterKeyDelayUs()
-    val downUs = scaledDownHoldUs(baseKeyDownHoldUs)
+    val timing = keyboardTiming
 
     val reports = ArrayList<ByteArray>(1 + strokes.size * 4)
     reports.add(keyboardReport(extraModifiers, extraKeys))
     for (stroke in strokes) {
       addStrokeReports(reports, stroke, extraModifiers, extraKeys)
     }
-    writeKeyboardReportsWithDelays(path, reports, strokeDelays(reports.size, interUs, downUs))
+    writeKeyboardReportsWithDelays(path, reports, timing.delaysFor(reports.size))
   }
 
   private fun addStrokeReports(
@@ -1427,15 +1381,6 @@ class GadgetManager(
       reports.add(keyboardPressReport(extraModifiers, key, extraKeys))
       reports.add(baseline)
     }
-  }
-
-  private fun strokeDelays(reportCount: Int, interUs: Int, downUs: Int): List<Int> {
-    val delays = ArrayList<Int>(max(0, reportCount - 1))
-    for (i in 0 until (reportCount - 1)) {
-      val isDownReport = (i % 2 == 1)
-      delays.add(if (isDownReport) downUs else interUs)
-    }
-    return delays
   }
 
   private fun addFallbackStrokes(ch: Char, strokes: MutableList<KeyStroke>) {
@@ -1538,7 +1483,7 @@ class GadgetManager(
       writeKeyboardReportsWithDelays(
         path,
         reports = reports,
-        delaysUs = strokeDelays(reports.size, scaledInterKeyDelayUs(), scaledDownHoldUs(baseKeyDownHoldUs))
+        delaysUs = keyboardTiming.delaysFor(reports.size)
       )
       if (withPerCharDelay && delayMs > 0 &&
         !sleepCancellable(delayMs.toLong(), shouldCancel)) return
@@ -1564,7 +1509,7 @@ class GadgetManager(
             writeKeyboardReportsWithDelays(
               path,
               reports = reports,
-              delaysUs = strokeDelays(reports.size, scaledInterKeyDelayUs(), scaledDownHoldUs(baseKeyDownHoldUs))
+              delaysUs = keyboardTiming.delaysFor(reports.size)
             )
             if (withPerCharDelay && delayMs > 0 &&
               !sleepCancellable(delayMs.toLong(), shouldCancel)) return
@@ -1624,14 +1569,12 @@ class GadgetManager(
     val result = root.exec(script, timeoutSec = 8)
     if (result.ok) {
       keyboardMayBeHeld = reports.last().any { it != 0.toByte() }
-      recordWriteSuccess()
       return
     }
     if (marker != null && (result.exitCode == KEYBOARD_BATCH_CANCELLED || result.exitCode == KEYBOARD_BATCH_KILLED)) {
       val stopRequested = synchronized(executionLock) { cancelledExecutionId == activeExecutionId }
       if (stopRequested) return
     }
-    recordWriteFailure()
     val detail = result.stderr.trim().ifEmpty { result.stdout.trim() }
     throw HidWriteException(
       "HID_WRITE_FAILED",
@@ -1651,10 +1594,8 @@ class GadgetManager(
     val result = root.exec(script, timeoutSec = 5)
     if (result.ok) {
       mouseButtonsMayBeHeld = buttonsHeld
-      recordWriteSuccess()
       return
     }
-    recordWriteFailure()
     val detail = result.stderr.trim().ifEmpty { result.stdout.trim() }
     throw HidWriteException(
       "HID_MOUSE_WRITE_FAILED",
@@ -2159,27 +2100,6 @@ class GadgetManager(
       } catch (_: Throwable) {
       }
     }
-  }
-
-  private fun normalizeTypingSpeedFactor(value: Double): Double {
-    val v = if (value.isFinite()) value else 1.0
-    return v.coerceIn(minTypingSpeedFactor, maxTypingSpeedFactor)
-  }
-
-  private fun scaledInterKeyDelayUs(): Int {
-    val f = normalizeTypingSpeedFactor(typingSpeedFactor)
-    val v = (baseInterKeyDelayUs.toDouble() * f).roundToInt()
-    return v.coerceIn(minInterKeyDelayUs, maxInterKeyDelayUs)
-  }
-
-  private fun scaledDownHoldUs(requestUs: Int): Int {
-    val f = normalizeTypingSpeedFactor(typingSpeedFactor)
-    val v = (requestUs.toDouble() * f).roundToInt()
-    return v.coerceIn(minKeyDownHoldUs, maxKeyDownHoldUs)
-  }
-
-  private fun estimateReportOverheadUs(): Int {
-    return if (prefs.riskyFastMode) 800 else 1500
   }
 
   private fun effectiveDelayUsForEstimate(us: Int): Int {
