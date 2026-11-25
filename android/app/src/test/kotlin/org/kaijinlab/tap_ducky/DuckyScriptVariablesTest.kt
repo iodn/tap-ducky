@@ -312,6 +312,10 @@ class DuckyScriptVariablesTest {
     assertEquals(0x7fff, evaluator.evaluate("0xffff >> 1", emptyMap()))
     assertEquals(0, evaluator.evaluate("0x8000 << 1", emptyMap()))
     assertEquals(0, evaluator.evaluate("0xffff >> 32", emptyMap()))
+    assertEquals(32768, evaluator.evaluate("1 << 15", emptyMap()))
+    assertEquals(0, evaluator.evaluate("1 << 16", emptyMap()))
+    assertEquals(0, evaluator.evaluate("0xffff >> (65535 + 1)", emptyMap()))
+    assertEquals(0, evaluator.evaluate("1 << -65536", emptyMap()))
     assertEquals(1, evaluator.evaluate("(1 | 2 & 6) == 3 && 1 << 2 + 1 == 8", emptyMap()))
   }
 

@@ -264,9 +264,9 @@ class ExpressionEvaluator(
           matchOp(">>") -> ">>"
           else -> return left
         }
-        val count = asU16(parseAddSub())
+        val count = parseAddSub()
         left = when {
-          count >= 16 -> 0
+          count !in 0..15 -> 0
           operator == "<<" -> asU16(left shl count)
           else -> asU16(left) ushr count
         }
