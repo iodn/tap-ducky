@@ -9,6 +9,19 @@ import org.junit.Test
 
 class DuckyScriptVariablesTest {
   @Test
+  fun preservesAcceptedCallbacksWhenClosingButtonInput() {
+    val variables = DuckyScriptVariables({ null }, { null })
+    variables.defineButtonCallback()
+    assertTrue(variables.tryRecordButtonPress(100))
+    variables.closeScriptButtonInput()
+    assertFalse(variables.canPressScriptButton())
+    assertFalse(variables.tryRecordButtonPress(1200))
+    assertTrue(variables.beginPendingButtonCallback())
+    variables.finishButtonCallback()
+    assertFalse(variables.beginPendingButtonCallback())
+  }
+
+  @Test
   fun queuesDefinedCallbacksOnlyForAcceptedOptionalPresses() {
     val variables = DuckyScriptVariables({ null }, { null })
     assertEquals(0, variables.read(DuckyScriptVariables.BUTTON_USER_DEFINED))

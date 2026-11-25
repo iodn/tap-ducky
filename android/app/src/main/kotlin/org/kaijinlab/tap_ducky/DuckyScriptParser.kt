@@ -847,6 +847,10 @@ class DuckyScriptExecutor(
 
     try {
       executeRange(processed, 0, processed.size)
+      internalVariables.closeScriptButtonInput()
+      updateScriptButton()
+      throwIfCancelled()
+      runPendingButtonCallback()
       throwIfCancelled()
     } catch (e: CancelSignal) {
       manager.releaseHeldInputBestEffort()
@@ -883,6 +887,8 @@ class DuckyScriptExecutor(
         )
       )
       throw e
+    } finally {
+      internalVariables.closeScriptButtonInput()
     }
 
     manager.releaseHeldInputBestEffort()

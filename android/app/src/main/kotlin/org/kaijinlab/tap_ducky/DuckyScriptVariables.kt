@@ -33,6 +33,7 @@ internal class DuckyScriptVariables(
   private var randomMax = 9
   private var buttonPressed = false
   private var buttonEnabled = true
+  private var buttonInputClosed = false
   private var buttonDefined = false
   private var buttonCallbackEnabled = false
   private var buttonCallbackPending = false
@@ -50,7 +51,7 @@ internal class DuckyScriptVariables(
   } ?: 0L
 
   @Synchronized fun tryRecordButtonPress(elapsedMs: Long): Boolean {
-    if (!buttonEnabled || buttonCallbackRunning || buttonCooldownRemainingMs(elapsedMs) > 0) return false
+    if (!canPressScriptButton() || buttonCooldownRemainingMs(elapsedMs) > 0) return false
     recordButtonPress(elapsedMs)
     if (buttonCallbackEnabled) buttonCallbackPending = true
     return true
@@ -73,7 +74,11 @@ internal class DuckyScriptVariables(
     buttonCallbackRunning = false
   }
 
-  @Synchronized fun canPressScriptButton(): Boolean = buttonEnabled && !buttonCallbackRunning
+  @Synchronized fun canPressScriptButton(): Boolean = buttonEnabled && !buttonCallbackRunning && !buttonInputClosed
+
+  @Synchronized fun closeScriptButtonInput() {
+    buttonInputClosed = true
+  }
 
   @Synchronized fun read(name: String): Int? = when (name) {
     BUTTON_ENABLED -> if (buttonEnabled) 1 else 0
