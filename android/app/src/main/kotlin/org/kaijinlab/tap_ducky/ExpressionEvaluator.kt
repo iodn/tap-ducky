@@ -21,7 +21,7 @@ class ExpressionEvaluator(
   }
 
   internal fun validateSyntax(expression: String) {
-    Parser(tokenize(expression), emptyMap()) { 0 }.parse()
+    Parser(tokenize(expression), emptyMap(), { 0 }, syntaxOnly = true).parse()
   }
 
   internal fun evaluateCondition(
@@ -141,6 +141,7 @@ class ExpressionEvaluator(
     private val tokens: List<Tok>,
     private val vars: Map<String, Int>,
     private val readInternalVariable: (String) -> Int?,
+    private val syntaxOnly: Boolean = false,
   ) {
     private var pos = 0
 
@@ -288,19 +289,19 @@ class ExpressionEvaluator(
       while (true) {
         when {
           matchOp("*") -> left = satMul(left, parsePower())
-          matchOp("/") -> {
-            val d = parsePower()
-            left = if (d == 0) 0 else left / d
-          }
-
-          matchOp("%") -> {
-            val d = parsePower()
-            left = if (d == 0) 0 else left % d
-          }
+          matchOp("/") -> left /= parseDivisor("Division")
+          matchOp("%") -> left %= parseDivisor("Remainder")
 
           else -> return left
         }
       }
+    }
+
+    private fun parseDivisor(operation: String): Int {
+      val divisor = parsePower()
+      if (divisor != 0) return divisor
+      if (syntaxOnly) return 1
+      throw DuckyScriptValueException("$operation by zero in expression")
     }
 
     private fun parsePower(): Int {

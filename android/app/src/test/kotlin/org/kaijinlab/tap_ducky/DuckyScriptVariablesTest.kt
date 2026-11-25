@@ -249,6 +249,19 @@ class DuckyScriptVariablesTest {
   }
 
   @Test
+  fun reportsZeroDivisorsOnlyWhenExpressionsAreEvaluated() {
+    val estimator = DuckyScriptEstimator(DuckyScriptVariables({ null }, { null }), { _, _ -> 0 }, { 0 })
+    assertEquals(30L, estimator.estimate("VAR \$rate = 2\nDELAY 60 / \$rate"))
+    assertEquals(20L, estimator.estimate("IF FALSE THEN\nDELAY 1 / 0\nEND_IF\nDELAY 20"))
+    for ((operator, message) in listOf("/" to "Division", "%" to "Remainder")) {
+      val error = assertThrows(DuckyScriptValueException::class.java) {
+        estimator.estimate("VAR \$rate = 0\nIF (60 $operator \$rate == 0) THEN\nDELAY 20\nEND_IF")
+      }
+      assertEquals("$message by zero in expression", error.message)
+    }
+  }
+
+  @Test
   fun estimatesTheConfirmedButtonPathAndAllowsClearingTheFlag() {
     val variables = DuckyScriptVariables({ null }, { null })
     val estimator = DuckyScriptEstimator(variables, { _, _ -> 0 }, { 0 })
