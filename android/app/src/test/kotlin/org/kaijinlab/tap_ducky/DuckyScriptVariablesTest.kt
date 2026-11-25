@@ -9,6 +9,21 @@ import org.junit.Test
 
 class DuckyScriptVariablesTest {
   @Test
+  fun ledOffDisablesBothSupportedIndicatorModes() {
+    val variables = DuckyScriptVariables({ null }, { null })
+    val estimator = DuckyScriptEstimator(variables, { _, _ -> 0 }, { 0 })
+    val system = DuckyScriptVariables.SYSTEM_LEDS_ENABLED
+    val activity = DuckyScriptVariables.INJECTING_LEDS_ENABLED
+    estimator.estimate("LED_OFF")
+    assertEquals(0, variables.read(system))
+    assertEquals(0, variables.read(activity))
+    estimator.estimate("$activity = TRUE")
+    assertEquals(0, variables.read(system))
+    assertEquals(1, variables.read(activity))
+    assertThrows(IllegalArgumentException::class.java) { DuckyScriptParser().parse("LED_OFF 1") }
+  }
+
+  @Test
   fun readsAndWritesTheRunActivityIndicatorSetting() {
     val variables = DuckyScriptVariables({ null }, { null })
     val estimator = DuckyScriptEstimator(variables, { _, _ -> 0 }, { 0 })

@@ -58,6 +58,7 @@ enum class CommandType {
   BUTTON_DEF,
   END_BUTTON,
   STOP_PAYLOAD,
+  LED_OFF,
   FUNCTION,
   END_FUNCTION,
   RETURN,
@@ -298,6 +299,10 @@ class DuckyScriptParser {
         "STOPPAYLOAD" -> {
           require(parts.size == 1) { "Line $lineNumber: STOP_PAYLOAD takes no arguments" }
           commands.add(DuckyCommand(CommandType.STOP_PAYLOAD, emptyList(), lineNumber))
+        }
+        "LEDOFF" -> {
+          require(parts.size == 1) { "Line $lineNumber: LED_OFF takes no arguments" }
+          commands.add(DuckyCommand(CommandType.LED_OFF, emptyList(), lineNumber))
         }
 
         "STRING", "STRINGLN" -> {
@@ -1544,6 +1549,12 @@ class DuckyScriptExecutor(
 
       CommandType.STOP_PAYLOAD -> throw StopPayloadSignal()
 
+      CommandType.LED_OFF -> {
+        setVar(DuckyScriptVariables.SYSTEM_LEDS_ENABLED, 0)
+        setVar(DuckyScriptVariables.INJECTING_LEDS_ENABLED, 0)
+        setExitCode(0)
+      }
+
       CommandType.SLEEP_UNTIL -> {
         val arg = cmd.args.firstOrNull().orEmpty()
         val ms = computeSleepUntilMs(arg)
@@ -2393,6 +2404,12 @@ internal class DuckyScriptEstimator(
       }
 
       CommandType.STOP_PAYLOAD -> throw StopPayloadSignal()
+
+      CommandType.LED_OFF -> {
+        setVar(DuckyScriptVariables.SYSTEM_LEDS_ENABLED, 0)
+        setVar(DuckyScriptVariables.INJECTING_LEDS_ENABLED, 0)
+        setExitCode(0)
+      }
 
       CommandType.DEFAULTDELAY,
       CommandType.DEFAULT_DELAY -> {
