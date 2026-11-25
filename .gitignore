@@ -34,6 +34,7 @@ migrate_working_dir/
 /coverage/
 
 # Local documentation
+/doc/
 /docs/
 
 # Symbolication related
