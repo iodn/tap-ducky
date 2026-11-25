@@ -5,6 +5,8 @@ import java.util.Calendar
 import java.util.regex.Pattern
 import kotlin.random.Random
 
+internal const val MAX_SCRIPT_REPEATS = 20_000
+
 data class DuckyCommand(
   val type: CommandType,
   val args: List<String> = emptyList(),
@@ -138,11 +140,6 @@ enum class CommandType {
 
 class DuckyScriptParser {
   private val defines = mutableMapOf<String, String>()
-  private var inRemBlock = false
-  private var inStringBlock = false
-  private var inStringLnBlock = false
-  private var stringBlockContent = StringBuilder()
-
   private val modifierCommands = setOf(
     "GUI",
     "WINDOWS",
@@ -159,52 +156,57 @@ class DuckyScriptParser {
   private val varDeclRegex = Regex("^VAR\\s+(\\$[A-Za-z_][A-Za-z0-9_]*|\\$\\?)\\s*(?:=\\s*(.*))?$", RegexOption.IGNORE_CASE)
 
   fun parse(script: String): List<DuckyCommand> {
+    defines.clear()
     val commands = mutableListOf<DuckyCommand>()
     val lines = script.lines()
+    var inRemBlock = false
+    var stringBlockType: CommandType? = null
+    val stringBlockLines = mutableListOf<String>()
+    var blockStart = 0
+    var remainingRepeats = MAX_SCRIPT_REPEATS
     var lineNumber = 0
 
-    for (rawLine in lines) {
+    for (raw in lines) {
       lineNumber++
-      val raw = rawLine
-      var line = rawLine.trim()
+      val trimmed = raw.trim()
 
       if (inRemBlock) {
-        if (line.equals("END_REM", ignoreCase = true)) {
+        if (trimmed.equals("END_REM", ignoreCase = true)) {
           inRemBlock = false
         }
         continue
       }
 
-      if (inStringBlock) {
-        if (raw == "\\END_STRING") {
-          stringBlockContent.append("END_STRING")
-        } else if (raw == "END_STRING") {
-          inStringBlock = false
-          commands.add(DuckyCommand(CommandType.STRING, listOf(stringBlockContent.toString()), lineNumber))
-          stringBlockContent.clear()
+      val blockType = stringBlockType
+      if (blockType != null) {
+        val end = "END_${blockType.name}"
+        if (trimmed.equals(end, ignoreCase = true)) {
+          if (stringBlockLines.isNotEmpty()) {
+            val separator = if (blockType == CommandType.STRINGLN) "\n" else ""
+            commands.add(DuckyCommand(blockType, listOf(stringBlockLines.joinToString(separator)), blockStart))
+          }
+          stringBlockType = null
+          stringBlockLines.clear()
+        } else if (trimmed.equals("\\$end", ignoreCase = true)) {
+          stringBlockLines.add(raw.replaceFirst("\\", ""))
         } else {
-          stringBlockContent.append(raw)
+          stringBlockLines.add(raw)
         }
         continue
       }
 
-      if (inStringLnBlock) {
-        if (raw == "\\END_STRINGLN") {
-          stringBlockContent.append("END_STRINGLN").append('\n')
-        } else if (raw == "END_STRINGLN") {
-          inStringLnBlock = false
-          commands.add(DuckyCommand(CommandType.STRINGLN, listOf(stringBlockContent.toString()), lineNumber))
-          stringBlockContent.clear()
-        } else {
-          stringBlockContent.append(raw).append('\n')
+      if (trimmed.isEmpty()) continue
+      when (trimmed.takeWhile { !it.isWhitespace() }.uppercase(Locale.US)) {
+        "REM" -> continue
+        "REM_BLOCK" -> {
+          inRemBlock = true
+          blockStart = lineNumber
+          continue
         }
-        continue
       }
 
-      if (line.isEmpty()) continue
-      if (line.startsWith("REM ", ignoreCase = true)) continue
-
-      line = expandDefines(line)
+      val expanded = expandDefines(raw.trimStart())
+      val line = expanded.trimEnd()
 
       val assignMatch = assignRegex.matchEntire(line)
       if (assignMatch != null) {
@@ -221,46 +223,43 @@ class DuckyScriptParser {
 
       when (cmd) {
         "REM" -> continue
-        "REM_BLOCK" -> { inRemBlock = true; continue }
+        "REMBLOCK" -> {
+          inRemBlock = true
+          blockStart = lineNumber
+        }
         "TRY" -> {
           commands.add(DuckyCommand(CommandType.TRY, emptyList(), lineNumber))
         }
         "CATCH" -> {
           commands.add(DuckyCommand(CommandType.CATCH, emptyList(), lineNumber))
         }
-        "END_TRY", "ENDTRY" -> {
+        "ENDTRY" -> {
           commands.add(DuckyCommand(CommandType.END_TRY, emptyList(), lineNumber))
         }
-        "SLEEP_UNTIL", "SLEEPUNTIL" -> {
+        "SLEEPUNTIL" -> {
           val arg = parts.drop(1).joinToString(" ").trim()
           commands.add(DuckyCommand(CommandType.SLEEP_UNTIL, listOf(arg), lineNumber))
         }
-        "WAIT_FOR", "WAITFOR" -> {
+        "WAITFOR" -> {
           val args = parts.drop(1)
           commands.add(DuckyCommand(CommandType.WAIT_FOR, args, lineNumber))
         }
 
-        "STRING" -> {
-          if (line.length > 6) {
-            val text = line.substring(6).trim()
-            if (text.isEmpty()) inStringBlock = true else commands.add(DuckyCommand(CommandType.STRING, listOf(text), lineNumber))
+        "STRING", "STRINGLN" -> {
+          val type = if (cmd == "STRING") CommandType.STRING else CommandType.STRINGLN
+          val text = expanded.drop(parts[0].length + 1)
+          if (text.isBlank()) {
+            stringBlockType = type
+            blockStart = lineNumber
           } else {
-            inStringBlock = true
+            commands.add(DuckyCommand(type, listOf(text), lineNumber))
           }
         }
 
-        "STRINGLN" -> {
-          if (line.length > 8) {
-            val text = line.substring(8).trim()
-            if (text.isEmpty()) inStringLnBlock = true else commands.add(DuckyCommand(CommandType.STRINGLN, listOf(text), lineNumber))
-          } else {
-            inStringLnBlock = true
-          }
-        }
-
-        "STRING_DELAY", "STRINGDELAY" -> {
+        "STRINGDELAY" -> {
           val delayMs = parts.getOrNull(1)?.toIntOrNull() ?: 0
-          val text = parts.drop(2).joinToString(" ")
+          val text = expanded.drop(parts[0].length).trimStart()
+            .drop(parts.getOrNull(1).orEmpty().length + 1)
           commands.add(DuckyCommand(CommandType.STRING_DELAY, listOf(delayMs.toString(), text), lineNumber))
         }
 
@@ -269,7 +268,7 @@ class DuckyScriptParser {
           commands.add(DuckyCommand(CommandType.DELAY, listOf(ms.toString()), lineNumber))
         }
 
-        "DEFAULTDELAY", "DEFAULT_DELAY" -> {
+        "DEFAULTDELAY" -> {
           val ms = parts.getOrNull(1)?.toIntOrNull() ?: 0
           commands.add(DuckyCommand(CommandType.DEFAULTDELAY, listOf(ms.toString()), lineNumber))
         }
@@ -294,7 +293,7 @@ class DuckyScriptParser {
           commands.add(DuckyCommand(CommandType.KEYUP, listOf(key), lineNumber))
         }
 
-        "INJECT_MOD" -> {
+        "INJECTMOD" -> {
           val args = parts.drop(1)
           commands.add(DuckyCommand(CommandType.INJECT_MOD, args, lineNumber))
         }
@@ -366,7 +365,7 @@ class DuckyScriptParser {
           commands.add(DuckyCommand(CommandType.WHILE, listOf(condition), lineNumber))
         }
 
-        "END_WHILE", "ENDWHILE" -> commands.add(DuckyCommand(CommandType.END_WHILE, emptyList(), lineNumber))
+        "ENDWHILE" -> commands.add(DuckyCommand(CommandType.END_WHILE, emptyList(), lineNumber))
 
         "IF" -> {
           val condition = extractConditionAfterKeyword(line, "IF", dropThen = true, dropDo = false)
@@ -382,17 +381,17 @@ class DuckyScriptParser {
           }
         }
 
-        "END_IF", "ENDIF" -> commands.add(DuckyCommand(CommandType.END_IF, emptyList(), lineNumber))
+        "ENDIF" -> commands.add(DuckyCommand(CommandType.END_IF, emptyList(), lineNumber))
 
         "FUNCTION" -> {
           val (funcName, funcArgs) = extractFunctionSignature(line)
           commands.add(DuckyCommand(CommandType.FUNCTION, listOf(funcName, *funcArgs.toTypedArray()), lineNumber))
         }
 
-        "END_FUNCTION", "ENDFUNCTION" -> commands.add(DuckyCommand(CommandType.END_FUNCTION, emptyList(), lineNumber))
+        "ENDFUNCTION" -> commands.add(DuckyCommand(CommandType.END_FUNCTION, emptyList(), lineNumber))
 
         "RETURN" -> {
-          val value = line.substringAfter("RETURN", "").trim()
+          val value = line.drop(parts[0].length).trim()
           commands.add(DuckyCommand(CommandType.RETURN, if (value.isEmpty()) emptyList() else listOf(value), lineNumber))
         }
 
@@ -419,36 +418,43 @@ class DuckyScriptParser {
         "ATTACKMODE" -> commands.add(DuckyCommand(CommandType.ATTACKMODE, parts.drop(1), lineNumber))
 
         "REPEAT" -> {
-          val count = parts.getOrNull(1)?.toIntOrNull() ?: 1
+          val count = parts.getOrNull(1)?.toIntOrNull()
+          require(count != null && count in 1..MAX_SCRIPT_REPEATS) {
+            "Line $lineNumber: REPEAT requires a count from 1 to $MAX_SCRIPT_REPEATS"
+          }
+          require(count <= remainingRepeats) {
+            "Line $lineNumber: REPEAT exceeds the script limit of $MAX_SCRIPT_REPEATS repetitions"
+          }
+          remainingRepeats -= count
           commands.add(DuckyCommand(CommandType.REPEAT, listOf(count.toString()), lineNumber))
         }
 
-        "RANDOM_LOWERCASE_LETTER", "RANDOMLOWERCASELETTER" -> {
+        "RANDOMLOWERCASELETTER" -> {
           val count = parts.getOrNull(1)?.toIntOrNull() ?: 1
           commands.add(DuckyCommand(CommandType.RANDOM_LOWERCASE_LETTER, listOf(count.toString()), lineNumber))
         }
 
-        "RANDOM_UPPERCASE_LETTER", "RANDOMUPPERCASELETTER" -> {
+        "RANDOMUPPERCASELETTER" -> {
           val count = parts.getOrNull(1)?.toIntOrNull() ?: 1
           commands.add(DuckyCommand(CommandType.RANDOM_UPPERCASE_LETTER, listOf(count.toString()), lineNumber))
         }
 
-        "RANDOM_LETTER", "RANDOMLETTER" -> {
+        "RANDOMLETTER" -> {
           val count = parts.getOrNull(1)?.toIntOrNull() ?: 1
           commands.add(DuckyCommand(CommandType.RANDOM_LETTER, listOf(count.toString()), lineNumber))
         }
 
-        "RANDOM_NUMBER", "RANDOMNUMBER" -> {
+        "RANDOMNUMBER" -> {
           val count = parts.getOrNull(1)?.toIntOrNull() ?: 1
           commands.add(DuckyCommand(CommandType.RANDOM_NUMBER, listOf(count.toString()), lineNumber))
         }
 
-        "RANDOM_SPECIAL", "RANDOMSPECIAL" -> {
+        "RANDOMSPECIAL" -> {
           val count = parts.getOrNull(1)?.toIntOrNull() ?: 1
           commands.add(DuckyCommand(CommandType.RANDOM_SPECIAL, listOf(count.toString()), lineNumber))
         }
 
-        "RANDOM_CHAR", "RANDOMCHAR" -> {
+        "RANDOMCHAR" -> {
           val count = parts.getOrNull(1)?.toIntOrNull() ?: 1
           commands.add(DuckyCommand(CommandType.RANDOM_CHAR, listOf(count.toString()), lineNumber))
         }
@@ -504,30 +510,30 @@ class DuckyScriptParser {
         "F23" -> commands.add(DuckyCommand(CommandType.F23, emptyList(), lineNumber))
         "F24" -> commands.add(DuckyCommand(CommandType.F24, emptyList(), lineNumber))
 
-        "MEDIA_PLAYPAUSE", "PLAYPAUSE" -> commands.add(DuckyCommand(CommandType.MEDIA_PLAYPAUSE, emptyList(), lineNumber))
-        "MEDIA_STOP", "STOPCD" -> commands.add(DuckyCommand(CommandType.MEDIA_STOP, emptyList(), lineNumber))
-        "MEDIA_PREV", "PREVIOUSSONG" -> commands.add(DuckyCommand(CommandType.MEDIA_PREV, emptyList(), lineNumber))
-        "MEDIA_NEXT", "NEXTSONG" -> commands.add(DuckyCommand(CommandType.MEDIA_NEXT, emptyList(), lineNumber))
-        "MEDIA_VOLUMEUP", "VOLUMEUP" -> commands.add(DuckyCommand(CommandType.MEDIA_VOLUMEUP, emptyList(), lineNumber))
-        "MEDIA_VOLUMEDOWN", "VOLUMEDOWN" -> commands.add(DuckyCommand(CommandType.MEDIA_VOLUMEDOWN, emptyList(), lineNumber))
-        "MEDIA_MUTE", "MUTE" -> commands.add(DuckyCommand(CommandType.MEDIA_MUTE, emptyList(), lineNumber))
+        "MEDIAPLAYPAUSE", "PLAYPAUSE" -> commands.add(DuckyCommand(CommandType.MEDIA_PLAYPAUSE, emptyList(), lineNumber))
+        "MEDIASTOP", "STOPCD" -> commands.add(DuckyCommand(CommandType.MEDIA_STOP, emptyList(), lineNumber))
+        "MEDIAPREV", "PREVIOUSSONG" -> commands.add(DuckyCommand(CommandType.MEDIA_PREV, emptyList(), lineNumber))
+        "MEDIANEXT", "NEXTSONG" -> commands.add(DuckyCommand(CommandType.MEDIA_NEXT, emptyList(), lineNumber))
+        "MEDIAVOLUMEUP", "VOLUMEUP" -> commands.add(DuckyCommand(CommandType.MEDIA_VOLUMEUP, emptyList(), lineNumber))
+        "MEDIAVOLUMEDOWN", "VOLUMEDOWN" -> commands.add(DuckyCommand(CommandType.MEDIA_VOLUMEDOWN, emptyList(), lineNumber))
+        "MEDIAMUTE", "MUTE" -> commands.add(DuckyCommand(CommandType.MEDIA_MUTE, emptyList(), lineNumber))
 
-        "NUMPAD_0", "KP0" -> commands.add(DuckyCommand(CommandType.NUMPAD_0, emptyList(), lineNumber))
-        "NUMPAD_1", "KP1" -> commands.add(DuckyCommand(CommandType.NUMPAD_1, emptyList(), lineNumber))
-        "NUMPAD_2", "KP2" -> commands.add(DuckyCommand(CommandType.NUMPAD_2, emptyList(), lineNumber))
-        "NUMPAD_3", "KP3" -> commands.add(DuckyCommand(CommandType.NUMPAD_3, emptyList(), lineNumber))
-        "NUMPAD_4", "KP4" -> commands.add(DuckyCommand(CommandType.NUMPAD_4, emptyList(), lineNumber))
-        "NUMPAD_5", "KP5" -> commands.add(DuckyCommand(CommandType.NUMPAD_5, emptyList(), lineNumber))
-        "NUMPAD_6", "KP6" -> commands.add(DuckyCommand(CommandType.NUMPAD_6, emptyList(), lineNumber))
-        "NUMPAD_7", "KP7" -> commands.add(DuckyCommand(CommandType.NUMPAD_7, emptyList(), lineNumber))
-        "NUMPAD_8", "KP8" -> commands.add(DuckyCommand(CommandType.NUMPAD_8, emptyList(), lineNumber))
-        "NUMPAD_9", "KP9" -> commands.add(DuckyCommand(CommandType.NUMPAD_9, emptyList(), lineNumber))
-        "NUMPAD_PLUS", "KPPLUS" -> commands.add(DuckyCommand(CommandType.NUMPAD_PLUS, emptyList(), lineNumber))
-        "NUMPAD_MINUS", "KPMINUS" -> commands.add(DuckyCommand(CommandType.NUMPAD_MINUS, emptyList(), lineNumber))
-        "NUMPAD_MULTIPLY", "KPASTERISK" -> commands.add(DuckyCommand(CommandType.NUMPAD_MULTIPLY, emptyList(), lineNumber))
-        "NUMPAD_DIVIDE", "KPSLASH" -> commands.add(DuckyCommand(CommandType.NUMPAD_DIVIDE, emptyList(), lineNumber))
-        "NUMPAD_ENTER", "KPENTER" -> commands.add(DuckyCommand(CommandType.NUMPAD_ENTER, emptyList(), lineNumber))
-        "NUMPAD_PERIOD", "KPDOT" -> commands.add(DuckyCommand(CommandType.NUMPAD_PERIOD, emptyList(), lineNumber))
+        "NUMPAD0", "KP0" -> commands.add(DuckyCommand(CommandType.NUMPAD_0, emptyList(), lineNumber))
+        "NUMPAD1", "KP1" -> commands.add(DuckyCommand(CommandType.NUMPAD_1, emptyList(), lineNumber))
+        "NUMPAD2", "KP2" -> commands.add(DuckyCommand(CommandType.NUMPAD_2, emptyList(), lineNumber))
+        "NUMPAD3", "KP3" -> commands.add(DuckyCommand(CommandType.NUMPAD_3, emptyList(), lineNumber))
+        "NUMPAD4", "KP4" -> commands.add(DuckyCommand(CommandType.NUMPAD_4, emptyList(), lineNumber))
+        "NUMPAD5", "KP5" -> commands.add(DuckyCommand(CommandType.NUMPAD_5, emptyList(), lineNumber))
+        "NUMPAD6", "KP6" -> commands.add(DuckyCommand(CommandType.NUMPAD_6, emptyList(), lineNumber))
+        "NUMPAD7", "KP7" -> commands.add(DuckyCommand(CommandType.NUMPAD_7, emptyList(), lineNumber))
+        "NUMPAD8", "KP8" -> commands.add(DuckyCommand(CommandType.NUMPAD_8, emptyList(), lineNumber))
+        "NUMPAD9", "KP9" -> commands.add(DuckyCommand(CommandType.NUMPAD_9, emptyList(), lineNumber))
+        "NUMPADPLUS", "KPPLUS" -> commands.add(DuckyCommand(CommandType.NUMPAD_PLUS, emptyList(), lineNumber))
+        "NUMPADMINUS", "KPMINUS" -> commands.add(DuckyCommand(CommandType.NUMPAD_MINUS, emptyList(), lineNumber))
+        "NUMPADMULTIPLY", "KPASTERISK" -> commands.add(DuckyCommand(CommandType.NUMPAD_MULTIPLY, emptyList(), lineNumber))
+        "NUMPADDIVIDE", "KPSLASH" -> commands.add(DuckyCommand(CommandType.NUMPAD_DIVIDE, emptyList(), lineNumber))
+        "NUMPADENTER", "KPENTER" -> commands.add(DuckyCommand(CommandType.NUMPAD_ENTER, emptyList(), lineNumber))
+        "NUMPADPERIOD", "KPDOT" -> commands.add(DuckyCommand(CommandType.NUMPAD_PERIOD, emptyList(), lineNumber))
 
         else -> {
           val m = functionCallRegex.matchEntire(line)
@@ -543,6 +549,8 @@ class DuckyScriptParser {
       }
     }
 
+    val missingEnd = if (inRemBlock) "END_REM" else stringBlockType?.let { "END_${it.name}" }
+    require(missingEnd == null) { "Line $blockStart: missing $missingEnd" }
     return commands
   }
 
@@ -692,7 +700,7 @@ class DuckyScriptExecutor(
       executeRange(processed, 0, processed.size)
       throwIfCancelled()
     } catch (e: CancelSignal) {
-      releaseInputAfterInterruptedRun()
+      manager.releaseHeldInputBestEffort()
       emitExec(
         mapOf(
           "type" to "done",
@@ -711,7 +719,7 @@ class DuckyScriptExecutor(
       setVar("$?", clampU16(e.value))
     } catch (e: Exception) {
       log.logError("ducky", "Execution failed: ${e.message}")
-      releaseInputAfterInterruptedRun()
+      manager.releaseHeldInputBestEffort()
       emitExec(
         mapOf(
           "type" to "error",
@@ -728,6 +736,7 @@ class DuckyScriptExecutor(
       throw e
     }
 
+    manager.releaseHeldInputBestEffort()
     log.log("ducky", "=== Execution complete ===")
 
     emitExec(
@@ -743,20 +752,6 @@ class DuckyScriptExecutor(
         "timestampMs" to System.currentTimeMillis(),
       )
     )
-  }
-
-  private fun releaseInputAfterInterruptedRun() {
-    for ((label, release) in listOf(
-      "keyboard" to { releaseAllHeldKeys() },
-      "mouse" to { releaseAllHeldMouseButtons() },
-      "modifiers" to { clearInjectedModifiers() },
-    )) {
-      try {
-        release()
-      } catch (e: Exception) {
-        log.logError("ducky", "Could not release $label: ${e.message}")
-      }
-    }
   }
 
   private fun preprocessCommands(commands: List<DuckyCommand>): List<DuckyCommand> {
@@ -779,13 +774,10 @@ class DuckyScriptExecutor(
         }
 
         CommandType.REPEAT -> {
-          val count = cmd.args.firstOrNull()?.toIntOrNull() ?: 1
-          val times = count.coerceAtLeast(1)
           val last = lastAdded
           if (last != null) {
-            repeat(times) {
+            repeat(cmd.args.single().toInt()) {
               result.add(last)
-              lastAdded = last
             }
           }
         }
@@ -866,7 +858,9 @@ class DuckyScriptExecutor(
               }
             }
           }
+          throwIfCancelled()
           executeCommand(cmd)
+          throwIfCancelled()
           markStep(cmd)
           if (defaultDelay > 0) {
             sleepMsCancellable(timing.scaleMs(defaultDelay).toLong(), "Default script pause")
@@ -1270,14 +1264,6 @@ class DuckyScriptExecutor(
     return false
   }
 
-  private fun managerUpdateHeldModifiers(mask: Int): Boolean {
-    val candidates = listOf("updateHeldModifiers", "setHeldModifiers", "setModifiers", "updateModifiers", "writeModifiers", "setModifierMask")
-    if (tryInvokeAny(candidates, listOf(mask))) return true
-    if (tryInvokeAny(candidates, listOf(mask.toShort()))) return true
-    if (tryInvokeAny(candidates, listOf(mask.toByte()))) return true
-    return false
-  }
-
   private fun managerSendMediaKey(code: String): Boolean {
     val c = code.uppercase(Locale.US)
     val sent = manager.sendMediaKey(c)
@@ -1296,6 +1282,7 @@ class DuckyScriptExecutor(
       CommandType.STRINGLN -> {
         val text = cmd.args.getOrNull(0) ?: ""
         manager.typeString(text, 0, activeModifierMask(), extraKeys = heldKeyCodes.toList(), shouldCancel = shouldCancel)
+        throwIfCancelled()
         sendKeyWithInjectedMods("ENTER")
         setExitCode(0)
       }
@@ -1376,13 +1363,13 @@ class DuckyScriptExecutor(
       CommandType.INJECT_MOD -> {
         val tokens = cmd.args
         val joined = tokens.joinToString(" ").trim()
-        if (tokens.isEmpty() || joined.equals("CLEAR", ignoreCase = true) || joined.equals("NONE", ignoreCase = true) || joined.equals("OFF", ignoreCase = true) || joined == "0") {
-          clearInjectedModifiers()
-        } else {
-          val mask = parseModifierMask(tokens)
-          injectedModifierMask = mask
-          managerUpdateHeldModifiers(mask)
-          refreshHeldKeyReport()
+        val previousMask = activeModifierMask()
+        injectedModifierMask = when (joined.uppercase(Locale.US)) {
+          "", "CLEAR", "NONE", "OFF", "0" -> 0
+          else -> parseModifierMask(tokens)
+        }
+        if (activeModifierMask() != previousMask) {
+          manager.writeKeyboardReport(activeModifierMask(), heldKeyCodes.toList())
         }
         setExitCode(0)
       }
@@ -1657,18 +1644,6 @@ class DuckyScriptExecutor(
     return mask
   }
 
-  private fun clearInjectedModifiers() {
-    injectedModifierMask = 0
-    managerUpdateHeldModifiers(0)
-    refreshHeldKeyReport()
-  }
-
-  private fun refreshHeldKeyReport() {
-    if (heldKeyCodes.isEmpty() && heldModifierMask == 0) return
-    val mask = injectedModifierMask or heldModifierMask
-    manager.writeKeyboardReport(mask, heldKeyCodes.toList())
-  }
-
   private fun sendKeyWithInjectedMods(keyName: String) {
     val key = keyName.uppercase(Locale.US)
     val keyCode = HidSpec.keyCodeFor(key) ?: return
@@ -1721,10 +1696,10 @@ class DuckyScriptExecutor(
       val code = HidSpec.keyCodeFor(upper) ?: continue
       if (isHold) {
         if (heldKeyCodes.contains(code)) continue
-        if (heldKeyCodes.size < 6) {
+        if (heldKeyCodes.size < KEYBOARD_KEY_SLOTS) {
           heldKeyCodes.add(code)
         } else {
-          log.log("kbd", "HOLD ignored (6-key rollover): $upper")
+          log.log("kbd", "HOLD ignored ($KEYBOARD_KEY_SLOTS-key rollover): $upper")
         }
       } else {
         heldKeyCodes.remove(code)
@@ -1786,16 +1761,8 @@ class DuckyScriptExecutor(
   }
 
   private fun sendMouseReport(buttons: Int, dx: Int, dy: Int, wheel: Int) {
-    val candidates = listOf("writeMouseReport", "sendMouseReport", "writeMouse", "sendMouse", "mouseReport")
-    for (name in candidates) {
-      if (tryInvokeByName(name, listOf(buttons, dx, dy, wheel))) return
-      if (tryInvokeByName(name, listOf(buttons, dx, dy))) return
-      if (tryInvokeByName(name, listOf(dx, dy, wheel))) return
-      if (tryInvokeByName(name, listOf(dx, dy))) return
-    }
-    tryInvokeAny(listOf("writeMouseMove", "mouseMove", "moveMouse", "sendMouseMove"), listOf(dx, dy))
-    tryInvokeAny(listOf("writeMouseScroll", "mouseScroll", "scrollMouse", "sendMouseScroll"), listOf(wheel))
-    tryInvokeAny(listOf("setMouseButtons", "mouseButtons", "writeMouseButtons", "sendMouseButtons"), listOf(buttons))
+    throwIfCancelled()
+    manager.sendMouseReport(buttons, dx, dy, wheel)
   }
 
   private fun tryInvokeAny(names: List<String>, args: List<Any>): Boolean {
@@ -1834,17 +1801,6 @@ class DuckyScriptExecutor(
       out.add(v)
     }
     return out
-  }
-
-  private fun releaseAllHeldKeys() {
-    heldKeyCodes.clear()
-    heldModifierMask = 0
-    manager.writeKeyboardReport(0, emptyList())
-  }
-
-  private fun releaseAllHeldMouseButtons() {
-    heldMouseButtonsMask = 0
-    sendMouseReport(0, 0, 0, 0)
   }
 }
 
@@ -1911,14 +1867,12 @@ class DuckyScriptEstimator(
         }
 
         CommandType.REPEAT -> {
-          val count = cmd.args.firstOrNull()?.toIntOrNull() ?: 1
-          val times = count.coerceAtLeast(1)
           val last = lastAdded
           if (last != null) {
-            chargeWork(times)
-            repeat(times) {
+            val count = cmd.args.single().toInt()
+            chargeWork(count)
+            repeat(count) {
               result.add(last)
-              lastAdded = last
             }
           }
         }

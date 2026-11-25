@@ -9,6 +9,7 @@ import android.os.Handler
 import android.os.Looper
 import androidx.core.content.ContextCompat
 import io.flutter.plugin.common.EventChannel
+import java.io.File
 import java.util.ArrayList
 import java.util.LinkedHashMap
 import java.util.Locale
@@ -27,7 +28,6 @@ class GadgetManager(
   private val prefs = Prefs(context)
   private val usbDataMarker = java.io.File(context.filesDir, "resume-usb-data")
   private val udcNameRegex = Regex("^[A-Za-z0-9._-]+$")
-  private val HID_KBD_FD = 3
 
   private val baseKeyDownHoldUs: Int = 4000
   private val baseInterKeyDelayUs: Int = 600
@@ -50,7 +50,11 @@ class GadgetManager(
   private var hostConfigurationRequestCount: Int = 0
 
   private val execSinkRef = AtomicReference<EventChannel.EventSink?>(null)
-  private val cancelExecRef = AtomicReference<String?>(null)
+  private val executionLock = Any()
+  private var activeExecutionId: String? = null
+  private var cancelledExecutionId: String? = null
+  private var activeKeyboardMarker: File? = null
+  private val keyboardMarkerForWorker = ThreadLocal<File>()
 
   private var hidActiveGraceMs: Long = 1500
   private var unicodeFallbackMode: String = "warn"
@@ -162,7 +166,7 @@ class GadgetManager(
   }
 
   fun cancelExecution(executionId: String?) {
-    cancelExecRef.set(executionId ?: "*")
+    requestExecutionCancellation(executionId?.takeUnless { it == "*" })
     emitExec(
       mapOf(
         "type" to "cancel_requested",
@@ -172,9 +176,18 @@ class GadgetManager(
     )
   }
 
-  private fun isCancelRequested(executionId: String): Boolean {
-    val v = cancelExecRef.get() ?: return false
-    return v == "*" || v == executionId
+  private fun requestExecutionCancellation(executionId: String? = null) {
+    synchronized(executionLock) {
+      val active = activeExecutionId
+      if (active == null || executionId == null || executionId == active) {
+        cancelledExecutionId = executionId ?: active
+        activeKeyboardMarker?.let { marker ->
+          if (!marker.delete() && marker.exists()) {
+            log.logError("kbd", "Could not cancel the active keyboard batch")
+          }
+        }
+      }
+    }
   }
 
   fun getStatusSnapshot(): Status {
@@ -591,7 +604,7 @@ class GadgetManager(
   @Synchronized
   fun deactivate() {
     prefs.armed = false
-    cancelExecRef.set("*")
+    requestExecutionCancellation()
     val current = statusRef.get()
     val restoring = prefs.pendingSharedGadget
     val next = current.copy(
@@ -651,11 +664,10 @@ class GadgetManager(
     refreshAndEmitStatus()
   }
 
-  @Synchronized
   fun panicStop() {
     // Emergency brake for reports only. It must never touch the UDC or the
     // stock USB configuration; the session stays armed until the user disarms.
-    cancelExecRef.set("*")
+    requestExecutionCancellation()
     releaseHeldInputBestEffort()
     log.log("usb", "Panic stop requested")
   }
@@ -699,6 +711,11 @@ class GadgetManager(
   }
 
   fun testMouseMove(dx: Int, dy: Int, wheel: Int, buttons: Int) {
+    sendMouseReport(buttons, dx, dy, wheel)
+    log.log("test", "Mouse report dx=$dx dy=$dy wheel=$wheel buttons=$buttons")
+  }
+
+  internal fun sendMouseReport(buttons: Int, dx: Int, dy: Int, wheel: Int) {
     requireReportsAllowed()
     val path = prefs.activeMouseDev ?: throw IllegalStateException("Mouse HID device not available")
     val report = byteArrayOf(
@@ -709,7 +726,6 @@ class GadgetManager(
       (wheel.coerceIn(-127, 127) and 0xFF).toByte(),
     )
     writeMouseReport(path, report)
-    log.log("test", "Mouse report to $path dx=$dx dy=$dy wheel=$wheel buttons=$buttons")
   }
 
   fun testKeyboardKey(keyLabel: String) {
@@ -759,7 +775,7 @@ class GadgetManager(
       val stroke = keyboardMapper.getStrokeForChar(ch)
       if (stroke != null) {
         val reports = ArrayList<ByteArray>(5)
-        reports.add(keyboardReportMulti(extraModifiers, extraKeys.take(6)))
+        reports.add(keyboardReport(extraModifiers, extraKeys))
         addStrokeReports(reports, stroke, extraModifiers, extraKeys)
         writeKeyboardReportsWithDelays(
           path,
@@ -860,29 +876,38 @@ class GadgetManager(
   }
 
   fun executeDuckyScript(script: String, delayMultiplier: Double = 1.0, executionId: String? = null) {
-    requireReportsAllowed()
     val id = executionId?.takeIf { it.isNotBlank() } ?: "exec_${System.currentTimeMillis()}"
     val startedAt = android.os.SystemClock.elapsedRealtime()
     var terminalSent = false
-    cancelExecRef.set(null)
-    prefs.lastExecutedScript = script
-    val executor = DuckyScriptExecutor(
-      manager = this,
-      log = log,
-      delayMultiplier = delayMultiplier,
-      executionId = id,
-      emitExec = { event ->
-        if (event["type"] == "done" || event["type"] == "error") {
-          terminalSent = true
-          val elapsedMs = android.os.SystemClock.elapsedRealtime() - startedAt
-          emitExec(event + ("elapsedMs" to elapsedMs))
-        } else {
-          emitExec(event)
-        }
-      },
-      shouldCancel = { isCancelRequested(id) }
-    )
+    var reserved = false
     try {
+      synchronized(executionLock) {
+        check(activeExecutionId == null) { "Another script is already running" }
+        val marker = File.createTempFile("keyboard-run-", ".active", context.cacheDir)
+        activeKeyboardMarker = marker
+        keyboardMarkerForWorker.set(marker)
+        activeExecutionId = id
+        if (cancelledExecutionId != id) cancelledExecutionId = null
+        reserved = true
+      }
+      requireReportsAllowed()
+      prefs.lastExecutedScript = script
+      val executor = DuckyScriptExecutor(
+        manager = this,
+        log = log,
+        delayMultiplier = delayMultiplier,
+        executionId = id,
+        emitExec = { event ->
+          if (event["type"] == "done" || event["type"] == "error") {
+            terminalSent = true
+            val elapsedMs = android.os.SystemClock.elapsedRealtime() - startedAt
+            emitExec(event + ("elapsedMs" to elapsedMs))
+          } else {
+            emitExec(event)
+          }
+        },
+        shouldCancel = { synchronized(executionLock) { cancelledExecutionId == id } }
+      )
       executor.execute(script)
     } catch (e: Exception) {
       if (!terminalSent) {
@@ -894,6 +919,14 @@ class GadgetManager(
         ))
       }
       throw e
+    } finally {
+      if (reserved) synchronized(executionLock) {
+        activeKeyboardMarker?.delete()
+        activeKeyboardMarker = null
+        keyboardMarkerForWorker.remove()
+        activeExecutionId = null
+        cancelledExecutionId = null
+      }
     }
   }
 
@@ -1060,37 +1093,13 @@ class GadgetManager(
     )
   }
 
-  private fun keyboardReport(mods: Int, key: Int): ByteArray {
-    return byteArrayOf(
-      (mods and 0xFF).toByte(),
-      0x00,
-      (key and 0xFF).toByte(),
-      0x00,
-      0x00,
-      0x00,
-      0x00,
-      0x00
-    )
-  }
-
-  private fun keyboardReportMulti(mods: Int, keys: List<Int>): ByteArray {
-    val report = ByteArray(8)
-    report[0] = (mods and 0xFF).toByte()
-    report[1] = 0x00
-    val count = min(6, keys.size)
-    for (i in 0 until count) {
-      report[2 + i] = (keys[i] and 0xFF).toByte()
-    }
-    return report
-  }
-
   fun writeKeyboardReport(mods: Int, keys: List<Int>) {
     requireReportsAllowed()
     if (!waitForActive(hidActiveGraceMs)) {
       throw HidWriteException("HID_NOT_ACTIVE", "Gadget is not active")
     }
     val path = prefs.activeKeyboardDev ?: throw IllegalStateException("Keyboard HID device not available")
-    val report = keyboardReportMulti(mods, keys)
+    val report = keyboardReport(mods, keys)
     writeKeyboardReportsWithDelays(path, reports = listOf(report), delaysUs = emptyList())
   }
 
@@ -1176,7 +1185,8 @@ class GadgetManager(
     return predicate()
   }
 
-  private fun releaseHeldInputBestEffort() {
+  @Synchronized
+  internal fun releaseHeldInputBestEffort() {
     if (!keyboardMayBeHeld && !mouseButtonsMayBeHeld) return
     try {
       val dir = prefs.activeGadgetDir ?: return
@@ -1184,10 +1194,13 @@ class GadgetManager(
       if (probe.udcState != "configured" || !probe.devicesReady) return
       val udc = readActiveUdcName() ?: return
       if (keyboardMayBeHeld) {
-        keyboardMayBeHeld = !sendReleaseReport(udc, probe.keyboard, keyboardReport(0, 0))
+        keyboardMayBeHeld = !sendReleaseReport(udc, probe.keyboard, keyboardReport(0, emptyList()))
       }
       if (mouseButtonsMayBeHeld) {
         mouseButtonsMayBeHeld = !sendReleaseReport(udc, probe.mouse, byteArrayOf(1, 0, 0, 0, 0))
+      }
+      if (keyboardMayBeHeld || mouseButtonsMayBeHeld) {
+        log.logError("hid", "Could not send all release reports")
       }
     } catch (t: Exception) {
       log.logError("hid", "Could not release held input: ${t.message}")
@@ -1212,9 +1225,8 @@ class GadgetManager(
     heldModifiers: Int = 0,
     extraKeys: List<Int> = emptyList(),
   ) {
-    val held = extraKeys.take(5)
-    val baseline = keyboardReportMulti(heldModifiers, held)
-    val down = keyboardReportMulti(mods, (listOf(key) + held).distinct().take(6))
+    val baseline = keyboardReport(heldModifiers, extraKeys)
+    val down = keyboardPressReport(mods, key, extraKeys)
     writeKeyboardReportsWithDelays(
       path,
       reports = listOf(baseline, down, baseline),
@@ -1268,7 +1280,7 @@ class GadgetManager(
     val downUs = scaledDownHoldUs(baseKeyDownHoldUs)
 
     val reports = ArrayList<ByteArray>(1 + strokes.size * 4)
-    reports.add(keyboardReportMulti(extraModifiers, extraKeys.take(6)))
+    reports.add(keyboardReport(extraModifiers, extraKeys))
     for (stroke in strokes) {
       addStrokeReports(reports, stroke, extraModifiers, extraKeys)
     }
@@ -1282,12 +1294,12 @@ class GadgetManager(
     extraKeys: List<Int> = emptyList(),
   ) {
     val mods = stroke.modifiers or extraModifiers
-    val held = extraKeys.take(6)
-    reports.add(keyboardReportMulti(mods, (listOf(stroke.keyCode) + held).distinct().take(6)))
-    reports.add(keyboardReportMulti(extraModifiers, held))
+    val baseline = keyboardReport(extraModifiers, extraKeys)
+    reports.add(keyboardPressReport(mods, stroke.keyCode, extraKeys))
+    reports.add(baseline)
     stroke.terminatorKeyCode?.let { key ->
-      reports.add(keyboardReportMulti(extraModifiers, (listOf(key) + held).distinct().take(6)))
-      reports.add(keyboardReportMulti(extraModifiers, held))
+      reports.add(keyboardPressReport(extraModifiers, key, extraKeys))
+      reports.add(baseline)
     }
   }
 
@@ -1393,7 +1405,7 @@ class GadgetManager(
     val composedStrokes = ArrayList<KeyStroke>(2)
     if (addComposedUnicodeStrokes(ch, composedStrokes)) {
       val reports = ArrayList<ByteArray>(1 + composedStrokes.size * 4)
-      reports.add(keyboardReportMulti(extraModifiers, extraKeys.take(6)))
+      reports.add(keyboardReport(extraModifiers, extraKeys))
       for (stroke in composedStrokes) {
         addStrokeReports(reports, stroke, extraModifiers, extraKeys)
       }
@@ -1421,7 +1433,7 @@ class GadgetManager(
           val stroke = keyboardMapper.getStrokeForChar(c)
           if (stroke != null) {
             val reports = ArrayList<ByteArray>(5)
-            reports.add(keyboardReportMulti(extraModifiers, extraKeys.take(6)))
+            reports.add(keyboardReport(extraModifiers, extraKeys))
             addStrokeReports(reports, stroke, extraModifiers, extraKeys)
             writeKeyboardReportsWithDelays(
               path,
@@ -1447,13 +1459,6 @@ class GadgetManager(
     return sb.toString()
   }
 
-  private fun toPrintfEsc(bytes: ByteArray): String {
-    return bytes.joinToString(separator = "") { b ->
-      val v = b.toInt() and 0xFF
-      String.format(Locale.US, "\\%03o", v)
-    }
-  }
-
   @Synchronized
   private fun writeKeyboardReportsWithDelays(
     path: String,
@@ -1474,60 +1479,37 @@ class GadgetManager(
       fi
     """.trimIndent()
 
-    val writes = StringBuilder()
-    for (i in reports.indices) {
-      val hex = toPrintfEsc(reports[i])
-      writes.append("printf '").append(hex).append("' >&").append(HID_KBD_FD).append("\n")
-      if (i != reports.lastIndex) {
-        val d = delaysUs.getOrNull(i) ?: 0
-        if (d > 0) {
-          writes.append(
-            """
-              if [ -n "${'$'}USLP" ]; then
-                ${'$'}USLP $d
-              else
-                sleep 0.01
-              fi
-            """.trimIndent()
-          ).append("\n")
-        }
-      }
-    }
+    val marker = keyboardMarkerForWorker.get()
+    val writes = buildKeyboardBatchWrites(reports, delaysUs, marker)
+    val watchdog = marker?.let(::keyboardBatchWatchdog).orEmpty()
 
     val script = """
       set -e
       P=${shQuote(path)}
       [ -c "${'$'}P" ]
       $usleepSnippet
-      exec $HID_KBD_FD> "${'$'}P"
-
+      exec 3> "${'$'}P"
+      $watchdog
       $writes
 
     """.trimIndent()
 
-    var attempt = 0
-    var lastErr: String? = null
-    while (attempt < 3) {
-      val r = root.exec(script, timeoutSec = 8)
-      if (r.ok) {
-        keyboardMayBeHeld = reports.last().any { it != 0.toByte() }
-        recordWriteSuccess()
-        return
-      }
-      recordWriteFailure()
-      lastErr = r.stderr.trim().ifEmpty { r.stdout.trim() }
-      if (attempt < 2) {
-        val backoffMs = 200L * (1L shl attempt)
-        Thread.sleep(backoffMs)
-        waitForActive(hidActiveGraceMs)
-      }
-      attempt++
+    // A failed batch can already have sent a prefix of its reports to the host.
+    val result = root.exec(script, timeoutSec = 8)
+    if (result.ok) {
+      keyboardMayBeHeld = reports.last().any { it != 0.toByte() }
+      recordWriteSuccess()
+      return
     }
-    val detail = lastErr ?: "no stderr/stdout"
+    if (marker != null && (result.exitCode == KEYBOARD_BATCH_CANCELLED || result.exitCode == KEYBOARD_BATCH_KILLED)) {
+      val stopRequested = synchronized(executionLock) { cancelledExecutionId == activeExecutionId }
+      if (stopRequested) return
+    }
+    recordWriteFailure()
+    val detail = result.stderr.trim().ifEmpty { result.stdout.trim() }
     throw HidWriteException(
       "HID_WRITE_FAILED",
-      "Failed to write keyboard reports to $path (retries=3). " +
-        detail
+      "Failed to write keyboard reports to $path. $detail"
     )
   }
 
@@ -1539,32 +1521,21 @@ class GadgetManager(
     val hexEsc = toPrintfEsc(bytes)
     val quotedPath = shQuote(path)
     val script = "test -c $quotedPath && printf '$hexEsc' > $quotedPath"
-    var attempt = 0
-    var lastErr: String? = null
-    while (attempt < 3) {
-      val r = root.exec(script, timeoutSec = 5)
-      if (r.ok) {
-        mouseButtonsMayBeHeld = buttonsHeld
-        recordWriteSuccess()
-        return
-      }
-      recordWriteFailure()
-      lastErr = r.stderr.trim().ifEmpty { r.stdout.trim() }
-      if (attempt < 2) {
-        val backoffMs = 200L * (1L shl attempt)
-        Thread.sleep(backoffMs)
-        waitForActive(hidActiveGraceMs)
-      }
-      attempt++
+    // Replaying a relative movement or scroll report would apply it twice.
+    val result = root.exec(script, timeoutSec = 5)
+    if (result.ok) {
+      mouseButtonsMayBeHeld = buttonsHeld
+      recordWriteSuccess()
+      return
     }
-    val detail = lastErr ?: "no stderr/stdout"
+    recordWriteFailure()
+    val detail = result.stderr.trim().ifEmpty { result.stdout.trim() }
     throw HidWriteException(
       "HID_MOUSE_WRITE_FAILED",
-      "Failed to write HID report to $path (retries=3). $detail"
+      "Failed to write HID report to $path. $detail"
     )
   }
 
-  private fun shQuote(s: String): String = "'" + s.replace("'", "'\\''") + "'"
 
   private fun ensureConfigfsAvailable(): Boolean {
     val fast = root.exec("test -d /config/usb_gadget || test -d /sys/kernel/config/usb_gadget")

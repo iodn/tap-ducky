@@ -393,6 +393,7 @@ class DuckyScriptValidator {
   static const int _baseKeyMs = 25;
   static const int _baseMouseMs = 20;
   static const int _commandOverheadMs = 3;
+  static const int _maxScriptRepeats = 20000;
 
   ValidationResult validate(
     String script, {
@@ -410,7 +411,7 @@ class DuckyScriptValidator {
     int overheadMs = 0;
 
     int defaultDelayMs = 0;
-    int stringDelayMs = 0;
+    int remainingRepeats = _maxScriptRepeats;
 
     bool inRemBlock = false;
     bool inStringBlock = false;
@@ -484,13 +485,13 @@ class DuckyScriptValidator {
       );
     }
 
+    final stringBlockLines = <String>[];
+
     for (int i = 0; i < rawLines.length; i++) {
       final lineNum = i + 1;
 
       final rawLine = rawLines[i];
       final trimmed = rawLine.trim();
-
-      if (trimmed.isEmpty) continue;
 
       if (inRemBlock) {
         if (trimmed.toUpperCase() == 'END_REM') {
@@ -499,28 +500,29 @@ class DuckyScriptValidator {
         continue;
       }
 
-      if (inStringBlock) {
-        if (trimmed.toUpperCase() == 'END_STRING') {
+      if (inStringBlock || inStringLnBlock) {
+        final end = inStringLnBlock ? 'END_STRINGLN' : 'END_STRING';
+        final upper = trimmed.toUpperCase();
+        if (upper == end) {
+          if (stringBlockLines.isNotEmpty) {
+            typeText(
+              stringBlockLines.join(inStringLnBlock ? '\n' : ''),
+              perCharDelay: 0,
+              addEnter: inStringLnBlock,
+            );
+          }
+          stringBlockLines.clear();
           inStringBlock = false;
-          continue;
-        }
-        typeText(rawLine, perCharDelay: stringDelayMs, addEnter: true);
-        continue;
-      }
-
-      if (inStringLnBlock) {
-        if (trimmed.toUpperCase() == 'END_STRINGLN') {
           inStringLnBlock = false;
-          continue;
+        } else {
+          stringBlockLines.add(
+            upper == '\\$end' ? rawLine.replaceFirst('\\', '') : rawLine,
+          );
         }
-        typeText(rawLine, perCharDelay: stringDelayMs, addEnter: true);
         continue;
       }
 
-      final upperTrimmed = trimmed.toUpperCase();
-      if (upperTrimmed.startsWith('REM ') || upperTrimmed == 'REM') {
-        continue;
-      }
+      if (trimmed.isEmpty) continue;
 
       final parts = trimmed.split(RegExp(r'\s+'));
       if (parts.isEmpty) continue;
@@ -538,27 +540,22 @@ class DuckyScriptValidator {
       }
 
       switch (command) {
+        case 'REM':
+          break;
+
         case 'REM_BLOCK':
           inRemBlock = true;
           break;
 
         case 'STRING':
-          commandCount++;
-          if (trimmed.length <= 6 || trimmed.substring(6).trim().isEmpty) {
-            inStringBlock = true;
-          } else {
-            final text = trimmed.substring(6);
-            typeText(text, perCharDelay: stringDelayMs, addEnter: false);
-          }
-          break;
-
         case 'STRINGLN':
           commandCount++;
-          if (trimmed.length <= 8 || trimmed.substring(8).trim().isEmpty) {
-            inStringLnBlock = true;
+          if (trimmed.length == command.length) {
+            inStringBlock = command == 'STRING';
+            inStringLnBlock = command == 'STRINGLN';
           } else {
-            final text = trimmed.substring(8);
-            typeText(text, perCharDelay: stringDelayMs, addEnter: true);
+            final text = rawLine.trimLeft().substring(command.length + 1);
+            typeText(text, perCharDelay: 0, addEnter: command == 'STRINGLN');
           }
           break;
 
@@ -584,18 +581,11 @@ class DuckyScriptValidator {
             ));
             break;
           }
-          if (parts.length == 2) {
-            stringDelayMs = max(0, delayArg);
-            commitCommand(
-              keyCount: 0,
-              perCharDelayMs: 0,
-              charCount: 0,
-              applyDefaultDelay: true,
-            );
-          } else {
-            final text = parts.skip(2).join(' ');
-            typeText(text, perCharDelay: max(0, delayArg), addEnter: false);
-          }
+          final operand = rawLine.trimLeft().substring(command.length).trimLeft();
+          final text = operand.length > parts[1].length
+              ? operand.substring(parts[1].length + 1)
+              : '';
+          typeText(text, perCharDelay: max(0, delayArg), addEnter: false);
           break;
 
         case 'DEFAULTDELAY':
@@ -860,7 +850,14 @@ class DuckyScriptValidator {
               message: 'REPEAT requires a numeric count',
               suggestion: 'Example: REPEAT 5',
             ));
-          } else if (lastCommandTotalMs > 0) {
+          } else if (count > remainingRepeats) {
+            issues.add(ValidationIssue(
+              line: lineNum,
+              severity: IssueSeverity.error,
+              message: 'REPEAT exceeds the script limit of $_maxScriptRepeats repetitions',
+            ));
+          } else {
+            remainingRepeats -= count;
             overheadMs += lastCommandTotalMs * count;
           }
           break;

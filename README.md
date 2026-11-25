@@ -133,7 +133,7 @@ Supported command families (high level):
 Notes on behavior:
 - Default delay: DEFAULTDELAY/DEFAULT_DELAY sets a base delay applied after each executable command (scaled by the run-time delay multiplier).
 - Expression evaluator: arithmetic, comparisons, and logical expressions are supported in IF/WHILE and VAR assignments; non-zero is true.
-- Repetition: REPEAT N duplicates the previous command N times during preprocessing.
+- Repetition: REPEAT N duplicates the previous command N times. The sum of REPEAT counts in a script can be up to 20,000.
 - Keyboard mapping: full HID usage mapping with layout selection; common aliases supported (ESC/ESCAPE, BKSP/BACKSPACE, etc.).
 - Execution streams: step/start/done/error events are emitted with progress, for real-time UI updates and logs.
 

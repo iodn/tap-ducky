@@ -17,7 +17,10 @@ void main() {
     final validator = DuckyScriptValidator();
 
     for (final multiplier in [0.5, 1.0, 2.0]) {
-      final single = validator.validate('DELAY 100', delayMultiplier: multiplier);
+      final single = validator.validate(
+        'DELAY 100',
+        delayMultiplier: multiplier,
+      );
       final repeated = validator.validate(
         'DELAY 100\nREPEAT 2',
         delayMultiplier: multiplier,
@@ -26,5 +29,22 @@ void main() {
       expect(repeated.hasErrors, isFalse);
       expect(repeated.estimatedDurationMs, single.estimatedDurationMs * 3);
     }
+  });
+
+  test('REPEAT budget applies cumulatively across the script', () {
+    final validator = DuckyScriptValidator();
+    expect(
+      validator.validate('STRING sample\nREPEAT 12000\nREPEAT 8000').hasErrors,
+      isFalse,
+    );
+    final tooMany = validator.validate(
+      'STRING sample\nREPEAT 12000\nREPEAT 8001',
+    );
+    expect(tooMany.issues.single.line, 3);
+    expect(tooMany.issues.single.message, contains('20000'));
+    expect(
+      validator.validate('STRING sample\nREPEAT 2147483648').hasErrors,
+      isTrue,
+    );
   });
 }
