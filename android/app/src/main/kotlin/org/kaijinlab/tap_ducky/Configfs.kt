@@ -135,6 +135,8 @@ object Configfs {
             break
           done
         done
+        current_udc=${'$'}(cat "${'$'}G/UDC") || exit 2
+        [ "${'$'}current_udc" = "${'$'}UDC_NAME" ] || exit 2
         printf 'devices_ready=%s\n' "${'$'}devices_ready"
         exit 0
       done

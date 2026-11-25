@@ -64,6 +64,36 @@ class StockUsbVerificationTest {
   }
 
   @Test
+  fun discardsTheProbeWhenTheGadgetBindingChangesWhileReadingDescriptors() {
+    val base = directory.newFolder()
+    val gadget = File(base, "stock").apply { mkdir() }
+    File(gadget, "UDC").writeText("original_udc\n")
+    File(gadget, "idVendor").writeText("0x1234\n")
+    File(gadget, "idProduct").writeText("0x5678\n")
+    val probe = Configfs.buildProbeSessionScript("stock", shared = true)
+      .replace("/config/usb_gadget /sys/kernel/config/usb_gadget", "'${base.path}'")
+    val disconnectDuringRead = """
+      cat() {
+        case "${'$'}1" in
+          */idVendor) printf '\n' > "${'$'}{1%/*}/UDC" ;;
+        esac
+        command cat "${'$'}@"
+      }
+    """.trimIndent()
+
+    val shell = ProcessBuilder("/bin/sh", "-c", "$disconnectDuringRead\n$probe").start()
+    try {
+      assertTrue(shell.waitFor(10, TimeUnit.SECONDS))
+      assertEquals(2, shell.exitValue())
+      val output = shell.inputStream.bufferedReader().readText()
+      assertTrue(output.contains("vid=0x1234"))
+      assertFalse(output.contains("devices_ready="))
+    } finally {
+      shell.destroyForcibly()
+    }
+  }
+
+  @Test
   fun restoresOnlyChangedPowerDescriptorsOnAnUnpluggedPhone() {
     val fixture = Fixture(directory.newFolder())
     assertEquals(0, fixture.verify().first)

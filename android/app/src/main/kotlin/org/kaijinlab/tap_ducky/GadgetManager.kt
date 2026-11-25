@@ -99,6 +99,13 @@ class GadgetManager(
     val scriptAttackMode: Int? = null,
   ) {
     val isActive: Boolean get() = desiredArmed
+
+    internal fun withoutScriptUsbInfo(): Status = copy(
+      scriptVid = null,
+      scriptPid = null,
+      scriptAttackMode = null,
+    )
+
     fun toMap(): Map<String, Any?> = mapOf(
       "rootAvailable" to rootAvailable,
       "supportAvailable" to supportAvailable,
@@ -525,7 +532,7 @@ class GadgetManager(
   }
 
   private fun setArming(message: String?) {
-    val current = statusRef.get()
+    val current = statusRef.get().withoutScriptUsbInfo()
     val next = current.copy(
       state = "ARMING",
       message = message,
@@ -714,6 +721,7 @@ class GadgetManager(
   private fun restoreStockUsb() {
     val dir = prefs.pendingGadgetDir?.takeIf { prefs.pendingSharedGadget } ?: return
     if (prefs.armed) return
+    statusRef.updateAndGet(Status::withoutScriptUsbInfo)
     restoreAttempted = true
     restoreDeferred = false
     val udc = prefs.sharedController ?: readActiveUdcName() ?: readAnyUdcName()
@@ -1783,7 +1791,7 @@ class GadgetManager(
   }
 
   private fun setError(message: String) {
-    val current = statusRef.get()
+    val current = statusRef.get().withoutScriptUsbInfo()
     val next = current.copy(
       state = "ERROR",
       message = message,
