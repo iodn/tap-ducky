@@ -1,6 +1,5 @@
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../../data/db/usb_ids_db.dart';
 import '../../data/models/advanced_settings.dart';
 import '../../data/models/app_settings.dart';
 import '../../data/models/payload.dart';
@@ -14,7 +13,7 @@ import '../../widgets/configuration_page.dart';
 import '../../widgets/payload_picker.dart';
 import '../../widgets/confirm_dialog.dart';
 import '../../widgets/section_header.dart';
-import 'usb_id_selector_dialog.dart';
+import 'usb_id_reference_screen.dart';
 
 class AdvancedSettingsScreen extends ConsumerWidget {
   const AdvancedSettingsScreen({super.key});
@@ -35,7 +34,7 @@ class AdvancedSettingsScreen extends ConsumerWidget {
                       context,
                       title: 'Reset advanced settings',
                       message:
-                          'Reset command presets, hotkeys, and default VID/PID to defaults?',
+                          'Reset keyboard layout, USB controller, command presets, and hotkeys?',
                       confirmLabel: 'Reset',
                       dangerous: true,
                     );
@@ -69,15 +68,6 @@ class _Body extends ConsumerStatefulWidget {
 }
 
 class _BodyState extends ConsumerState<_Body> {
-  late TextEditingController _vidCtrl;
-  late TextEditingController _pidCtrl;
-
-  String? _vidError;
-  String? _pidError;
-  int? _vidParsed;
-  int? _pidParsed;
-
-  Future<({String? vendor, String? product})>? _resolvedNames;
   late Future<List<KeyboardLayoutInfo>> _keyboardLayoutsFuture;
   late Future<List<String>> _udcsFuture;
 
@@ -97,158 +87,10 @@ class _BodyState extends ConsumerState<_Body> {
   @override
   void initState() {
     super.initState();
-    _vidCtrl = TextEditingController(text: widget.settings.defaultVid);
-    _pidCtrl = TextEditingController(text: widget.settings.defaultPid);
     _keyboardLayoutsFuture = ref
         .read(platformGadgetServiceProvider)
         .getKeyboardLayouts();
     _udcsFuture = ref.read(platformGadgetServiceProvider).listUdcs();
-    _syncParsedAndResolved();
-  }
-
-  @override
-  void didUpdateWidget(_Body oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.settings.defaultVid != widget.settings.defaultVid) {
-      _vidCtrl.text = widget.settings.defaultVid;
-    }
-    if (oldWidget.settings.defaultPid != widget.settings.defaultPid) {
-      _pidCtrl.text = widget.settings.defaultPid;
-    }
-    _syncParsedAndResolved();
-  }
-
-  @override
-  void dispose() {
-    _vidCtrl.dispose();
-    _pidCtrl.dispose();
-    super.dispose();
-  }
-
-  void _syncParsedAndResolved() {
-    final vidRes = _parseHexId(_vidCtrl.text);
-    final pidRes = _parseHexId(_pidCtrl.text);
-    final vid = vidRes.value;
-    final pid = pidRes.value;
-
-    setState(() {
-      _vidError = vidRes.error;
-      _pidError = pidRes.error;
-      _vidParsed = vid;
-      _pidParsed = pid;
-      _resolvedNames = _buildResolvedFuture(
-        vid,
-        pid,
-        vidRes.error,
-        pidRes.error,
-      );
-    });
-  }
-
-  Future<({String? vendor, String? product})>? _buildResolvedFuture(
-    int? vid,
-    int? pid,
-    String? vidErr,
-    String? pidErr,
-  ) {
-    if (vid == null || pid == null) return null;
-    if (vidErr != null || pidErr != null) return null;
-    return ref
-        .read(usbIdsDbProvider.future)
-        .then((db) => db.resolveNames(vid, pid));
-  }
-
-  void _validateVid(String value) {
-    final res = _parseHexId(value);
-    final nextVid = res.value;
-    setState(() {
-      _vidError = res.error;
-      _vidParsed = nextVid;
-      _resolvedNames = _buildResolvedFuture(
-        nextVid,
-        _pidParsed,
-        res.error,
-        _pidError,
-      );
-    });
-  }
-
-  void _validatePid(String value) {
-    final res = _parseHexId(value);
-    final nextPid = res.value;
-    setState(() {
-      _pidError = res.error;
-      _pidParsed = nextPid;
-      _resolvedNames = _buildResolvedFuture(
-        _vidParsed,
-        nextPid,
-        _vidError,
-        res.error,
-      );
-    });
-  }
-
-  ({int? value, String? error}) _parseHexId(String hex) {
-    try {
-      final trimmed = hex.trim();
-      if (trimmed.isEmpty) {
-        return (value: null, error: 'Cannot be empty');
-      }
-      final normalized = trimmed.toLowerCase();
-      int parsed;
-      if (normalized.startsWith('0x')) {
-        parsed = int.parse(normalized.substring(2), radix: 16);
-      } else {
-        parsed = int.parse(normalized, radix: 16);
-      }
-      if (parsed < 0 || parsed > 0xFFFF) {
-        return (value: null, error: 'Must be 0x0000–0xFFFF');
-      }
-      return (value: parsed, error: null);
-    } catch (_) {
-      return (value: null, error: 'Invalid hex format');
-    }
-  }
-
-  String _hex16(int value) {
-    final v = value & 0xFFFF;
-    return '0x${v.toRadixString(16).toUpperCase().padLeft(4, '0')}';
-  }
-
-  Future<void> _pickFromDb(BuildContext context) async {
-    final picked = await showUsbIdSelectorDialog(context, ref);
-    if (picked == null) return;
-
-    final vidText = _hex16(picked.vid);
-    final pidText = _hex16(picked.pid);
-
-    setState(() {
-      _vidCtrl.text = vidText;
-      _pidCtrl.text = pidText;
-    });
-
-    _validateVid(vidText);
-    _validatePid(pidText);
-
-    if (_vidError == null) {
-      await ref
-          .read(advancedSettingsControllerProvider.notifier)
-          .setDefaultVid(vidText);
-    }
-    if (_pidError == null) {
-      await ref
-          .read(advancedSettingsControllerProvider.notifier)
-          .setDefaultPid(pidText);
-    }
-
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          'Selected ${picked.vendorName} • ${picked.productName} ($vidText:$pidText)',
-        ),
-      ),
-    );
   }
 
   List<DropdownMenuItem<String>> _fallbackKeyboardItems() {
@@ -281,7 +123,7 @@ class _BodyState extends ConsumerState<_Body> {
     return ListView(
       children: [
         const SizedBox(height: 10),
-        const SectionHeader(title: 'USB gadget defaults'),
+        const SectionHeader(title: 'Keyboard & USB controller'),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16),
           child: Card(
@@ -290,106 +132,8 @@ class _BodyState extends ConsumerState<_Body> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    leading: const Icon(Icons.manage_search),
-                    title: const Text('Pick VID/PID from USB IDs database'),
-                    subtitle: _resolvedNames == null
-                        ? Text(
-                            'Search by vendor or product name. Recommended to match a real device fingerprint.',
-                            style: TextStyle(color: cs.onSurfaceVariant),
-                          )
-                        : FutureBuilder<({String? vendor, String? product})>(
-                            future: _resolvedNames,
-                            builder: (context, snap) {
-                              final v = snap.data?.vendor;
-                              final p = snap.data?.product;
-                              if (snap.connectionState ==
-                                  ConnectionState.waiting) {
-                                return Text(
-                                  'Looking up vendor/product…',
-                                  style: TextStyle(color: cs.onSurfaceVariant),
-                                );
-                              }
-                              if (snap.hasError) {
-                                return Text(
-                                  'Lookup failed. You can still enter VID/PID manually.',
-                                  style: TextStyle(color: cs.onSurfaceVariant),
-                                );
-                              }
-                              if (v == null && p == null) {
-                                return Text(
-                                  'No match found in database for current VID/PID.',
-                                  style: TextStyle(color: cs.onSurfaceVariant),
-                                );
-                              }
-                              final parts = <String>[];
-                              if (v != null) parts.add(v);
-                              if (p != null) parts.add(p);
-                              return Text(
-                                parts.join(' • '),
-                                style: TextStyle(color: cs.onSurfaceVariant),
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
-                              );
-                            },
-                          ),
-                    trailing: const Icon(Icons.chevron_right),
-                    onTap: () => _pickFromDb(context),
-                  ),
-                  const SizedBox(height: 10),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: TextField(
-                          controller: _vidCtrl,
-                          decoration: InputDecoration(
-                            labelText: 'Default VID (hex)',
-                            hintText: '0x1D6B',
-                            errorText: _vidError,
-                            helperText: _vidParsed != null
-                                ? '→ ${_vidParsed!} (${_hex16(_vidParsed!)})'
-                                : null,
-                          ),
-                          onChanged: (v) async {
-                            _validateVid(v);
-                            if (_vidError == null) {
-                              await ref
-                                  .read(
-                                    advancedSettingsControllerProvider.notifier,
-                                  )
-                                  .setDefaultVid(v.trim());
-                            }
-                          },
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: TextField(
-                          controller: _pidCtrl,
-                          decoration: InputDecoration(
-                            labelText: 'Default PID (hex)',
-                            hintText: '0x0104',
-                            errorText: _pidError,
-                            helperText: _pidParsed != null
-                                ? '→ ${_pidParsed!} (${_hex16(_pidParsed!)})'
-                                : null,
-                          ),
-                          onChanged: (v) async {
-                            _validatePid(v);
-                            if (_pidError == null) {
-                              await ref
-                                  .read(
-                                    advancedSettingsControllerProvider.notifier,
-                                  )
-                                  .setDefaultPid(v.trim());
-                            }
-                          },
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 10),
+                  const _UsbReferenceTile(),
+                  const Divider(),
                   FutureBuilder<List<KeyboardLayoutInfo>>(
                     future: _keyboardLayoutsFuture,
                     builder: (context, snap) {
@@ -420,15 +164,14 @@ class _BodyState extends ConsumerState<_Body> {
                           : (items.isNotEmpty ? items.first.value : null);
 
                       return DropdownButtonFormField<String>(
-                        value: value,
+                        key: ValueKey(value),
+                        initialValue: value,
+                        isExpanded: true,
                         decoration: InputDecoration(
                           labelText: 'Keyboard layout',
-                          helperText:
-                              snap.connectionState == ConnectionState.waiting
-                              ? 'Loading supported layouts…'
-                              : (dynamicItems.isNotEmpty
-                                    ? 'From backend'
-                                    : 'Fallback list'),
+                          helperText: snap.connectionState == ConnectionState.waiting
+                              ? 'Loading available layouts…'
+                              : null,
                         ),
                         items: items,
                         onChanged: (v) async {
@@ -455,7 +198,7 @@ class _BodyState extends ConsumerState<_Body> {
                       final items = <DropdownMenuItem<String>>[
                         const DropdownMenuItem(
                           value: 'auto',
-                          child: Text('Auto (try all UDCs)'),
+                          child: Text('Automatic'),
                         ),
                         ...udcs.map(
                           (u) => DropdownMenuItem(value: u, child: Text(u)),
@@ -473,13 +216,15 @@ class _BodyState extends ConsumerState<_Body> {
                       ];
 
                       return DropdownButtonFormField<String>(
-                        value: hasCurrent ? current : mergedItems.first.value,
+                        key: ValueKey(current),
+                        initialValue: hasCurrent ? current : mergedItems.first.value,
+                        isExpanded: true,
                         decoration: InputDecoration(
-                          labelText: 'Preferred UDC',
+                          labelText: 'USB controller',
                           helperText:
                               snap.connectionState == ConnectionState.waiting
-                              ? 'Loading UDC list…'
-                              : 'Auto will fallback across available UDCs',
+                              ? 'Loading available controllers…'
+                              : null,
                         ),
                         items: mergedItems,
                         onChanged: (v) async {
@@ -490,11 +235,6 @@ class _BodyState extends ConsumerState<_Body> {
                         },
                       );
                     },
-                  ),
-                  const SizedBox(height: 10),
-                  Text(
-                    'These values are used when activating USB gadget profiles. Choosing a VID/PID that matches a real device improves operator realism and reduces UI mistakes.',
-                    style: TextStyle(color: cs.onSurfaceVariant),
                   ),
                 ],
               ),
@@ -988,6 +728,22 @@ class _HotkeyTile extends ConsumerWidget {
           );
         }
       },
+    );
+  }
+}
+
+class _UsbReferenceTile extends StatelessWidget {
+  const _UsbReferenceTile();
+
+  @override
+  Widget build(BuildContext context) {
+    return ListTile(
+      contentPadding: EdgeInsets.zero,
+      leading: const Icon(Icons.manage_search),
+      title: const Text('USB ID reference'),
+      subtitle: const Text('Look up vendor and product IDs. Sessions use Android’s USB identity.'),
+      trailing: const Icon(Icons.chevron_right),
+      onTap: () => showConfigurationPage<void>(context, (_) => const UsbIdReferenceScreen()),
     );
   }
 }

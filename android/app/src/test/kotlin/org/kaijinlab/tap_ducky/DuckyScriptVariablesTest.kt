@@ -180,6 +180,17 @@ class DuckyScriptVariablesTest {
   }
 
   @Test
+  fun appliesScriptTimingToPausesWithoutScalingKeyTapEstimates() {
+    val estimator = DuckyScriptEstimator(
+      DuckyScriptVariables({ null }, { null }),
+      { _, _ -> 0 },
+      { 7 },
+      delayMultiplier = 2.0,
+    )
+    assertEquals(207L, estimator.estimate("DELAY 100\nENTER"))
+  }
+
+  @Test
   fun estimatesDefaultDelaySetFromAnExpression() {
     val estimator = DuckyScriptEstimator(DuckyScriptVariables({ null }, { null }), { _, _ -> 0 }, { 0 })
     val script = """

@@ -17,11 +17,7 @@ class AppSettingsController extends AsyncNotifier<AppSettings> {
     final repo = await ref.watch(settingsRepositoryProvider.future);
     final loaded = repo.load();
 
-    await _applyWakelockState(loaded.keepScreenOn);
-    await _applyHidGraceWindow(loaded.hidGraceWindowMs);
-    await _applyUnicodeFallbackMode(loaded.unicodeFallbackMode);
-    await _applyTypingSpeedFactor(loaded.typingSpeedFactor);
-    await _applyRiskyFastMode(loaded.riskyFastMode);
+    await _applyExecutionSettings(loaded);
     await _applyDialShortcutBindings(loaded.dialShortcuts);
     return loaded;
   }
@@ -43,9 +39,8 @@ class AppSettingsController extends AsyncNotifier<AppSettings> {
 
   Future<void> setTypingSpeedFactor(double v) async {
     final clamped = v.clamp(0.1, 10.0);
-    final s = (state.value ?? AppSettings.defaults()).copyWith(typingSpeedFactor: clamped);
     await _applyTypingSpeedFactor(clamped);
-    await _save(s);
+    await _save((state.value ?? AppSettings.defaults()).copyWith(typingSpeedFactor: clamped));
   }
 
   Future<void> setRandomizeTiming(bool v) async {
@@ -54,9 +49,8 @@ class AppSettingsController extends AsyncNotifier<AppSettings> {
   }
 
   Future<void> setKeepScreenOn(bool v) async {
-    final s = (state.value ?? AppSettings.defaults()).copyWith(keepScreenOn: v);
     await _applyWakelockState(v);
-    await _save(s);
+    await _save((state.value ?? AppSettings.defaults()).copyWith(keepScreenOn: v));
   }
 
   Future<void> setHiddenExecution(bool v) async {
@@ -81,32 +75,39 @@ class AppSettingsController extends AsyncNotifier<AppSettings> {
 
   Future<void> setHidGraceWindowMs(int ms) async {
     final clamped = ms.clamp(0, 5000);
-    final s = (state.value ?? AppSettings.defaults()).copyWith(hidGraceWindowMs: clamped);
     await _applyHidGraceWindow(clamped);
-    await _save(s);
+    await _save((state.value ?? AppSettings.defaults()).copyWith(hidGraceWindowMs: clamped));
   }
 
   Future<void> setUnicodeFallbackMode(String mode) async {
     final normalized = mode.trim().toLowerCase();
     final safe = (normalized == 'skip' || normalized == 'warn' || normalized == 'ascii') ? normalized : 'warn';
-    final s = (state.value ?? AppSettings.defaults()).copyWith(unicodeFallbackMode: safe);
     await _applyUnicodeFallbackMode(safe);
-    await _save(s);
+    await _save((state.value ?? AppSettings.defaults()).copyWith(unicodeFallbackMode: safe));
   }
 
   Future<void> setRiskyFastMode(bool v) async {
-    final s = (state.value ?? AppSettings.defaults()).copyWith(riskyFastMode: v);
     await _applyRiskyFastMode(v);
-    await _save(s);
+    await _save((state.value ?? AppSettings.defaults()).copyWith(riskyFastMode: v));
+  }
+
+  Future<void> resetExecutionDefaults() async {
+    final defaults = AppSettings.defaults();
+    await _applyExecutionSettings(defaults);
+    await _save((state.value ?? defaults).copyWith(
+      enableLogging: defaults.enableLogging,
+      delayMultiplier: defaults.delayMultiplier,
+      typingSpeedFactor: defaults.typingSpeedFactor,
+      hidGraceWindowMs: defaults.hidGraceWindowMs,
+      unicodeFallbackMode: defaults.unicodeFallbackMode,
+      riskyFastMode: defaults.riskyFastMode,
+      keepScreenOn: defaults.keepScreenOn,
+    ));
   }
 
   Future<void> resetAllToDefaults() async {
     final defaults = AppSettings.defaults();
-    await _applyWakelockState(defaults.keepScreenOn);
-    await _applyHidGraceWindow(defaults.hidGraceWindowMs);
-    await _applyUnicodeFallbackMode(defaults.unicodeFallbackMode);
-    await _applyTypingSpeedFactor(defaults.typingSpeedFactor);
-    await _applyRiskyFastMode(defaults.riskyFastMode);
+    await _applyExecutionSettings(defaults);
     await _applyDialShortcutBindings(defaults.dialShortcuts);
     await _save(defaults);
   }
@@ -115,6 +116,14 @@ class AppSettingsController extends AsyncNotifier<AppSettings> {
     final s = (state.value ?? AppSettings.defaults()).copyWith(dialShortcuts: bindings);
     await _applyDialShortcutBindings(bindings);
     await _save(s);
+  }
+
+  Future<void> _applyExecutionSettings(AppSettings settings) async {
+    await _applyWakelockState(settings.keepScreenOn);
+    await _applyHidGraceWindow(settings.hidGraceWindowMs);
+    await _applyUnicodeFallbackMode(settings.unicodeFallbackMode);
+    await _applyTypingSpeedFactor(settings.typingSpeedFactor);
+    await _applyRiskyFastMode(settings.riskyFastMode);
   }
 
   Future<void> _applyWakelockState(bool enable) async {

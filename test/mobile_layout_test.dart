@@ -3,6 +3,7 @@ import 'package:material_ui/material_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tap_ducky/app/theme.dart';
+import 'package:tap_ducky/data/db/usb_ids_db.dart';
 import 'package:tap_ducky/data/models/app_settings.dart';
 import 'package:tap_ducky/data/models/host_os.dart';
 import 'package:tap_ducky/data/models/log_entry.dart';
@@ -14,6 +15,7 @@ import 'package:tap_ducky/features/payloads/payload_editor_screen.dart';
 import 'package:tap_ducky/features/schedule/schedule_editor_screen.dart';
 import 'package:tap_ducky/features/schedule/schedule_screen.dart';
 import 'package:tap_ducky/features/payloads/payloads_screen.dart';
+import 'package:tap_ducky/features/settings/settings_screen.dart';
 import 'package:tap_ducky/state/controllers/app_settings_controller.dart';
 import 'package:tap_ducky/state/controllers/execution_controller.dart';
 import 'package:tap_ducky/state/controllers/hid_status_controller.dart';
@@ -69,6 +71,16 @@ class _Settings extends AppSettingsController {
       state.requireValue.copyWith(lastProfileType: profileType),
     );
   }
+}
+
+class _UsbReferenceDb implements UsbIdsDb {
+  @override
+  Future<List<UsbProduct>> searchProducts(String query) async => query == 'sample adapter'
+      ? const [UsbProduct(vid: 0x1234, pid: 0xabcd, vendorName: 'Sample', productName: 'USB Adapter')]
+      : const [];
+
+  @override
+  Future<void> close() async {}
 }
 
 class _Payloads extends PayloadsController {
@@ -137,6 +149,7 @@ Future<void> _pumpScreen(
   _HidStatus? hid,
   _Settings? settings,
   ExecutionController? execution,
+  UsbIdsDb? usbDb,
 }) async {
   tester.view.devicePixelRatio = 1;
   tester.view.physicalSize = size;
@@ -153,6 +166,7 @@ Future<void> _pumpScreen(
         payloadsControllerProvider.overrideWith(() => _Payloads(payloads)),
         schedulerControllerProvider.overrideWith(() => _Schedules(tasks)),
         logsControllerProvider.overrideWith(_Logs.new),
+        if (usbDb != null) usbIdsDbProvider.overrideWith((ref) async => usbDb),
         if (execution != null)
           executionControllerProvider.overrideWith(() => execution),
       ],
@@ -191,6 +205,39 @@ final _longPayload = Payload(
 );
 
 void main() {
+  testWidgets('execution settings distinguish script pauses from keyboard timing', (tester) async {
+    await _pumpScreen(tester, const SettingsScreen(), size: const Size(390, 740));
+    await tester.enterText(find.byType(TextField), 'typing');
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Execution & Typing'));
+    await tester.pumpAndSettle();
+    expect(find.text('Script pauses'), findsOneWidget);
+    expect(find.text('Keyboard timing'), findsOneWidget);
+    await tester.dragUntilVisible(find.text('Keyboard reliability'), find.byType(Scrollable).last, const Offset(0, -180));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Keyboard reliability'));
+    await tester.pumpAndSettle();
+    expect(find.text('USB readiness wait'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('USB reference search shows vendor and product IDs', (tester) async {
+    await _pumpScreen(tester, const SettingsScreen(), size: const Size(390, 740), usbDb: _UsbReferenceDb());
+    await tester.enterText(find.byType(TextField), 'database');
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('USB ID reference'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), 'sample adapter');
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.pumpAndSettle();
+    expect(find.text('USB Adapter'), findsOneWidget);
+    expect(find.textContaining('0x1234:0xABCD'), findsOneWidget);
+    await tester.tap(find.byTooltip('Clear search'));
+    await tester.pumpAndSettle();
+    expect(find.text('USB Adapter'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('syntax help opens internal variable support at large text', (tester) async {
     await _pumpScreen(tester, const PayloadEditorScreen(), size: const Size(320, 568));
     await tester.tap(find.byTooltip('Syntax'));

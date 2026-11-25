@@ -220,7 +220,11 @@ class AppSettings {
       showPowerUserHints: (json['showPowerUserHints'] ?? true) == true,
       lastProfileType: (json['lastProfileType'] ?? 'composite').toString(),
       hidGraceWindowMs: (json['hidGraceWindowMs'] is num) ? (json['hidGraceWindowMs'] as num).toInt() : 1500,
-      unicodeFallbackMode: (json['unicodeFallbackMode'] ?? 'warn').toString(),
+      unicodeFallbackMode: switch (json['unicodeFallbackMode']?.toString().trim().toLowerCase()) {
+        'skip' => 'skip',
+        'ascii' => 'ascii',
+        _ => 'warn',
+      },
       riskyFastMode: (json['riskyFastMode'] ?? false) == true,
       typingSpeedFactor: typingFactor,
       typingSpeedSemanticsVersion: typingSemantics,

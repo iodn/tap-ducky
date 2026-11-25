@@ -12,7 +12,9 @@ import '../../state/controllers/app_settings_controller.dart';
 import '../../state/controllers/dynamic_color_controller.dart';
 import '../../state/controllers/hid_status_controller.dart';
 import '../../widgets/arm_profile_sheet.dart';
+import '../../widgets/configuration_page.dart';
 import 'about_screen.dart';
+import 'usb_id_reference_screen.dart';
 import 'widgets/donation_sheet.dart';
 import 'widgets/section_card.dart';
 import 'widgets/dynamic_colors_tile.dart';
@@ -39,33 +41,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   static const String _repoUrl = 'https://github.com/iodn/tap-ducky';
   static const String _issuesUrl = 'https://github.com/iodn/tap-ducky/issues';
   static const String _liberapayUrl = 'https://liberapay.com/KaijinLab/donate';
-
-  String _speedLabel(double multiplier) {
-    if (multiplier >= 3.0) return 'Very Slow';
-    if (multiplier >= 1.5) return 'Slow';
-    if (multiplier >= 0.9 && multiplier <= 1.1) return 'Normal';
-    if (multiplier >= 0.5) return 'Fast';
-    return 'Very Fast';
-  }
-
-  String _typingSpeedLabel(double factor) {
-    if (factor <= 0.4) return 'Very Fast';
-    if (factor <= 0.8) return 'Fast';
-    if (factor <= 1.2) return 'Normal';
-    if (factor <= 2.5) return 'Slow';
-    return 'Very Slow';
-  }
-
-  Future<void> _resetExecutionDefaults(WidgetRef ref) async {
-    final controller = ref.read(appSettingsControllerProvider.notifier);
-    await controller.setEnableLogging(true);
-    await controller.setDelayMultiplier(1.0);
-    await controller.setTypingSpeedFactor(1.0);
-    await controller.setHidGraceWindowMs(1500);
-    await controller.setUnicodeFallbackMode('warn');
-    await controller.setRiskyFastMode(false);
-    await controller.setKeepScreenOn(false);
-  }
 
   Future<void> _launchUrl(BuildContext context, String url) async {
     try {
@@ -99,8 +74,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Reset all settings?'),
-        content: const Text('This will restore all settings to their defaults.'),
+        title: const Text('Reset general preferences?'),
+        content: const Text('Restore the theme, execution, and session preferences to their defaults.'),
         actions: [
           TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Cancel')),
           FilledButton(onPressed: () => Navigator.of(ctx).pop(true), child: const Text('Reset')),
@@ -111,7 +86,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     await ref.read(appSettingsControllerProvider.notifier).resetAllToDefaults();
     if (!context.mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Settings reset to defaults')),
+      const SnackBar(content: Text('General preferences reset')),
     );
   }
 
@@ -216,9 +191,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final execution = _SettingsDestination(
       icon: Icons.keyboard_outlined,
       title: 'Execution & Typing',
-      subtitle: s == null
-          ? 'Speed, timing, logging'
-          : '${_speedLabel(s.delayMultiplier)} · ${s.delayMultiplier.toStringAsFixed(2)}×',
+      subtitle: 'Script pauses, keyboard timing, and reliability',
       keywords: const [
         'execution',
         'typing',
@@ -270,6 +243,13 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       onTap: (context) =>
           context.push(const AdvancedSettingsRoute().location),
     );
+    final usbIds = _SettingsDestination(
+      icon: Icons.manage_search,
+      title: 'USB ID reference',
+      subtitle: 'Find a vendor or product',
+      keywords: const ['usb', 'vid', 'pid', 'vendor', 'product', 'database'],
+      onTap: (context) => showConfigurationPage<void>(context, (_) => const UsbIdReferenceScreen()),
+    );
     final store = _SettingsDestination(
       icon: Icons.storefront_outlined,
       title: 'Payload Store',
@@ -301,8 +281,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     );
     final reset = _SettingsDestination(
       icon: Icons.restart_alt,
-      title: 'Reset All Settings',
-      subtitle: 'Restore every setting to its default',
+      title: 'Reset general preferences',
+      subtitle: 'Restore the theme, execution, and session preferences',
       keywords: const ['reset', 'default', 'erase', 'restore'],
       danger: true,
       onTap: (context) => _confirmResetAll(context, ref),
@@ -313,7 +293,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         appearance,
         if (model == null || model.state != 'unsupported') aiDraft,
       ]),
-      _SettingsGroup('Keyboard & USB', [execution, usb, advanced]),
+      _SettingsGroup('Keyboard & USB', [execution, usb, usbIds, advanced]),
       _SettingsGroup('Library', [store]),
       _SettingsGroup('About & Support', [about, support, reset]),
     ];
@@ -336,12 +316,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     return ListView(
       padding: const EdgeInsets.only(top: 8, bottom: 24),
       children: [
-        _buildExecutionSection(
-          context,
-          ref,
-          s,
-          s.delayMultiplier.clamp(0.1, 4.0),
-        ),
+        _buildExecutionSection(context, ref, s),
         const SizedBox(height: 8),
         _buildStealthSection(context, ref, s),
       ],
@@ -627,325 +602,118 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   Widget _buildExecutionSection(
     BuildContext context,
     WidgetRef ref,
-    dynamic s,
-    double clampedMultiplier,
+    AppSettings settings,
   ) {
-    final theme = Theme.of(context);
-    final cs = theme.colorScheme;
+    final controller = ref.read(appSettingsControllerProvider.notifier);
+    final colors = Theme.of(context).colorScheme;
+
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16),
-      child: SectionCard(
-        title: 'Execution',
-        leading: Icon(Icons.play_arrow, color: cs.primary),
-        child: Padding(
-          padding: const EdgeInsets.all(14),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          SectionCard(
+            title: 'Timing',
+            leading: Icon(Icons.timer_outlined, color: colors.primary),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  const Expanded(
-                    child: Text(
-                      'Speed & timing',
-                      style: TextStyle(fontWeight: FontWeight.w700),
-                    ),
+                  _ExecutionSlider(
+                    title: 'Script pauses',
+                    summary: 'Scales delays written in the script. At 2×, a 1-second pause takes 2 seconds.',
+                    value: settings.delayMultiplier,
+                    min: 0.1,
+                    max: 4,
+                    divisions: 39,
+                    format: (value) => '${value.toStringAsFixed(2)}×',
+                    onChanged: controller.setDelayMultiplier,
                   ),
-                  TextButton.icon(
-                    onPressed: () => _resetExecutionDefaults(ref),
-                    icon: const Icon(Icons.refresh, size: 16),
-                    label: const Text('Reset defaults'),
+                  const Divider(),
+                  _ExecutionSlider(
+                    title: 'Keyboard timing',
+                    summary: 'Adjusts key hold time and the gap between USB key reports. Higher values give the host more time.',
+                    value: settings.typingSpeedFactor,
+                    min: 0.1,
+                    max: 10,
+                    divisions: 99,
+                    format: (value) => '${value.toStringAsFixed(2)}×',
+                    onChanged: controller.setTypingSpeedFactor,
                   ),
                 ],
               ),
-              Text(
-                'Adjust script pauses and the timing of USB key reports.',
-                style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant),
-              ),
-              const SizedBox(height: 12),
-              Row(
-                children: [
-                  const Expanded(
-                    child: Text(
-                      'Script delay multiplier',
-                      style: TextStyle(fontWeight: FontWeight.w700),
-                    ),
-                  ),
-                  Text(
-                    '${_speedLabel(s.delayMultiplier)} • ${s.delayMultiplier.toStringAsFixed(2)}×',
-                    style: TextStyle(
-                      fontWeight: FontWeight.w600,
-                      color: cs.onSurfaceVariant,
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 6),
-              Slider(
-                value: clampedMultiplier,
-                min: 0.1,
-                max: 4.0,
-                divisions: 39,
-                label: '${s.delayMultiplier.toStringAsFixed(2)}×',
-                onChanged: (v) => ref
-                    .read(appSettingsControllerProvider.notifier)
-                    .setDelayMultiplier(v),
-              ),
-              Row(
-                children: [
-                  Text('Fast',
-                      style: TextStyle(
-                          fontSize: 12, color: cs.onSurfaceVariant)),
-                  const Spacer(),
-                  Text('Slow',
-                      style: TextStyle(
-                          fontSize: 12, color: cs.onSurfaceVariant)),
-                ],
-              ),
-              const SizedBox(height: 10),
-              Row(
-                children: [
-                  const Expanded(
-                    child: Text(
-                      'Key timing multiplier',
-                      style: TextStyle(fontWeight: FontWeight.w700),
-                    ),
-                  ),
-                  Text(
-                    '${_typingSpeedLabel(s.typingSpeedFactor)} • ${s.typingSpeedFactor.toStringAsFixed(2)}×',
-                    style: TextStyle(
-                      fontWeight: FontWeight.w600,
-                      color: cs.onSurfaceVariant,
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 6),
-              Slider(
-                value: s.typingSpeedFactor.clamp(0.1, 10.0),
-                min: 0.1,
-                max: 10.0,
-                divisions: 99,
-                label: '${s.typingSpeedFactor.toStringAsFixed(2)}×',
-                onChanged: (v) => ref
-                    .read(appSettingsControllerProvider.notifier)
-                    .setTypingSpeedFactor(v),
-              ),
-              Row(
-                children: [
-                  Text('Fast',
-                      style: TextStyle(
-                          fontSize: 12, color: cs.onSurfaceVariant)),
-                  const Spacer(),
-                  Text('Slow',
-                      style: TextStyle(
-                          fontSize: 12, color: cs.onSurfaceVariant)),
-                ],
-              ),
-              Text(
-                'Lower values send key reports closer together. USB and the host app limit actual speed; this does not change host key repeat.',
-                style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant),
-              ),
-              const SizedBox(height: 12),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  _SpeedPresetChip(
-                    label: 'Ultra Fast',
-                    multiplier: 0.1,
-                    current: s.delayMultiplier,
-                    onSelected: () => ref
-                        .read(appSettingsControllerProvider.notifier)
-                        .setDelayMultiplier(0.1),
-                    tooltip: 'Short pauses may not give the host app enough time to respond.',
-                  ),
-                  _SpeedPresetChip(
-                    label: 'Very Fast',
-                    multiplier: 0.25,
-                    current: s.delayMultiplier,
-                    onSelected: () => ref
-                        .read(appSettingsControllerProvider.notifier)
-                        .setDelayMultiplier(0.25),
-                  ),
-                  _SpeedPresetChip(
-                    label: 'Fast',
-                    multiplier: 0.5,
-                    current: s.delayMultiplier,
-                    onSelected: () => ref
-                        .read(appSettingsControllerProvider.notifier)
-                        .setDelayMultiplier(0.5),
-                  ),
-                  _SpeedPresetChip(
-                    label: 'Normal',
-                    multiplier: 1.0,
-                    current: s.delayMultiplier,
-                    onSelected: () => ref
-                        .read(appSettingsControllerProvider.notifier)
-                        .setDelayMultiplier(1.0),
-                  ),
-                  _SpeedPresetChip(
-                    label: 'Slow',
-                    multiplier: 2.0,
-                    current: s.delayMultiplier,
-                    onSelected: () => ref
-                        .read(appSettingsControllerProvider.notifier)
-                        .setDelayMultiplier(2.0),
-                  ),
-                  _SpeedPresetChip(
-                    label: 'Very Slow',
-                    multiplier: 4.0,
-                    current: s.delayMultiplier,
-                    onSelected: () => ref
-                        .read(appSettingsControllerProvider.notifier)
-                        .setDelayMultiplier(4.0),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 14),
-              Container(
-                decoration: BoxDecoration(
-                  color: cs.surfaceContainerHighest.withOpacity(0.35),
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: cs.outlineVariant.withOpacity(0.4)),
+            ),
+          ),
+          const SizedBox(height: 12),
+          SectionCard(
+            title: 'Execution',
+            leading: Icon(Icons.play_arrow_outlined, color: colors.primary),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                SwitchListTile(
+                  value: settings.enableLogging,
+                  onChanged: controller.setEnableLogging,
+                  title: const Text('Save execution history'),
                 ),
-                child: ExpansionTile(
-                  tilePadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-                  childrenPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                  leading: Icon(Icons.tune, color: cs.primary),
-                  title: const Text(
-                    'Advanced execution',
-                    style: TextStyle(fontWeight: FontWeight.w700),
-                  ),
-                  subtitle: Text(
-                    'Logging, HID reliability, Unicode fallback',
-                    style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant),
-                  ),
+                SwitchListTile(
+                  value: settings.keepScreenOn,
+                  onChanged: controller.setKeepScreenOn,
+                  title: const Text('Keep screen on'),
+                  subtitle: const Text('While TapDucky is open'),
+                ),
+                ExpansionTile(
+                  leading: const Icon(Icons.tune),
+                  title: const Text('Keyboard reliability'),
+                  subtitle: const Text('USB readiness and unsupported characters'),
+                  childrenPadding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
+                  expandedCrossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    SwitchListTile(
-                      contentPadding: EdgeInsets.zero,
-                      value: s.enableLogging,
-                      onChanged: (v) => ref
-                          .read(appSettingsControllerProvider.notifier)
-                          .setEnableLogging(v),
-                      title: const Text('Enable logging'),
-                    ),
-                    const SizedBox(height: 6),
-                    Row(
-                      children: [
-                        const Expanded(
-                          child: Text(
-                            'HID grace window',
-                            style: TextStyle(fontWeight: FontWeight.w700),
-                          ),
-                        ),
-                        Text(
-                          '${s.hidGraceWindowMs} ms',
-                          style: TextStyle(
-                            fontWeight: FontWeight.w600,
-                            color: cs.onSurfaceVariant,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 6),
-                    Slider(
-                      value: s.hidGraceWindowMs.toDouble().clamp(0, 5000),
+                    _ExecutionSlider(
+                      title: 'USB readiness wait',
+                      summary: 'How long Android waits for the USB gadget to become ready.',
+                      value: settings.hidGraceWindowMs.toDouble(),
                       min: 0,
                       max: 5000,
                       divisions: 50,
-                      label: '${s.hidGraceWindowMs} ms',
-                      onChanged: (v) => ref
-                          .read(appSettingsControllerProvider.notifier)
-                          .setHidGraceWindowMs(v.round()),
+                      format: (value) => '${value.round()} ms',
+                      onChanged: (value) => controller.setHidGraceWindowMs(value.round()),
                     ),
-                    Text(
-                      'Wait briefly for HID to become active before failing a write.',
-                      style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant),
-                    ),
-                    const SizedBox(height: 10),
-                    Row(
-                      children: [
-                        const Expanded(
-                          child: Text(
-                            'Unicode fallback',
-                            style: TextStyle(fontWeight: FontWeight.w700),
-                          ),
-                        ),
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                          decoration: BoxDecoration(
-                            color: cs.surfaceVariant,
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          child: DropdownButtonHideUnderline(
-                            child: DropdownButton<String>(
-                              value: s.unicodeFallbackMode,
-                              style: TextStyle(color: cs.onSurface),
-                              items: const [
-                                DropdownMenuItem(value: 'warn', child: Text('Warn & skip')),
-                                DropdownMenuItem(value: 'skip', child: Text('Skip')),
-                                DropdownMenuItem(value: 'ascii', child: Text('ASCII transliterate')),
-                              ],
-                              onChanged: (v) {
-                                if (v == null) return;
-                                ref
-                                    .read(appSettingsControllerProvider.notifier)
-                                    .setUnicodeFallbackMode(v);
-                              },
-                            ),
-                          ),
-                        ),
+                    DropdownButtonFormField<String>(
+                      key: ValueKey(settings.unicodeFallbackMode),
+                      initialValue: settings.unicodeFallbackMode,
+                      isExpanded: true,
+                      decoration: const InputDecoration(labelText: 'Unsupported characters'),
+                      items: const [
+                        DropdownMenuItem(value: 'warn', child: Text('Skip and log a warning')),
+                        DropdownMenuItem(value: 'skip', child: Text('Skip')),
+                        DropdownMenuItem(value: 'ascii', child: Text('Use nearest ASCII character')),
                       ],
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      'Controls how unsupported characters are handled during typing.',
-                      style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant),
-                    ),
-                    Tooltip(
-                      message: 'Risky fast mode can cause missed or stuck keys on some hosts.',
-                      child: SwitchListTile(
-                        contentPadding: EdgeInsets.zero,
-                        value: s.riskyFastMode,
-                        onChanged: (v) => ref
-                            .read(appSettingsControllerProvider.notifier)
-                            .setRiskyFastMode(v),
-                        title: const Text('Risky fast mode'),
-                        subtitle:
-                            const Text('Allows shorter key hold and inter-key delays. May be unreliable.'),
-                      ),
+                      onChanged: (value) {
+                        if (value != null) controller.setUnicodeFallbackMode(value);
+                      },
                     ),
                     SwitchListTile(
                       contentPadding: EdgeInsets.zero,
-                      value: s.keepScreenOn,
-                      onChanged: (v) => ref
-                          .read(appSettingsControllerProvider.notifier)
-                          .setKeepScreenOn(v),
-                      title: const Text('Keep screen on'),
-                      subtitle: const Text('Prevents screen from sleeping during execution'),
+                      value: settings.riskyFastMode,
+                      onChanged: controller.setRiskyFastMode,
+                      title: const Text('Allow shorter key timings'),
+                      subtitle: const Text('May cause missed or stuck keys.'),
                     ),
-                    if (s.keepScreenOn)
-                      Padding(
-                        padding: const EdgeInsets.only(left: 16, top: 8),
-                        child: Row(
-                          children: [
-                            Icon(Icons.battery_alert, size: 16, color: cs.tertiary),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: Text(
-                                'May increase battery usage. Screen will stay on even when app is in background.',
-                                style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
                   ],
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
-        ),
+          Align(
+            alignment: Alignment.centerRight,
+            child: TextButton(
+              onPressed: controller.resetExecutionDefaults,
+              child: const Text('Reset execution settings'),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -1149,46 +917,55 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   }
 }
 
-class _SpeedPresetChip extends StatelessWidget {
-  const _SpeedPresetChip({
-    required this.label,
-    required this.multiplier,
-    required this.current,
-    required this.onSelected,
-    this.tooltip,
+class _ExecutionSlider extends StatelessWidget {
+  const _ExecutionSlider({
+    required this.title,
+    required this.summary,
+    required this.value,
+    required this.min,
+    required this.max,
+    required this.divisions,
+    required this.format,
+    required this.onChanged,
   });
 
-  final String label;
-  final double multiplier;
-  final double current;
-  final VoidCallback onSelected;
-  final String? tooltip;
+  final String title;
+  final String summary;
+  final double value;
+  final double min;
+  final double max;
+  final int divisions;
+  final String Function(double) format;
+  final ValueChanged<double> onChanged;
 
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    final selected = (current - multiplier).abs() < 0.01;
-
-    final chip = ChoiceChip(
-      label: Text(label),
-      selected: selected,
-      onSelected: (_) => onSelected(),
-      labelStyle: TextStyle(
-        fontWeight: selected ? FontWeight.w700 : FontWeight.w600,
-        color: selected ? cs.onPrimaryContainer : cs.onSurfaceVariant,
-        fontSize: 12,
-      ),
-      selectedColor: cs.primaryContainer,
-      backgroundColor: cs.surfaceContainerHighest,
-      side: BorderSide(
-        color: selected ? cs.primary : cs.outlineVariant,
-        width: selected ? 1.5 : 1,
-      ),
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(10),
-      ),
+    final clamped = value.clamp(min, max);
+    final formatted = format(clamped);
+    final theme = Theme.of(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Wrap(
+          spacing: 8,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            Text(title, style: theme.textTheme.titleSmall),
+            Text(formatted),
+          ],
+        ),
+        Slider(
+          value: clamped,
+          min: min,
+          max: max,
+          divisions: divisions,
+          label: formatted,
+          semanticFormatterCallback: (value) => '$title, ${format(value)}',
+          onChanged: onChanged,
+        ),
+        Text(summary, style: theme.textTheme.bodySmall),
+      ],
     );
-    return tooltip == null ? chip : Tooltip(message: tooltip!, child: chip);
   }
 }
 
