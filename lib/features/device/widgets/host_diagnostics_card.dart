@@ -2,8 +2,10 @@ import 'package:material_ui/material_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../data/models/host_os.dart';
+import '../../../state/controllers/app_settings_controller.dart';
 import '../../../state/controllers/hid_status_controller.dart';
 import '../../../state/controllers/host_os_controller.dart';
+import '../../../widgets/host_os_label.dart';
 
 /// Diagnostics-only view of the USB host.
 ///
@@ -18,9 +20,17 @@ class HostDiagnosticsCard extends ConsumerWidget {
     final hid = ref.watch(hidStatusControllerProvider);
     final hostOs = ref.watch(hostOsControllerProvider);
     final cs = Theme.of(context).colorScheme;
-    final selected = hostOs.source == HostOsSource.manual
-        ? hostOs.os
-        : HostOs.unknown;
+    final selected = ref.watch(appSettingsControllerProvider).value?.manualHostOs ??
+        HostOs.unknown;
+    final explanation = hostOs.isKnown
+        ? hostOs.explanation
+        : !hid.sessionArmed
+            ? 'Arm a session to identify a USB host.'
+            : !hid.hostOsDetectionAvailable
+                ? 'Automatic identification is unavailable on this USB controller.'
+                : hid.pcConnected
+                    ? 'No recognizable USB signature for this connection.'
+                    : 'Waiting for a USB host.';
 
     return Card(
       child: Column(
@@ -46,15 +56,18 @@ class HostDiagnosticsCard extends ConsumerWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 const SizedBox(height: 4),
-                Text(
-                  hostOs.label,
+                HostOsLabel(
+                  diagnostic: hostOs,
+                  detecting: hid.isDetectingHostOs,
                   style: TextStyle(
                     fontWeight: FontWeight.w700,
                     color: hostOs.isKnown ? cs.primary : cs.onSurfaceVariant,
                   ),
                 ),
-                const SizedBox(height: 4),
-                Text(hostOs.explanation),
+                if (!hid.isDetectingHostOs && hostOs.source != HostOsSource.inferred) ...[
+                  const SizedBox(height: 4),
+                  Text(explanation),
+                ],
               ],
             ),
           ),
@@ -95,28 +108,6 @@ class HostDiagnosticsCard extends ConsumerWidget {
                       },
                     ),
                   ),
-                ),
-                const SizedBox(height: 10),
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Icon(
-                      Icons.info_outline,
-                      size: 16,
-                      color: cs.onSurfaceVariant,
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        'Automatic identification is unavailable over USB. The OS label is for diagnostics.',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: cs.onSurfaceVariant,
-                          height: 1.4,
-                        ),
-                      ),
-                    ),
-                  ],
                 ),
               ],
             ),

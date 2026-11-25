@@ -2,13 +2,13 @@ package org.kaijinlab.tap_ducky
 
 import kotlin.math.abs
 
-class ExpressionEvaluator {
+class ExpressionEvaluator(private val hostOs: () -> Int = { 0 }) {
   private enum class Kind { NUM, VAR, IDENT, OP, LPAREN, RPAREN, END }
   private data class Tok(val kind: Kind, val text: String)
 
   fun evaluate(expression: String, variables: Map<String, Int>): Int {
     val tokens = tokenize(expression)
-    val p = Parser(tokens, variables)
+    val p = Parser(tokens, variables, hostOs)
     return p.parse()
   }
 
@@ -117,7 +117,8 @@ class ExpressionEvaluator {
 
   private class Parser(
     private val tokens: List<Tok>,
-    private val vars: Map<String, Int>
+    private val vars: Map<String, Int>,
+    private val hostOs: () -> Int,
   ) {
     private var pos = 0
 
@@ -281,6 +282,7 @@ class ExpressionEvaluator {
 
       val v = match(Kind.VAR)
       if (v != null) {
+        if (v.text == DuckyScriptHostOs.variable) return hostOs()
         return vars[v.text] ?: 0
       }
 
@@ -288,7 +290,7 @@ class ExpressionEvaluator {
       if (id != null) {
         if (id.text.equals("TRUE", ignoreCase = true)) return 1
         if (id.text.equals("FALSE", ignoreCase = true)) return 0
-        return 0
+        return DuckyScriptHostOs.constant(id.text) ?: 0
       }
 
       if (match(Kind.LPAREN) != null) {

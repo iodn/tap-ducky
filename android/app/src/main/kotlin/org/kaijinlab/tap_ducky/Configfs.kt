@@ -552,32 +552,88 @@ object Configfs {
     stock_layout
   """.trimIndent()
 
-  fun buildVerifyStockLayoutScript(gadgetDir: String, layout: String): String {
+  fun buildVerifyStockLayoutScript(gadgetDir: String, layout: String, usbDataMarker: String? = null): String {
     val reportedMode = layout.lineSequence().first().removePrefix("mode=")
     val configuredMode = layout.lineSequence().firstOrNull { it.startsWith("sys.usb.config=") }
       ?.substringAfter('=')?.split(',')?.filterNot { it == "adb" || it == "none" }?.joinToString(",")
     val originalMode = reportedMode.takeUnless { it.isEmpty() || it == "?" } ?: configuredMode ?: reportedMode
+    val powerAttributes = layout.lineSequence().mapNotNull { line ->
+      val path = line.substringBefore('=')
+      val value = line.substringAfter('=', "")
+      val attribute = Regex("""configs/[A-Za-z0-9._-]+/(MaxPower|bmAttributes)""")
+        .matchEntire(path)?.groupValues?.get(1) ?: return@mapNotNull null
+      val valid = when (attribute) {
+        "MaxPower" -> value.toIntOrNull()?.let { it in 0..2040 } == true
+        else -> value in setOf("0x80", "0xa0", "0xc0", "0xe0")
+      }
+      if (valid) "restore_power_attribute ${shEscape(path)} ${shEscape(value)} || exit ${'$'}?" else null
+    }.joinToString("\n")
     return """
     set -e
     export LC_ALL=C
     ${stockGadgetLocation(gadgetDir)}
     $stockLayoutProbe
+    ${usbDataFunctions(usbDataMarker)}
     EXPECTED=${shEscape(layout.substringAfter('\n'))}
     ORIGINAL_MODE=${shEscape(originalMode)}
     matches_baseline() {
       actual=${'$'}(stock_layout) && [ "${'$'}actual" = "${'$'}EXPECTED" ]
     }
+    without_power_attributes() {
+      sed -e '/^configs\/[^/]*\/MaxPower=/d' -e '/^configs\/[^/]*\/bmAttributes=/d'
+    }
+    only_power_differs() {
+      actual=${'$'}(stock_layout) || return 1
+      [ "${'$'}(printf '%s\n' "${'$'}actual" | without_power_attributes)" = "${'$'}EXPECTED_WITHOUT_POWER" ]
+    }
+    restore_power_attribute() {
+      [ -f "${'$'}1" ] && [ ! -L "${'$'}1" ] || return 25
+      actual=${'$'}(cat "${'$'}1") || return 25
+      [ "${'$'}actual" != "${'$'}2" ] || return 0
+      usb_quiet || usb_data_paused || return $HOST_ATTACHED_REFUSED
+      printf '%s\n' "${'$'}2" > "${'$'}1" || return 25
+    }
+    finish_verification() {
+      rc=${'$'}?
+      trap - EXIT
+      resume_usb_data || exit $USB_DATA_RESTORE_FAILED
+      exit "${'$'}rc"
+    }
     if matches_baseline; then exit 0; fi
-    case "${'$'}ORIGINAL_MODE" in
-      *[!a-z0-9_,]*) ;;
-      '') svc usb setFunctions || : ;;
-      *) svc usb setFunctions "${'$'}ORIGINAL_MODE" || : ;;
-    esac
-    for attempt in 1 2 3 4 5 6 7 8 9 10 11 12; do
+    EXPECTED_WITHOUT_POWER=${'$'}(printf '%s\n' "${'$'}EXPECTED" | without_power_attributes)
+    if ! only_power_differs; then
+      case "${'$'}ORIGINAL_MODE" in
+        *[!a-z0-9_,]*) ;;
+        '') svc usb setFunctions || : ;;
+        *) svc usb setFunctions "${'$'}ORIGINAL_MODE" || : ;;
+      esac
+      for attempt in 1 2 3 4 5 6 7 8 9 10 11 12; do
+        if matches_baseline; then exit 0; fi
+        if only_power_differs; then break; fi
+        sleep 0.5
+      done
+    fi
+    if only_power_differs; then
+      trap finish_verification EXIT
+      paused=0
+      if ! usb_quiet; then
+        pause_usb_data || exit $HOST_ATTACHED_REFUSED
+        paused=1
+      fi
+      only_power_differs || exit 25
+      $powerAttributes
+      resume_usb_data || exit $USB_DATA_RESTORE_FAILED
+      if [ "${'$'}paused" = 1 ]; then sleep 0.25; fi
       if matches_baseline; then exit 0; fi
-      sleep 0.5
-    done
+      if only_power_differs && ! usb_quiet; then exit $HOST_ATTACHED_REFUSED; fi
+    fi
     echo "Android has not restored the USB layout captured before arming" >&2
+    actual=${'$'}(stock_layout) || exit 25
+    { printf '%s\n\n' "${'$'}EXPECTED"; printf '%s\n' "${'$'}actual"; } |
+      awk -F= '/^$/ { live=1; next }
+        !live { expected[${'$'}1]=${'$'}0; next }
+        { if (!(${'$'}1 in expected) || expected[${'$'}1] != ${'$'}0) print "Changed: " ${'$'}1; delete expected[${'$'}1] }
+        END { for (field in expected) print "Missing: " field }' >&2
     exit 25
     """.trimIndent()
   }

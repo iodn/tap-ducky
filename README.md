@@ -45,7 +45,7 @@
   - Tabbed execute view, parameter prompts, run/cancel, execution history, and structured logs with export/clear and level filter.
 - Device diagnostics:
   - Snapshot of device, kernel/gadget status, UDC info, keyboard layouts; copy‑to‑clipboard; emulator detection note.
-  - Host connection and host OS are reported separately. Host OS defaults to Unknown and can be labelled manually; it is diagnostic only and never selects or changes a script.
+  - Host OS diagnostics appear on the Device and active session screens. TapDucky uses passive USB evidence when supported and otherwise shows the saved manual label or Unknown.
 
 Note: A rooted device with Linux USB gadget (ConfigFS) support is required. Use a physical device as emulators cannot validate HID behavior.
 
@@ -126,7 +126,7 @@ Supported command families (high level):
 - Pointer/mouse: MOUSE/POINTER CLICK, HOLD, DRAG, MOVE, SCROLL with buttons LEFT/RIGHT/MIDDLE and relative dx/dy and repeat count
 - Control flow: IF / ELSE IF / ELSE / END_IF, WHILE / END_WHILE
 - Functions and calls: FUNCTION / END_FUNCTION, CALL_FUNCTION, RETURN
-- Variables and constants: VAR $name = expr, DEFINE NAME value; $?(exit code) maintained as unsigned 16-bit
+- Variables and constants: VAR $name = expr, DEFINE NAME value, and the $? exit code. DETECT_OS() and the read-only $_OS variable support Hak5-style host OS checks.
 - Random generators: RANDOM_LOWERCASE_LETTER, RANDOM_UPPERCASE_LETTER, RANDOM_LETTER, RANDOM_NUMBER, RANDOM_SPECIAL, RANDOM_CHAR
 - Attack mode passthrough: ATTACKMODE (proxied to the gadget manager layer when applicable)
 
@@ -251,7 +251,9 @@ Note: In addition to the listed aliases, TapDucky accepts snake_case forms like 
 ## Device Diagnostics
 
 - View kernel/UDC list, HID writers readiness, active profile state, host connection state, and the host-present transition count.
-- Host OS is shown separately from host connection. It defaults to Unknown; a manual diagnostic label is available and is always labelled as manually selected. Automatic OS identification is not supported by the current USB gadget backend.
+- Passive host OS inference runs while armed on compatible MTU3 and DWC3 controllers. Recognized Windows, macOS, Android, and Linux signatures show the OS name and logo. A detection message appears while enumeration evidence is still being collected. The Windows rule also recognizes a compatibility descriptor sequence observed on a reconnect without the Microsoft string request. [Microsoft USB OS descriptors](https://learn.microsoft.com/en-us/windows-hardware/drivers/usbcon/microsoft-defined-usb-descriptors#why-does-windows-issue-a-string-descriptor-request-to-index-0xee)
+- Ambiguous signatures and controllers without a usable trace event fall back to the manual label or **Unknown** in the UI. Apple and Linux-family hosts can share enumeration patterns. DuckyScript reads the armed USB fingerprint through `$_OS`. Raw USB observations stay in a bounded local trace buffer for the armed session.
+- OS logos are resized and tinted from Font Awesome Free 6.7.2 brand icons by Fonticons, Inc. [Icon license](https://fontawesome.com/license/free)
 - Copy values to clipboard and refresh snapshot/diagnostics independently.
 
 ## Developer Notes

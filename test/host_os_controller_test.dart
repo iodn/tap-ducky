@@ -33,6 +33,7 @@ HidStatus _status({
   bool armed = true,
   bool connected = true,
   int hostPresentTransitions = 0,
+  HostOs inferred = HostOs.unknown,
 }) {
   return HidStatus(
     rootAvailable: true,
@@ -40,6 +41,7 @@ HidStatus _status({
     deviceConnected: connected,
     sessionArmed: armed,
     hostConfigurationRequestCount: hostPresentTransitions,
+    inferredHostOs: inferred,
   );
 }
 
@@ -104,7 +106,7 @@ void main() {
         as _TestHidController;
 
     controller.applySessionOs(HostOs.linux, HostOsSource.inferred);
-    expect(container.read(hostOsControllerProvider).label, 'Likely Linux');
+    expect(container.read(hostOsControllerProvider).label, 'Linux');
 
     hid.emit(_status(connected: false));
 
@@ -138,7 +140,7 @@ void main() {
         as _TestHidController;
 
     controller.applySessionOs(HostOs.linux, HostOsSource.inferred);
-    expect(container.read(hostOsControllerProvider).label, 'Likely Linux');
+    expect(container.read(hostOsControllerProvider).label, 'Linux');
 
     hid.emit(_status(hostPresentTransitions: 2));
 
@@ -155,5 +157,21 @@ void main() {
     final after = container.read(hostOsControllerProvider);
     expect(after.os, HostOs.android);
     expect(after.source, HostOsSource.manual);
+  });
+
+  test('native inference arrives with the connection and clears on re-enumeration',
+      () async {
+    final container = await _createContainer(manual: HostOs.chromeos);
+    final hid = container.read(hidStatusControllerProvider.notifier)
+        as _TestHidController;
+    hid.emit(_status(hostPresentTransitions: 1, inferred: HostOs.windows));
+    expect(container.read(hostOsControllerProvider).label, 'Windows');
+
+    hid.emit(_status(hostPresentTransitions: 2));
+    expect(container.read(hostOsControllerProvider).source, HostOsSource.manual);
+
+    hid.emit(_status(hostPresentTransitions: 2, inferred: HostOs.windows));
+    hid.emit(_status(armed: false, inferred: HostOs.windows));
+    expect(container.read(hostOsControllerProvider).os, HostOs.chromeos);
   });
 }

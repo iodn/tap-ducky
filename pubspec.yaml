@@ -77,6 +77,7 @@ flutter:
   assets:
     - assets/db/usbids.sqlite
     - assets/images/logo.png
+    - assets/images/host_os/
   #   - images/a_dot_burr.jpeg
   #   - images/a_dot_ham.jpeg
 

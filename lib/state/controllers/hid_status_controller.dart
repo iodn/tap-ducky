@@ -1,4 +1,5 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../data/models/host_os.dart';
 import '../../data/services/platform_gadget_service.dart';
 import '../providers.dart';
 import 'advanced_settings_controller.dart';
@@ -22,6 +23,9 @@ class HidStatus {
     this.prepared = false,
     this.usbRestoring = false,
     this.pcConnected = false,
+    this.inferredHostOs = HostOs.unknown,
+    this.hostOsDetectionAvailable = false,
+    this.hostOsDetecting = false,
   });
 
   final bool isInitializing;
@@ -41,6 +45,16 @@ class HidStatus {
   final bool prepared;
   final bool usbRestoring;
   final bool pcConnected;
+  final HostOs inferredHostOs;
+  final bool hostOsDetectionAvailable;
+  final bool hostOsDetecting;
+
+  bool get isDetectingHostOs =>
+      hostOsDetecting ||
+      (sessionArmed &&
+          gadgetBound &&
+          hostOsDetectionAvailable &&
+          (udcState == 'default' || udcState == 'addressed'));
 
   HidStatus copyWith({
     bool? isInitializing,
@@ -60,6 +74,9 @@ class HidStatus {
     bool? prepared,
     bool? usbRestoring,
     bool? pcConnected,
+    HostOs? inferredHostOs,
+    bool? hostOsDetectionAvailable,
+    bool? hostOsDetecting,
   }) {
     return HidStatus(
       isInitializing: isInitializing ?? this.isInitializing,
@@ -79,6 +96,10 @@ class HidStatus {
       prepared: prepared ?? this.prepared,
       usbRestoring: usbRestoring ?? this.usbRestoring,
       pcConnected: pcConnected ?? this.pcConnected,
+      inferredHostOs: inferredHostOs ?? this.inferredHostOs,
+      hostOsDetectionAvailable:
+          hostOsDetectionAvailable ?? this.hostOsDetectionAvailable,
+      hostOsDetecting: hostOsDetecting ?? this.hostOsDetecting,
     );
   }
 
@@ -92,6 +113,9 @@ class HidStatus {
       hidSupported: gs.supportAvailable,
       deviceConnected: gs.deviceConnected,
       pcConnected: gs.pcConnected ?? gs.deviceConnected,
+      inferredHostOs: HostOs.fromName(gs.inferredHostOs),
+      hostOsDetectionAvailable: gs.hostOsDetectionAvailable,
+      hostOsDetecting: gs.hostOsDetecting,
       sessionArmed: gs.isActive,
       activeProfileId: gs.activeProfileId,
       activeProfileType: gs.activeRoleType,

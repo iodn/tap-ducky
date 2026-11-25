@@ -43,12 +43,14 @@ class RootShell(private val log: LogBus) {
      * so it does NOT permanently mutate the session shell environment.
      */
     @Synchronized
-    fun exec(script: String, timeoutSec: Long = 10): ExecResult {
-        val first = script.trim().lineSequence().firstOrNull()?.take(160) ?: "(empty)"
-        log.log("root", "$ $first")
+    fun exec(script: String, timeoutSec: Long = 10, logOutput: Boolean = true): ExecResult {
+        if (logOutput) {
+            val first = script.trim().lineSequence().firstOrNull()?.take(160) ?: "(empty)"
+            log.log("root", "$ $first")
+        }
 
-        val s = ensureSession() ?: return oneShotExec(script, timeoutSec)
-        val r = s.execShC(script, timeoutSec)
+        val s = ensureSession() ?: return oneShotExec(script, timeoutSec, logOutput)
+        val r = s.execShC(script, timeoutSec, logOutput)
 
         // If the session died or timed out, mark it unusable so we can recreate next time.
         if (r.exitCode == -1 || !s.isAlive()) {
@@ -102,7 +104,7 @@ class RootShell(private val log: LogBus) {
      * Fallback path: legacy one-shot exec via `su -c ...`.
      * This is slower and does NOT support persistent FDs.
      */
-    private fun oneShotExec(script: String, timeoutSec: Long): ExecResult {
+    private fun oneShotExec(script: String, timeoutSec: Long, logOutput: Boolean): ExecResult {
         val start = System.currentTimeMillis()
         val cmd = listOf("su", "-c", "sh -c ${shellQuote(script)}")
 
@@ -175,8 +177,8 @@ class RootShell(private val log: LogBus) {
             val err = if (!finished) "timeout after ${timeoutSec}s\n${errSb}" else errSb.toString()
             val ok = finished && exit == 0 && !err.contains("Permission denied", ignoreCase = true)
 
-            if (out.isNotBlank()) log.log("root/out", out.trimEnd())
-            if (err.isNotBlank()) log.log("root/err", err.trimEnd())
+            if (logOutput && out.isNotBlank()) log.log("root/out", out.trimEnd())
+            if (logOutput && err.isNotBlank()) log.log("root/err", err.trimEnd())
 
             ExecResult(ok, exit, out, err, dur)
         } catch (t: Throwable) {
@@ -310,12 +312,12 @@ class RootShell(private val log: LogBus) {
             stdin.flush()
         }
 
-        fun execShC(script: String, timeoutSec: Long): ExecResult {
+        fun execShC(script: String, timeoutSec: Long, logOutput: Boolean = true): ExecResult {
             val body = "sh -c ${shellQuote(script)}"
-            return execWrapped(body, timeoutSec)
+            return execWrapped(body, timeoutSec, logOutput)
         }
 
-        private fun execWrapped(body: String, timeoutSec: Long): ExecResult {
+        private fun execWrapped(body: String, timeoutSec: Long, logOutput: Boolean): ExecResult {
             val start = System.currentTimeMillis()
             val token = "GFS_${tokenCounter.getAndIncrement()}_${System.nanoTime()}"
             val begin = "__GFS_BEGIN__:$token"
@@ -392,8 +394,8 @@ class RootShell(private val log: LogBus) {
             val err = stderrLines.toString()
             val ok = (exit == 0) && !err.contains("Permission denied", ignoreCase = true)
 
-            if (out.isNotBlank()) log.log("root/out", out.trimEnd())
-            if (err.isNotBlank()) log.log("root/err", err.trimEnd())
+            if (logOutput && out.isNotBlank()) log.log("root/out", out.trimEnd())
+            if (logOutput && err.isNotBlank()) log.log("root/err", err.trimEnd())
 
             return ExecResult(ok, exit, out, err, dur)
         }

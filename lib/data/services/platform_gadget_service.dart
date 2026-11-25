@@ -170,6 +170,9 @@ class GadgetStatus {
     this.gadgetBound = false,
     this.prepared = false,
     this.pcConnected,
+    this.inferredHostOs,
+    this.hostOsDetectionAvailable = false,
+    this.hostOsDetecting = false,
   });
 
   final bool rootAvailable;
@@ -189,12 +192,18 @@ class GadgetStatus {
   final bool gadgetBound;
   final bool prepared;
   final bool? pcConnected;
+  final String? inferredHostOs;
+  final bool hostOsDetectionAvailable;
+  final bool hostOsDetecting;
 
   Map<String, dynamic> toMap() => {
     'rootAvailable': rootAvailable,
     'supportAvailable': supportAvailable,
     'deviceConnected': deviceConnected,
     if (pcConnected != null) 'pcConnected': pcConnected,
+    if (inferredHostOs != null) 'inferredHostOs': inferredHostOs,
+    'hostOsDetectionAvailable': hostOsDetectionAvailable,
+    'hostOsDetecting': hostOsDetecting,
     'isActive': isActive,
     'state': state,
     'activeProfileId': activeProfileId,
@@ -249,6 +258,9 @@ class GadgetStatus {
       supportAvailable: b('supportAvailable'),
       deviceConnected: b('deviceConnected'),
       pcConnected: m.containsKey('pcConnected') ? b('pcConnected') : null,
+      inferredHostOs: m['inferredHostOs']?.toString(),
+      hostOsDetectionAvailable: b('hostOsDetectionAvailable'),
+      hostOsDetecting: b('hostOsDetecting'),
       isActive: isActive,
       state: state,
       activeProfileId: m['activeProfileId']?.toString(),

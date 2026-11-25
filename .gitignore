@@ -33,6 +33,9 @@ migrate_working_dir/
 /build/
 /coverage/
 
+# Local documentation
+/docs/
+
 # Symbolication related
 app.*.symbols
 

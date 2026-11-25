@@ -1,0 +1,35 @@
+capture [000] .... 10.000000: usb_gadget_set_state: speed 3/3 state 0 0mA [bus-powered:activated:connected] --> 0
+capture [000] .... 10.000005: usb_gadget_set_state: speed 3/3 state 5 0mA [bus-powered:activated:connected] --> 0
+capture [000] .... 10.086982: mtu3_handle_setup: setup - 80 06 0100 0000 0040
+capture [000] .... 10.087284: mtu3_handle_setup: setup - 00 05 0004 0000 0000
+capture [000] .... 10.087291: usb_gadget_set_state: speed 3/3 state 6 0mA [bus-powered:activated:connected] --> 0
+capture [000] .... 10.099177: mtu3_handle_setup: setup - 80 06 0100 0000 0012
+capture [000] .... 10.136180: mtu3_handle_setup: setup - 80 06 0200 0000 00ff
+capture [000] .... 10.136915: mtu3_handle_setup: setup - 80 06 03ee 0000 0012
+capture [000] .... 10.137597: mtu3_handle_setup: setup - 80 06 0303 0409 00ff
+capture [000] .... 10.137809: mtu3_handle_setup: setup - 80 06 0300 0000 00ff
+capture [000] .... 10.138151: mtu3_handle_setup: setup - 80 06 0302 0409 00ff
+capture [000] .... 10.454513: mtu3_handle_setup: setup - 80 06 0100 0000 0012
+capture [000] .... 10.454815: mtu3_handle_setup: setup - 80 06 0200 0000 0009
+capture [000] .... 10.455150: mtu3_handle_setup: setup - 80 06 0200 0000 0052
+capture [000] .... 10.462520: mtu3_handle_setup: setup - 00 09 0001 0000 0000
+capture [000] .... 10.462530: usb_gadget_set_state: speed 3/3 state 7 0mA [bus-powered:activated:connected] --> 0
+capture [000] .... 10.462540: usb_gadget_set_state: speed 3/3 state 7 0mA [bus-powered:activated:connected] --> 0
+capture [000] .... 10.463461: mtu3_handle_setup: setup - c0 01 0000 0004 0010
+capture [000] .... 10.463701: mtu3_handle_setup: setup - c0 01 0000 0004 0028
+capture [000] .... 10.466007: mtu3_handle_setup: setup - 80 06 0305 0409 0004
+capture [000] .... 10.466265: mtu3_handle_setup: setup - 80 06 0305 0409 001c
+capture [000] .... 10.475161: mtu3_handle_setup: setup - c1 01 0000 0005 000a
+capture [000] .... 10.475403: mtu3_handle_setup: setup - c1 01 0000 0005 008e
+capture [000] .... 10.479932: mtu3_handle_setup: setup - 80 06 0306 0409 0004
+capture [000] .... 10.480106: mtu3_handle_setup: setup - 80 06 0306 0409 001c
+capture [000] .... 10.493483: mtu3_handle_setup: setup - c1 01 0001 0005 000a
+capture [000] .... 10.540642: mtu3_handle_setup: setup - 80 06 0308 0409 0004
+capture [000] .... 10.540848: mtu3_handle_setup: setup - 80 06 0308 0409 001c
+capture [000] .... 10.552888: mtu3_handle_setup: setup - c1 01 0002 0005 000a
+capture [000] .... 10.556788: mtu3_handle_setup: setup - 80 00 0000 0000 0002
+capture [000] .... 10.560089: mtu3_handle_setup: setup - 21 0a 0000 0001 0000
+capture [000] .... 10.560476: mtu3_handle_setup: setup - 81 06 2200 0001 007f
+capture [000] .... 10.627615: mtu3_handle_setup: setup - 21 0a 0000 0002 0000
+capture [000] .... 10.628060: mtu3_handle_setup: setup - 81 06 2200 0002 008f
+capture [000] .... 10.672713: mtu3_handle_setup: setup - 21 09 0200 0001 0001

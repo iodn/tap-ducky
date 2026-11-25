@@ -170,6 +170,9 @@ class DuckyScriptValidator {
     'END_WHILE',
     'ENDWHILE',
     'FUNCTION',
+    'DETECT_OS()',
+    'EXTENSION',
+    'END_EXTENSION',
     'END_FUNCTION',
     'ENDFUNCTION',
     'RETURN',
@@ -394,6 +397,25 @@ class DuckyScriptValidator {
   static const int _baseMouseMs = 20;
   static const int _commandOverheadMs = 3;
   static const int _maxScriptRepeats = 20000;
+  static const _hostOsVariable = r'$_OS';
+  static const _hostOsExtensions = {'OS_DETECTION', 'OS_DETECT'};
+  static final _hak5VariablePattern = RegExp(r'\$_[A-Z][A-Z_0-9]*\b');
+  static const _unsupportedHak5Variables = {
+    r'$_BUTTON_ENABLED', r'$_BUTTON_PUSH_RECEIVED', r'$_BUTTON_TIMEOUT',
+    r'$_BUTTON_USER_DEFINED', r'$_SYSTEM_LEDS_ENABLED', r'$_STORAGE_LEDS_ENABLED',
+    r'$_LED_CONTINUOUS_SHOW_STORAGE_ACTIVITY', r'$_INJECTING_LEDS_ENABLED',
+    r'$_EXFIL_LEDS_ENABLED', r'$_LED_SHOW_CAPS', r'$_LED_SHOW_NUM',
+    r'$_LED_SHOW_SCROLL', r'$_CURRENT_VID', r'$_CURRENT_PID',
+    r'$_CURRENT_ATTACKMODE', r'$_RANDOM_INT', r'$_RANDOM_MIN', r'$_RANDOM_MAX',
+    r'$_RANDOM_SEED', r'$_RANDOM_LOWER_LETTER_KEYCODE',
+    r'$_RANDOM_UPPER_LETTER_KEYCODE', r'$_RANDOM_LETTER_KEYCODE',
+    r'$_RANDOM_NUMBER_KEYCODE', r'$_RANDOM_SPECIAL_KEYCODE',
+    r'$_RANDOM_CHAR_KEYCODE', r'$_JITTER_ENABLED', r'$_JITTER_MAX',
+    r'$_CAPSLOCK_ON', r'$_NUMLOCK_ON', r'$_SCROLLLOCK_ON',
+    r'$_SAVED_CAPSLOCK_ON', r'$_SAVED_NUMLOCK_ON', r'$_SAVED_SCROLLLOCK_ON',
+    r'$_RECEIVED_HOST_LOCK_LED_REPLY', r'$_STORAGE_ACTIVITY_TIMEOUT',
+    r'$_EXFIL_MODE_ENABLED', r'$_HOST_CONFIGURATION_REQUEST_COUNT',
+  };
 
   ValidationResult validate(
     String script, {
@@ -416,6 +438,8 @@ class DuckyScriptValidator {
     bool inRemBlock = false;
     bool inStringBlock = false;
     bool inStringLnBlock = false;
+    int? extensionStart;
+    final warnedVariables = <String>{};
 
     final Set<String> declaredFunctions = {};
     int ifDepth = 0;
@@ -486,12 +510,25 @@ class DuckyScriptValidator {
     }
 
     final stringBlockLines = <String>[];
+    void checkWritableVariable(String name, int line) {
+      if (name != _hostOsVariable) return;
+      issues.add(ValidationIssue(
+        line: line,
+        severity: IssueSeverity.error,
+        message: '$_hostOsVariable is read-only',
+      ));
+    }
 
     for (int i = 0; i < rawLines.length; i++) {
       final lineNum = i + 1;
 
       final rawLine = rawLines[i];
       final trimmed = rawLine.trim();
+
+      if (extensionStart != null) {
+        if (trimmed.toUpperCase() == 'END_EXTENSION') extensionStart = null;
+        continue;
+      }
 
       if (inRemBlock) {
         if (trimmed.toUpperCase() == 'END_REM') {
@@ -529,6 +566,23 @@ class DuckyScriptValidator {
 
       final command = parts[0].toUpperCase();
 
+      if (const {'IF', 'ELSE', 'ELSE_IF', 'WHILE', 'VAR', 'RETURN', 'DELAY'}
+              .contains(command) ||
+          command.startsWith(r'$') ||
+          RegExp(r'^[A-Za-z_]\w*\s*\(').hasMatch(trimmed)) {
+        for (final match in _hak5VariablePattern.allMatches(trimmed)) {
+          final variable = match.group(0)!;
+          if (_unsupportedHak5Variables.contains(variable) &&
+              warnedVariables.add(variable)) {
+            issues.add(ValidationIssue(
+              line: lineNum,
+              severity: IssueSeverity.warning,
+              message: '$variable is a Hak5 variable unavailable in TapDucky',
+            ));
+          }
+        }
+      }
+
       if (_commonTypos.containsKey(command)) {
         issues.add(ValidationIssue(
           line: lineNum,
@@ -540,6 +594,26 @@ class DuckyScriptValidator {
       }
 
       switch (command) {
+        case 'EXTENSION':
+          final name = parts.skip(1).join(' ').toUpperCase();
+          if (!_hostOsExtensions.contains(name)) {
+            issues.add(ValidationIssue(
+              line: lineNum,
+              severity: IssueSeverity.error,
+              message: 'Unsupported extension: $name',
+            ));
+          }
+          extensionStart = lineNum;
+          break;
+
+        case 'END_EXTENSION':
+          issues.add(ValidationIssue(
+            line: lineNum,
+            severity: IssueSeverity.error,
+            message: 'END_EXTENSION without EXTENSION',
+          ));
+          break;
+
         case 'REM':
           break;
 
@@ -702,7 +776,8 @@ class DuckyScriptValidator {
               suggestion: 'Example: VAR \$counter = 0',
             ));
           } else {
-            final varName = parts[1];
+            final varName = parts[1].split('=').first;
+            checkWritableVariable(varName, lineNum);
             if (!varName.startsWith('\$')) {
               issues.add(ValidationIssue(
                 line: lineNum,
@@ -727,6 +802,14 @@ class DuckyScriptValidator {
             final m = RegExp(r'^FUNCTION\s+([A-Za-z_][A-Za-z0-9_]*)', caseSensitive: false)
                 .firstMatch(trimmed);
             final funcName = m?.group(1) ?? parts[1].replaceAll(RegExp(r'[()]'), '');
+            final args = RegExp(r'\(([^()]*)\)\s*$').firstMatch(trimmed)?.group(1);
+            for (final param in args?.split(',') ?? const <String>[]) {
+              final name = param.trim();
+              checkWritableVariable(
+                name.startsWith(r'$') ? name : '\$$name',
+                lineNum,
+              );
+            }
             declaredFunctions.add(funcName.toLowerCase());
             functionDepth++;
           }
@@ -882,11 +965,19 @@ class DuckyScriptValidator {
 
         default:
           final funcCallMatch =
-              RegExp(r'^([A-Za-z_][A-Za-z0-9_]*)\s*\(.*\)\s*$').firstMatch(trimmed);
+              RegExp(r'^([A-Za-z_][A-Za-z0-9_]*)\s*\((.*)\)\s*$').firstMatch(trimmed);
           if (funcCallMatch != null) {
             commandCount++;
             final funcName = funcCallMatch.group(1)!.toLowerCase();
-            if (!declaredFunctions.contains(funcName)) {
+            if (funcName == 'detect_os') {
+              if (funcCallMatch.group(2)!.trim().isNotEmpty) {
+                issues.add(ValidationIssue(
+                  line: lineNum,
+                  severity: IssueSeverity.error,
+                  message: 'DETECT_OS() takes no arguments',
+                ));
+              }
+            } else if (!declaredFunctions.contains(funcName)) {
               issues.add(ValidationIssue(
                 line: lineNum,
                 severity: IssueSeverity.warning,
@@ -902,6 +993,7 @@ class DuckyScriptValidator {
               RegExp(r'^(\$[A-Za-z_][A-Za-z0-9_]*|\$\?)\s*=\s*(.+)$').firstMatch(trimmed);
           if (assignMatch != null) {
             commandCount++;
+            checkWritableVariable(assignMatch.group(1)!, lineNum);
             commitCommand(keyCount: 0, perCharDelayMs: 0, charCount: 0);
             break;
           }
@@ -1000,6 +1092,13 @@ class DuckyScriptValidator {
         line: 0,
         severity: IssueSeverity.error,
         message: 'Unclosed STRINGLN block (missing END_STRINGLN)',
+      ));
+    }
+    if (extensionStart != null) {
+      issues.add(ValidationIssue(
+        line: extensionStart,
+        severity: IssueSeverity.error,
+        message: 'EXTENSION is missing END_EXTENSION',
       ));
     }
 

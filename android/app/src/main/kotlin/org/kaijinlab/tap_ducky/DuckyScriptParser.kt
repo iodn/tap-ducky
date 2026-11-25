@@ -55,6 +55,7 @@ enum class CommandType {
   END_FUNCTION,
   RETURN,
   CALL_FUNCTION,
+  DETECT_OS,
   MENU,
   APP,
   ENTER,
@@ -160,6 +161,7 @@ class DuckyScriptParser {
     val commands = mutableListOf<DuckyCommand>()
     val lines = script.lines()
     var inRemBlock = false
+    var inOsExtension = false
     var stringBlockType: CommandType? = null
     val stringBlockLines = mutableListOf<String>()
     var blockStart = 0
@@ -169,6 +171,11 @@ class DuckyScriptParser {
     for (raw in lines) {
       lineNumber++
       val trimmed = raw.trim()
+
+      if (inOsExtension) {
+        if (trimmed.equals("END_EXTENSION", ignoreCase = true)) inOsExtension = false
+        continue
+      }
 
       if (inRemBlock) {
         if (trimmed.equals("END_REM", ignoreCase = true)) {
@@ -196,13 +203,24 @@ class DuckyScriptParser {
       }
 
       if (trimmed.isEmpty()) continue
-      when (trimmed.takeWhile { !it.isWhitespace() }.uppercase(Locale.US)) {
+      val sourceKeyword = trimmed.takeWhile { !it.isWhitespace() }
+      when (sourceKeyword.uppercase(Locale.US)) {
         "REM" -> continue
         "REM_BLOCK" -> {
           inRemBlock = true
           blockStart = lineNumber
           continue
         }
+        "EXTENSION" -> {
+          val name = trimmed.drop(sourceKeyword.length).trim().uppercase(Locale.US)
+          require(name in DuckyScriptHostOs.extensionNames) {
+            "Line $lineNumber: unsupported extension $name"
+          }
+          inOsExtension = true
+          blockStart = lineNumber
+          continue
+        }
+        "END_EXTENSION" -> throw IllegalArgumentException("Line $lineNumber: END_EXTENSION without EXTENSION")
       }
 
       val expanded = expandDefines(raw.trimStart())
@@ -212,6 +230,7 @@ class DuckyScriptParser {
       if (assignMatch != null) {
         val varName = assignMatch.groupValues[1].trim()
         val expr = assignMatch.groupValues[2].trim()
+        requireWritableVariable(varName, lineNumber)
         commands.add(DuckyCommand(CommandType.VAR, listOf(varName, expr), lineNumber))
         continue
       }
@@ -264,8 +283,8 @@ class DuckyScriptParser {
         }
 
         "DELAY" -> {
-          val ms = parts.getOrNull(1)?.toIntOrNull() ?: 0
-          commands.add(DuckyCommand(CommandType.DELAY, listOf(ms.toString()), lineNumber))
+          val expression = line.drop(parts[0].length).trim().ifEmpty { "0" }
+          commands.add(DuckyCommand(CommandType.DELAY, listOf(expression), lineNumber))
         }
 
         "DEFAULTDELAY" -> {
@@ -385,6 +404,7 @@ class DuckyScriptParser {
 
         "FUNCTION" -> {
           val (funcName, funcArgs) = extractFunctionSignature(line)
+          funcArgs.forEach { requireWritableVariable(it, lineNumber) }
           commands.add(DuckyCommand(CommandType.FUNCTION, listOf(funcName, *funcArgs.toTypedArray()), lineNumber))
         }
 
@@ -399,12 +419,14 @@ class DuckyScriptParser {
           val m = varDeclRegex.find(line)
           if (m != null) {
             val varName = m.groupValues[1].trim()
+            requireWritableVariable(varName, lineNumber)
             val expr = m.groupValues.getOrNull(2)?.trim().orEmpty()
             val finalExpr = if (expr.isEmpty()) "0" else expr
             commands.add(DuckyCommand(CommandType.VAR, listOf(varName, finalExpr), lineNumber))
           } else {
             if (parts.size >= 3 && parts[1].startsWith("$")) {
               val varName = parts[1]
+              requireWritableVariable(varName, lineNumber)
               val expr = parts.drop(2).joinToString(" ")
               commands.add(DuckyCommand(CommandType.VAR, listOf(varName, expr), lineNumber))
             }
@@ -540,8 +562,13 @@ class DuckyScriptParser {
           if (m != null) {
             val name = m.groupValues[1]
             val rawArgs = m.groupValues.getOrNull(2).orEmpty()
-            val args = rawArgs.split(",").map { it.trim() }.filter { it.isNotEmpty() }
-            commands.add(DuckyCommand(CommandType.CALL_FUNCTION, listOf(name, *args.toTypedArray()), lineNumber))
+            if (name.equals(DuckyScriptHostOs.detectFunction, ignoreCase = true)) {
+              require(rawArgs.isBlank()) { "Line $lineNumber: DETECT_OS() takes no arguments" }
+              commands.add(DuckyCommand(CommandType.DETECT_OS, emptyList(), lineNumber))
+            } else {
+              val args = rawArgs.split(",").map { it.trim() }.filter { it.isNotEmpty() }
+              commands.add(DuckyCommand(CommandType.CALL_FUNCTION, listOf(name, *args.toTypedArray()), lineNumber))
+            }
           } else {
             commands.add(DuckyCommand(CommandType.UNKNOWN, listOf(line), lineNumber))
           }
@@ -549,9 +576,19 @@ class DuckyScriptParser {
       }
     }
 
-    val missingEnd = if (inRemBlock) "END_REM" else stringBlockType?.let { "END_${it.name}" }
+    val missingEnd = when {
+      inOsExtension -> "END_EXTENSION"
+      inRemBlock -> "END_REM"
+      else -> stringBlockType?.let { "END_${it.name}" }
+    }
     require(missingEnd == null) { "Line $blockStart: missing $missingEnd" }
     return commands
+  }
+
+  private fun requireWritableVariable(name: String, lineNumber: Int) {
+    require("\$${name.trim().removePrefix("$")}" != DuckyScriptHostOs.variable) {
+      "Line $lineNumber: ${DuckyScriptHostOs.variable} is read-only"
+    }
   }
 
   private fun extractFunctionSignature(line: String): Pair<String, List<String>> {
@@ -661,7 +698,7 @@ class DuckyScriptExecutor(
   private fun activeModifierMask(): Int = injectedModifierMask or heldModifierMask
   private var heldMouseButtonsMask = 0
   private var callDepth = 0
-  private val evaluator = ExpressionEvaluator()
+  private val evaluator = ExpressionEvaluator(manager::scriptHostOs)
   private val rng = Random.Default
 
   private class ReturnSignal(val value: Int) : RuntimeException()
@@ -1296,8 +1333,13 @@ class DuckyScriptExecutor(
       }
 
       CommandType.DELAY -> {
-        val ms = cmd.args.firstOrNull()?.toIntOrNull() ?: 0
+        val ms = evaluator.evaluate(cmd.args.first(), currentVarsView())
         sleepMsCancellable(timing.scaleMs(ms).toLong(), "Script pause")
+        setExitCode(0)
+      }
+
+      CommandType.DETECT_OS -> {
+        waitForPredicateCancellable(10_000L, "Detecting host OS") { !manager.isScriptHostOsPending() }
         setExitCode(0)
       }
 
@@ -1814,7 +1856,7 @@ class DuckyScriptEstimator(
   private val localScopes = ArrayDeque<MutableMap<String, Int>>()
   private val functions = mutableMapOf<String, FunctionDef>()
   private var callDepth = 0
-  private val evaluator = ExpressionEvaluator()
+  private val evaluator = ExpressionEvaluator(manager::scriptHostOs)
   private val timing = TimingController(log, delayMultiplier)
   private var elapsedMs: Long = 0
   private var remainingWork = 20_000
@@ -2093,11 +2135,12 @@ class DuckyScriptEstimator(
       }
 
       CommandType.DELAY -> {
-        val ms = cmd.args.firstOrNull()?.toIntOrNull() ?: 0
+        val ms = evaluator.evaluate(cmd.args.first(), currentVarsView())
         elapsedMs += timing.scaleMs(ms).toLong()
         setExitCode(0)
       }
 
+      CommandType.DETECT_OS,
       CommandType.SLEEP_UNTIL,
       CommandType.WAIT_FOR -> setExitCode(0)
 

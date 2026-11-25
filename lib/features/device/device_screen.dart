@@ -5,7 +5,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../app/theme.dart';
 import '../../data/models/device_snapshot.dart';
 import '../../state/controllers/hid_status_controller.dart';
+import '../../state/controllers/host_os_controller.dart';
 import '../../state/providers.dart';
+import '../../widgets/host_os_label.dart';
 import 'widgets/host_diagnostics_card.dart';
 
 final deviceSnapshotProvider = FutureProvider<DeviceSnapshot>((ref) async {
@@ -226,7 +228,7 @@ class _HidReadinessCard extends StatelessWidget {
   }
 }
 
-class _UdcStateCard extends StatelessWidget {
+class _UdcStateCard extends ConsumerWidget {
   final HidStatus hid;
 
   const _UdcStateCard({required this.hid});
@@ -284,10 +286,11 @@ class _UdcStateCard extends StatelessWidget {
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final cs = Theme.of(context).colorScheme;
     final state = hid.udcState!;
     final stateColor = _getStateColor(context, state);
+    final host = ref.watch(hostOsControllerProvider);
 
     return Card(
       child: Padding(
@@ -334,6 +337,14 @@ class _UdcStateCard extends StatelessWidget {
                             height: 1.4,
                           ),
                         ),
+                        if (hid.sessionArmed && hid.pcConnected) ...[
+                          const SizedBox(height: 6),
+                          HostOsLabel(
+                            diagnostic: host,
+                            showTitle: true,
+                            detecting: hid.isDetectingHostOs,
+                          ),
+                        ],
                       ],
                     ),
                   ),
@@ -353,7 +364,7 @@ class _UdcStateCard extends StatelessWidget {
                   const SizedBox(width: 10),
                   Expanded(
                     child: Text(
-                      'UDC state is polled every 2 seconds when session is active',
+                      'USB status refreshes automatically.',
                       style: TextStyle(
                         fontSize: 11,
                         color: cs.onSurfaceVariant,

@@ -25,6 +25,7 @@ class GadgetManager(
 ) {
   private val main = Handler(Looper.getMainLooper())
   private val root = RootShell(log)
+  private val hostOsObserver = UsbHostOsObserver(root, log)
   private val prefs = Prefs(context)
   private val usbDataMarker = java.io.File(context.filesDir, "resume-usb-data")
   private val udcNameRegex = Regex("^[A-Za-z0-9._-]+$")
@@ -88,6 +89,9 @@ class GadgetManager(
     val gadgetBound: Boolean = false,
     val prepared: Boolean = false,
     val pcConnected: Boolean = false,
+    val inferredHostOs: String? = null,
+    val hostOsDetectionAvailable: Boolean = false,
+    val hostOsDetecting: Boolean = false,
   ) {
     val isActive: Boolean get() = desiredArmed
     fun toMap(): Map<String, Any?> = mapOf(
@@ -106,6 +110,9 @@ class GadgetManager(
       "mouseWriterReady" to mouseWriterReady,
       "deviceConnected" to deviceConnected,
       "pcConnected" to pcConnected,
+      "inferredHostOs" to inferredHostOs,
+      "hostOsDetectionAvailable" to hostOsDetectionAvailable,
+      "hostOsDetecting" to hostOsDetecting,
       "udcState" to udcState,
       "hostConfigurationRequestCount" to hostConfigurationRequestCount,
     )
@@ -203,6 +210,11 @@ class GadgetManager(
     val udcs = if (rootOk) listUdcs() else emptyList()
     val supportOk = rootOk && configfsOk && udcs.isNotEmpty()
 
+    if (prefs.armed && supportOk) {
+      hostOsObserver.start(udcs.filterNot { it.startsWith("dummy") }.singleOrNull())
+    } else {
+      hostOsObserver.stop()
+    }
     val next = readPhysicalStatus(current.copy(
       rootAvailable = rootOk,
       supportAvailable = supportOk,
@@ -254,6 +266,7 @@ class GadgetManager(
     if (current.gadgetBound && probe == null) prepareAttempted = false
 
     val armed = prefs.armed
+    val fingerprint = if (armed && connected) hostOsObserver.read() else null
     val error = armed && probe == null && current.state == "ERROR"
     val state = when {
       !armed && prefs.pendingSharedGadget -> "RESTORING"
@@ -272,6 +285,9 @@ class GadgetManager(
       mouseWriterReady = armed && connected && probe?.mouse != null,
       deviceConnected = connected,
       pcConnected = pcConnected,
+      inferredHostOs = fingerprint?.os,
+      hostOsDetectionAvailable = armed && hostOsObserver.available,
+      hostOsDetecting = fingerprint?.detecting == true,
       udcState = udcState,
       hostConfigurationRequestCount = hostConfigurationRequestCount,
       activeRoleType = probe?.role,
@@ -611,13 +627,20 @@ class GadgetManager(
       desiredArmed = false,
       keyboardWriterReady = false,
       mouseWriterReady = false,
+      inferredHostOs = null,
+      hostOsDetectionAvailable = false,
+      hostOsDetecting = false,
       state = if (restoring) "RESTORING" else "IDLE",
       message = if (restoring) "Restoring the original USB configuration…" else null,
     )
     statusRef.set(next)
     emit(next)
     releaseHeldInputBestEffort()
-    restoreStockUsb()
+    try {
+      restoreStockUsb()
+    } finally {
+      hostOsObserver.stop()
+    }
   }
 
   private fun changeStockUsb(udc: String, operation: String): RootShell.ExecResult = root.exec(
@@ -642,7 +665,7 @@ class GadgetManager(
       val restored = changeStockUsb(it, Configfs.buildRestoreStockScript(dir, original, usbDataMarker.path))
       val layout = prefs.originalStockLayout
       if (restored.ok && layout != null) {
-        root.exec(Configfs.buildVerifyStockLayoutScript(dir, layout), timeoutSec = 16)
+        changeStockUsb(udc, Configfs.buildVerifyStockLayoutScript(dir, layout, usbDataMarker.path))
       } else {
         restored
       }
@@ -1014,13 +1037,19 @@ class GadgetManager(
 
   private fun startUdcPolling() {
     polling = true
-    lifecycleExecutor.scheduleWithFixedDelay({
+    scheduleUdcPoll(0)
+  }
+
+  private fun scheduleUdcPoll(delayMs: Long) {
+    lifecycleExecutor.schedule({
       try {
         pollUsbSession()
       } catch (t: Throwable) {
         log.logError("udc", "Polling failed: ${t.message}")
+      } finally {
+        scheduleUdcPoll(if (statusRef.get().hostOsDetecting) 350L else 2000L)
       }
-    }, 0, 2, java.util.concurrent.TimeUnit.SECONDS)
+    }, delayMs, java.util.concurrent.TimeUnit.MILLISECONDS)
   }
 
   @Synchronized
@@ -1133,6 +1162,18 @@ class GadgetManager(
 
   fun isHostConnected(): Boolean {
     return statusRef.get().deviceConnected
+  }
+
+  internal fun scriptHostOs(): Int {
+    val status = statusRef.get()
+    val detected = status.inferredHostOs.takeIf { status.desiredArmed && status.deviceConnected }
+    return DuckyScriptHostOs.encode(detected)
+  }
+
+  internal fun isScriptHostOsPending(): Boolean {
+    val status = statusRef.get()
+    return status.desiredArmed && status.hostOsDetectionAvailable &&
+      (!status.deviceConnected || status.hostOsDetecting)
   }
 
   /**

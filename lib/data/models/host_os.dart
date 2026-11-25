@@ -1,12 +1,13 @@
 /// Host OS diagnostics for the USB target.
 ///
-/// This is diagnostic metadata only. Nothing in the DuckyScript engine or
-/// execution pipeline may read it to select, start, or change a payload.
+/// The manual label is a diagnostic preference. Scripts get the session
+/// fingerprint directly from the Android backend.
 enum HostOs {
   unknown('Unknown'),
   windows('Windows'),
   macos('macOS'),
   linux('Linux'),
+  chromeos('ChromeOS'),
   android('Android'),
   ios('iOS');
 
@@ -52,7 +53,7 @@ class HostOsDiagnostic {
   bool get isSessionScoped =>
       source == HostOsSource.inferred || source == HostOsSource.verified;
 
-  /// User-facing label that never presents a guess as a detected OS.
+  /// Display name with an explicit label for manually selected values.
   String get label {
     if (os == HostOs.unknown) return 'Unknown';
     switch (source) {
@@ -63,7 +64,7 @@ class HostOsDiagnostic {
       case HostOsSource.verified:
         return '${os.displayName} (Verified by companion)';
       case HostOsSource.inferred:
-        return 'Likely ${os.displayName}';
+        return os.displayName;
     }
   }
 
@@ -79,7 +80,7 @@ class HostOsDiagnostic {
       case HostOsSource.verified:
         return 'Reported by a TapDucky companion on the host.';
       case HostOsSource.inferred:
-        return 'Inferred from limited USB observations. Treat this as a guess, not a detection.';
+        return 'Inferred from USB enumeration.';
     }
   }
 

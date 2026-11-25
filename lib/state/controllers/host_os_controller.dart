@@ -8,10 +8,8 @@ import '../../../state/controllers/hid_status_controller.dart';
 
 /// Session-scoped host OS diagnostics.
 ///
-/// The USB backend exposes connection state only; it has no signal that
-/// identifies the host OS. Manual labels are therefore the only shipped
-/// source. Inferred and verified values can be supplied by future, separately
-/// validated producers; they are discarded whenever the USB session ends.
+/// Native inference follows the current USB connection. The saved manual
+/// label is the fallback when no session result is available.
 final hostOsControllerProvider =
     NotifierProvider<HostOsController, HostOsDiagnostic>(HostOsController.new);
 
@@ -19,12 +17,20 @@ class HostOsController extends Notifier<HostOsDiagnostic> {
   @override
   HostOsDiagnostic build() {
     ref.listen<HidStatus>(hidStatusControllerProvider, (previous, next) {
+      final inference = _fromUsb(next);
+      if (inference != null) {
+        state = inference;
+        return;
+      }
       if (previous == null) return;
       final sessionEnded = previous.sessionArmed && !next.sessionArmed;
       final hostLost = previous.deviceConnected && !next.deviceConnected;
       final newHostPresent = next.hostConfigurationRequestCount >
           previous.hostConfigurationRequestCount;
-      if (sessionEnded || hostLost || newHostPresent) clearSessionOs();
+      final evidenceLost = _fromUsb(previous) != null;
+      if (sessionEnded || hostLost || newHostPresent || evidenceLost) {
+        clearSessionOs();
+      }
     });
 
     ref.listen<AsyncValue<AppSettings>>(appSettingsControllerProvider, (
@@ -36,13 +42,14 @@ class HostOsController extends Notifier<HostOsDiagnostic> {
       state = _fromManual(manual);
     });
 
-    return _fromManual(ref.read(appSettingsControllerProvider).value?.manualHostOs);
+    return _fromUsb(ref.read(hidStatusControllerProvider)) ??
+        _fromManual(ref.read(appSettingsControllerProvider).value?.manualHostOs);
   }
 
   /// Stores a diagnostic label chosen by the user. Passing null returns the
   /// diagnostic to Unknown. This never touches execution state.
   Future<void> setManual(HostOs? os) async {
-    state = _fromManual(os);
+    state = _fromUsb(ref.read(hidStatusControllerProvider)) ?? _fromManual(os);
     await ref.read(appSettingsControllerProvider.notifier).setManualHostOs(os);
   }
 
@@ -55,8 +62,7 @@ class HostOsController extends Notifier<HostOsDiagnostic> {
     );
   }
 
-  /// Test seam for the disconnect behavior and for a future, evidence-backed
-  /// producer. No classifier or companion calls this today.
+  /// Test seam for session-scoped diagnostics supplied outside USB status.
   @visibleForTesting
   void applySessionOs(HostOs os, HostOsSource source) {
     assert(os != HostOs.unknown, 'A session OS must be known');
@@ -70,5 +76,16 @@ class HostOsController extends Notifier<HostOsDiagnostic> {
   static HostOsDiagnostic _fromManual(HostOs? os) {
     if (os == null || os == HostOs.unknown) return HostOsDiagnostic.unknown;
     return HostOsDiagnostic(os: os, source: HostOsSource.manual);
+  }
+
+  static HostOsDiagnostic? _fromUsb(HidStatus status) {
+    if (!status.sessionArmed || !status.deviceConnected ||
+        status.inferredHostOs == HostOs.unknown) {
+      return null;
+    }
+    return HostOsDiagnostic(
+      os: status.inferredHostOs,
+      source: HostOsSource.inferred,
+    );
   }
 }

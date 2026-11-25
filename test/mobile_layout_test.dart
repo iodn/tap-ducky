@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tap_ducky/app/theme.dart';
 import 'package:tap_ducky/data/models/app_settings.dart';
+import 'package:tap_ducky/data/models/host_os.dart';
 import 'package:tap_ducky/data/models/log_entry.dart';
 import 'package:tap_ducky/data/models/payload.dart';
 import 'package:tap_ducky/data/models/scheduled_task.dart';
@@ -13,6 +14,7 @@ import 'package:tap_ducky/features/schedule/schedule_editor_screen.dart';
 import 'package:tap_ducky/features/schedule/schedule_screen.dart';
 import 'package:tap_ducky/features/payloads/payloads_screen.dart';
 import 'package:tap_ducky/state/controllers/app_settings_controller.dart';
+import 'package:tap_ducky/state/controllers/execution_controller.dart';
 import 'package:tap_ducky/state/controllers/hid_status_controller.dart';
 import 'package:tap_ducky/state/controllers/logs_controller.dart';
 import 'package:tap_ducky/state/controllers/payloads_controller.dart';
@@ -23,6 +25,17 @@ import 'package:tap_ducky/widgets/arm_profile_sheet.dart';
 
 class _HidStatus extends HidStatusController {
   String? armedProfile;
+
+  void connectHost() {
+    state = state.copyWith(
+      sessionArmed: true,
+      gadgetBound: true,
+      deviceConnected: true,
+      pcConnected: true,
+      inferredHostOs: HostOs.windows,
+      hostOsDetectionAvailable: true,
+    );
+  }
 
   @override
   HidStatus build() => const HidStatus(
@@ -79,6 +92,22 @@ class _Logs extends LogsController {
   Future<List<LogEntry>> build() async => [];
 }
 
+class _RunningExecution extends ExecutionController {
+  @override
+  ExecutionState build() => ExecutionState.idle();
+
+  @override
+  Future<void> runPayload(Payload payload, Map<String, String> params) async {
+    state = ExecutionState(
+      isRunning: true,
+      progress: 0.25,
+      status: 'Executing',
+      executionId: 'test',
+      payloadName: payload.name,
+    );
+  }
+}
+
 Future<void> _pumpScreen(
   WidgetTester tester,
   Widget screen, {
@@ -87,6 +116,7 @@ Future<void> _pumpScreen(
   List<ScheduledTask> tasks = const [],
   _HidStatus? hid,
   _Settings? settings,
+  ExecutionController? execution,
 }) async {
   tester.view.devicePixelRatio = 1;
   tester.view.physicalSize = size;
@@ -103,6 +133,8 @@ Future<void> _pumpScreen(
         payloadsControllerProvider.overrideWith(() => _Payloads(payloads)),
         schedulerControllerProvider.overrideWith(() => _Schedules(tasks)),
         logsControllerProvider.overrideWith(_Logs.new),
+        if (execution != null)
+          executionControllerProvider.overrideWith(() => execution),
       ],
       child: MaterialApp(
         theme: AppTheme.light(),
@@ -253,6 +285,59 @@ void main() {
     expect(hid.armedProfile, 'mouse');
     expect(settings.savedProfile, 'mouse');
     expect(find.text('Disarm'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('armed session shows its USB host OS at large text size', (
+    tester,
+  ) async {
+    final hid = _HidStatus();
+    await _pumpScreen(
+      tester,
+      const DashboardScreen(),
+      size: const Size(320, 568),
+      hid: hid,
+    );
+
+    hid.connectHost();
+    await tester.pumpAndSettle();
+
+    expect(find.text('Host OS · Windows'), findsOneWidget);
+    expect(find.byTooltip('Automatically inferred from USB'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('playing a recent payload fits its long title beside progress', (
+    tester,
+  ) async {
+    final hid = _HidStatus();
+    await _pumpScreen(
+      tester,
+      const DashboardScreen(),
+      size: const Size(320, 568),
+      hid: hid,
+      payloads: [_longPayload],
+      execution: _RunningExecution(),
+    );
+    hid.connectHost();
+    await tester.pumpAndSettle();
+
+    final run = find.byTooltip('Run');
+    final scrollable = find.byType(Scrollable);
+    await tester.scrollUntilVisible(run, 180, scrollable: scrollable);
+    await Scrollable.ensureVisible(tester.element(run), alignment: 0.5);
+    await tester.pumpAndSettle();
+    await tester.tap(run.hitTestable());
+    await tester.pumpAndSettle();
+    tester.state<ScrollableState>(scrollable).position.jumpTo(0);
+    await tester.pumpAndSettle();
+
+    expect(find.text('~25%'), findsOneWidget);
+    expect(
+      tester.widgetList<Text>(find.text(_longPayload.name))
+          .any((text) => text.maxLines == 2 && text.overflow == TextOverflow.ellipsis),
+      isTrue,
+    );
     expect(tester.takeException(), isNull);
   });
 

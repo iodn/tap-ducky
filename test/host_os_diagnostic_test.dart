@@ -24,14 +24,14 @@ void main() {
       expect(diagnostic.isSessionScoped, isFalse);
     });
 
-    test('inference is hedged as a guess', () {
+    test('inference displays the OS name', () {
       const diagnostic = HostOsDiagnostic(
         os: HostOs.windows,
         source: HostOsSource.inferred,
       );
 
-      expect(diagnostic.label, 'Likely Windows');
-      expect(diagnostic.explanation, contains('guess'));
+      expect(diagnostic.label, 'Windows');
+      expect(diagnostic.explanation, contains('Inferred'));
       expect(diagnostic.isSessionScoped, isTrue);
     });
 

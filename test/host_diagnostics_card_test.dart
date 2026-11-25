@@ -23,9 +23,21 @@ class _TestSettingsController extends AppSettingsController {
 }
 
 class _TestHidController extends HidStatusController {
-  _TestHidController({required this.connected});
+  _TestHidController({
+    required this.connected,
+    this.available = false,
+    this.inferred = HostOs.unknown,
+    this.detecting = false,
+  });
 
   final bool connected;
+  final bool available;
+  final HostOs inferred;
+  final bool detecting;
+
+  void finishDetection(HostOs os) {
+    state = state.copyWith(hostOsDetecting: false, inferredHostOs: os);
+  }
 
   @override
   HidStatus build() => HidStatus(
@@ -34,24 +46,34 @@ class _TestHidController extends HidStatusController {
         pcConnected: connected,
         deviceConnected: connected,
         sessionArmed: true,
+        hostOsDetectionAvailable: available,
+        inferredHostOs: inferred,
+        hostOsDetecting: detecting,
       );
 }
 
-Future<void> _pumpCard(
+Future<_TestHidController> _pumpCard(
   WidgetTester tester, {
   HostOs? manual,
   bool connected = true,
+  bool available = false,
+  HostOs inferred = HostOs.unknown,
+  bool detecting = false,
 }) async {
   final settings = AppSettings.defaults().copyWith(manualHostOs: manual);
+  final hid = _TestHidController(
+    connected: connected,
+    available: available,
+    inferred: inferred,
+    detecting: detecting,
+  );
   await tester.pumpWidget(
     ProviderScope(
       overrides: [
         appSettingsControllerProvider.overrideWith(
           () => _TestSettingsController(settings),
         ),
-        hidStatusControllerProvider.overrideWith(
-          () => _TestHidController(connected: connected),
-        ),
+        hidStatusControllerProvider.overrideWith(() => hid),
       ],
       child: MaterialApp(
         theme: ThemeData(useMaterial3: true),
@@ -65,6 +87,7 @@ Future<void> _pumpCard(
     ),
   );
   await tester.pumpAndSettle();
+  return hid;
 }
 
 void main() {
@@ -93,10 +116,8 @@ void main() {
     await _pumpCard(tester, manual: HostOs.ios);
 
     expect(find.text('iOS (Manually selected)'), findsOneWidget);
-    expect(
-      find.textContaining('Automatic identification is unavailable'),
-      findsOneWidget,
-    );
+    expect(find.text('Manual selection'), findsOneWidget);
+    expect(find.byTooltip('Automatically inferred from USB'), findsNothing);
   });
 
   testWidgets('selecting an OS updates the diagnostic label', (tester) async {
@@ -110,7 +131,48 @@ void main() {
     expect(find.text('Windows (Manually selected)'), findsOneWidget);
   });
 
-  testWidgets('an inferred OS is hedged, never presented as detected',
+  testWidgets('renders native inference and keeps the manual fallback visible',
+      (tester) async {
+    await _pumpCard(
+      tester,
+      manual: HostOs.chromeos,
+      available: true,
+      inferred: HostOs.windows,
+    );
+
+    expect(find.text('Windows'), findsOneWidget);
+    expect(find.text('ChromeOS'), findsOneWidget);
+    expect(find.byTooltip('Automatically inferred from USB'), findsOneWidget);
+    final image = tester.widget<Image>(find.byType(Image));
+    expect((image.image as AssetImage).assetName,
+        'assets/images/host_os/windows.png');
+  });
+
+  testWidgets('supported controllers report when the signature is unknown',
+      (tester) async {
+    await _pumpCard(tester, available: true);
+    expect(find.text('No recognizable USB signature for this connection.'),
+        findsOneWidget);
+  });
+
+  testWidgets('shows detection progress until the name or Unknown is ready',
+      (tester) async {
+    final hid = await _pumpCard(tester, available: true, detecting: true);
+    expect(find.text('Detecting host OS…'), findsOneWidget);
+    expect(find.text('Unknown'), findsNothing);
+
+    hid.finishDetection(HostOs.android);
+    await tester.pumpAndSettle();
+    expect(find.text('Android'), findsOneWidget);
+    expect(find.byTooltip('Automatically inferred from USB'), findsOneWidget);
+    expect(find.text('Detecting host OS…'), findsNothing);
+
+    hid.finishDetection(HostOs.unknown);
+    await tester.pumpAndSettle();
+    expect(find.text('Unknown'), findsOneWidget);
+  });
+
+  testWidgets('a session inference displays the OS name',
       (tester) async {
     final container = ProviderContainer(
       overrides: [
@@ -145,6 +207,6 @@ void main() {
         .applySessionOs(HostOs.windows, HostOsSource.inferred);
     await tester.pump();
 
-    expect(find.text('Likely Windows'), findsOneWidget);
+    expect(find.text('Windows'), findsOneWidget);
   });
 }

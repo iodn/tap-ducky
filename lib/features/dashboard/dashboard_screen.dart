@@ -10,9 +10,11 @@ import '../../data/models/payload.dart';
 import '../../state/controllers/app_settings_controller.dart';
 import '../../state/controllers/execution_controller.dart';
 import '../../state/controllers/hid_status_controller.dart';
+import '../../state/controllers/host_os_controller.dart';
 import '../../state/controllers/payloads_controller.dart';
 import '../../state/controllers/scheduler_controller.dart';
 import '../../widgets/section_header.dart';
+import '../../widgets/host_os_label.dart';
 import '../../widgets/arm_profile_sheet.dart';
 import '../../widgets/root_required_card.dart';
 
@@ -222,6 +224,7 @@ class _HeroStatusCard extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final cs = Theme.of(context).colorScheme;
     final subtitle = _statusDetail();
+    final host = ref.watch(hostOsControllerProvider);
 
     String statusText;
     IconData statusIcon;
@@ -240,7 +243,7 @@ class _HeroStatusCard extends ConsumerWidget {
       statusIcon = Icons.lock_outline;
       statusColor = cs.tertiary;
     } else if (hid.pcConnected && !hid.gadgetBound) {
-      statusText = 'PC connected · HID pending';
+      statusText = 'USB host connected · HID pending';
       statusIcon = Icons.settings_input_component;
       statusColor = cs.tertiary;
     } else if (!hid.gadgetBound || !hid.deviceConnected) {
@@ -288,6 +291,14 @@ class _HeroStatusCard extends ConsumerWidget {
                         const SizedBox(height: 4),
                         Text(subtitle, style: Theme.of(context).textTheme.bodyMedium),
                       ],
+                      if (hid.sessionArmed && hid.pcConnected) ...[
+                        const SizedBox(height: 4),
+                        HostOsLabel(
+                          diagnostic: host,
+                          showTitle: true,
+                          detecting: hid.isDetectingHostOs,
+                        ),
+                      ],
                     ],
                   ),
                 ),
@@ -299,12 +310,18 @@ class _HeroStatusCard extends ConsumerWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    crossAxisAlignment: CrossAxisAlignment.baseline,
+                    textBaseline: TextBaseline.alphabetic,
                     children: [
-                      Text(
-                        exec.payloadName ?? 'Running',
-                        style: const TextStyle(fontWeight: FontWeight.w600),
+                      Expanded(
+                        child: Text(
+                          exec.payloadName ?? 'Running',
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(fontWeight: FontWeight.w600),
+                        ),
                       ),
+                      const SizedBox(width: 12),
                       Text(
                         '~${(exec.progress * 100).clamp(0, 100).toStringAsFixed(0)}%',
                         semanticsLabel: 'Approximate command progress: ${(exec.progress * 100).clamp(0, 100).round()} percent',
