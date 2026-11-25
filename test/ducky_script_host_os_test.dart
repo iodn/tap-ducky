@@ -162,6 +162,17 @@ DELAY 100 + $pause
     expect(validator.validate('DEFINE #WAIT').hasErrors, isTrue);
   });
 
+  test('accepts Payload Studio word operators in timing expressions', () {
+    final result = validator.validate(r'''
+VAR $ready = 2 AND 3
+DEFAULT_DELAY ($ready OR FALSE)
+DELAY (($ready and TRUE) * 20)
+''');
+    expect(result.issues, isEmpty);
+    expect(validator.validate('DELAY AND').hasErrors, isTrue);
+    expect(validator.validate('DELAY 2 CANDY 3').hasErrors, isTrue);
+  });
+
   test('DEFINE protects variable names and preserves nested labels', () {
     final result = validator.validate(r'''
 DEFINE WAIT 100

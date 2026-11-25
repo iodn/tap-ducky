@@ -449,6 +449,24 @@ class DuckyScriptVariablesTest {
   }
 
   @Test
+  fun evaluatesPayloadStudioWordOperatorsInVariableAssignmentsAndConditions() {
+    val estimator = DuckyScriptEstimator(DuckyScriptVariables({ null }, { null }), { _, _ -> 0 }, { 0 })
+    val script = """
+      VAR ${'$'}OR = 5
+      VAR ${'$'}ready = (2 AND ${'$'}OR)
+      IF (FALSE OR (${'$'}ready and TRUE)) THEN
+        DELAY 20
+      END_IF
+      DELAY (TRUE OR (FALSE AND FALSE))
+    """.trimIndent()
+    assertEquals(21L, estimator.estimate(script))
+    assertEquals(1, ExpressionEvaluator().evaluate("TRUE OR FALSE AND FALSE", emptyMap()))
+    assertThrows(DuckyExpressionSyntaxException::class.java) {
+      DuckyScriptParser().parse("DELAY 2 CANDY 3")
+    }
+  }
+
+  @Test
   fun reportsMissingConditionsAtTheirSourceLine() {
     for (condition in listOf("IF THEN", "ELSE  IF () THEN", "WHILE DO")) {
       val missing = assertThrows(DuckyExpressionSyntaxException::class.java) {

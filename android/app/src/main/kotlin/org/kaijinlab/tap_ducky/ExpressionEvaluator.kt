@@ -88,7 +88,13 @@ class ExpressionEvaluator(
           val ch = expr[j]
           if (ch.isLetterOrDigit() || ch == '_') j++ else break
         }
-        out.add(Tok(Kind.IDENT, expr.substring(i, j)))
+        val word = expr.substring(i, j)
+        val token = when (word.uppercase()) {
+          "AND" -> Tok(Kind.OP, "&&")
+          "OR" -> Tok(Kind.OP, "||")
+          else -> Tok(Kind.IDENT, word)
+        }
+        out.add(token)
         i = j
         continue
       }

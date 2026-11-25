@@ -443,9 +443,11 @@ class DuckyScriptValidator {
     caseSensitive: false,
   );
   static final _delayExpressionOperators = RegExp(r'^[\s()+*/%^<>=!&|\-]*$');
+  static final _wordOperators = RegExp(r'\b(?:AND|OR)\b', caseSensitive: false);
   static bool _looksLikeDelayExpression(String expression) {
     final operators = expression.replaceAll(_delayValueToken, '');
-    return operators != expression && _delayExpressionOperators.hasMatch(operators);
+    return operators != expression &&
+        _delayExpressionOperators.hasMatch(operators.replaceAll(_wordOperators, ''));
   }
   static final _integerLiteral = RegExp(r'^[+-]?(?:0x[0-9a-f]+|\d+)$', caseSensitive: false);
   static final _defineDeclaration = RegExp(r'^DEFINE\s+(\S+)\s(.*)$', caseSensitive: false);
