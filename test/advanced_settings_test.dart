@@ -1,8 +1,44 @@
 // ignore: depend_on_referenced_packages
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:tap_ducky/data/models/advanced_settings.dart';
+import 'package:tap_ducky/data/services/platform_gadget_service.dart';
+import 'package:tap_ducky/state/controllers/advanced_settings_controller.dart';
+import 'package:tap_ducky/state/providers.dart';
+
+class _LayoutBackend extends PlatformGadgetService {
+  final appliedLayouts = <int>[];
+
+  @override
+  Future<void> setKeyboardLayout(int layoutId) async {
+    appliedLayouts.add(layoutId);
+    if (layoutId == 14) throw StateError('Layout rejected by Android');
+  }
+}
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  test('keyboard layout is saved only after Android applies it', () async {
+    SharedPreferences.setMockInitialValues({});
+    final backend = _LayoutBackend();
+    final container = ProviderContainer.test(overrides: [
+      platformGadgetServiceProvider.overrideWithValue(backend),
+    ]);
+    await container.read(advancedSettingsControllerProvider.future);
+    final controller = container.read(advancedSettingsControllerProvider.notifier);
+    final repository = await container.read(advancedSettingsRepositoryProvider.future);
+
+    await controller.setKeyboardLayout('French');
+    expect(repository.load().keyboardLayoutId, 'fr');
+    await expectLater(controller.setKeyboardLayout('de'), throwsStateError);
+    expect(repository.load().keyboardLayoutId, 'fr');
+    await controller.resetToDefaults();
+    expect(repository.load().keyboardLayoutId, 'us');
+    expect(backend.appliedLayouts, [10, 14, 0]);
+  });
+
   test('keyboard layout backend ids match native layout ids', () {
     const expected = <String, int>{
       'us': 0,

@@ -3,7 +3,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../data/models/advanced_settings.dart';
 import '../../data/models/app_settings.dart';
 import '../../data/models/payload.dart';
-import '../../data/services/platform_gadget_service.dart';
 import '../../state/controllers/advanced_settings_controller.dart';
 import '../../state/controllers/app_settings_controller.dart';
 import '../../state/controllers/payloads_controller.dart';
@@ -38,10 +37,11 @@ class AdvancedSettingsScreen extends ConsumerWidget {
                       confirmLabel: 'Reset',
                       dangerous: true,
                     );
-                    if (!ok) return;
-                    await ref
-                        .read(advancedSettingsControllerProvider.notifier)
-                        .resetToDefaults();
+                    if (!ok || !context.mounted) return;
+                    await _applyAdvancedSetting(
+                      context,
+                      ref.read(advancedSettingsControllerProvider.notifier).resetToDefaults,
+                    );
                   }
                 : null,
             icon: const Icon(Icons.restart_alt),
@@ -68,7 +68,6 @@ class _Body extends ConsumerStatefulWidget {
 }
 
 class _BodyState extends ConsumerState<_Body> {
-  late Future<List<KeyboardLayoutInfo>> _keyboardLayoutsFuture;
   late Future<List<String>> _udcsFuture;
 
   static const Map<String, String> _hotkeyTitles = <String, String>{
@@ -87,35 +86,16 @@ class _BodyState extends ConsumerState<_Body> {
   @override
   void initState() {
     super.initState();
-    _keyboardLayoutsFuture = ref
-        .read(platformGadgetServiceProvider)
-        .getKeyboardLayouts();
     _udcsFuture = ref.read(platformGadgetServiceProvider).listUdcs();
-  }
-
-  List<DropdownMenuItem<String>> _fallbackKeyboardItems() {
-    return const [
-      DropdownMenuItem(value: 'us', child: Text('US (QWERTY)')),
-      DropdownMenuItem(value: 'gb', child: Text('UK (QWERTY)')),
-      DropdownMenuItem(value: 'fr', child: Text('FR (AZERTY)')),
-      DropdownMenuItem(value: 'es', child: Text('Spanish')),
-    ];
-  }
-
-  List<DropdownMenuItem<String>> _itemsFromLayouts(
-    List<KeyboardLayoutInfo> layouts,
-  ) {
-    final filtered = layouts.where((l) => l.code.trim().isNotEmpty).toList()
-      ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
-    return filtered
-        .map((l) => DropdownMenuItem(value: l.code, child: Text(l.name)))
-        .toList();
   }
 
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     final hotkeys = widget.settings.hotkeys;
+    final selectedLayout = widget.settings.keyboardLayoutOption;
+    final layouts = AdvancedSettings.supportedKeyboardLayouts.toList()
+      ..sort((a, b) => a.label.compareTo(b.label));
     final appSettingsAsync = ref.watch(appSettingsControllerProvider);
     final payloads =
         ref.watch(payloadsControllerProvider).value ?? const <Payload>[];
@@ -134,59 +114,33 @@ class _BodyState extends ConsumerState<_Body> {
                 children: [
                   const _UsbReferenceTile(),
                   const Divider(),
-                  FutureBuilder<List<KeyboardLayoutInfo>>(
-                    future: _keyboardLayoutsFuture,
-                    builder: (context, snap) {
-                      final layouts = snap.data ?? const <KeyboardLayoutInfo>[];
-                      final dynamicItems = layouts.isEmpty
-                          ? <DropdownMenuItem<String>>[]
-                          : _itemsFromLayouts(layouts);
-                      final baseItems = dynamicItems.isNotEmpty
-                          ? dynamicItems
-                          : _fallbackKeyboardItems();
-
-                      final current = widget.settings.keyboardLayout.trim();
-                      final hasCurrent = baseItems.any(
-                        (e) => e.value == current,
-                      );
-
-                      final items = <DropdownMenuItem<String>>[
-                        if (!hasCurrent && current.isNotEmpty)
-                          DropdownMenuItem(
-                            value: current,
-                            child: Text('Current (${current.toUpperCase()})'),
-                          ),
-                        ...baseItems,
-                      ];
-
-                      final value = current.isNotEmpty
-                          ? current
-                          : (items.isNotEmpty ? items.first.value : null);
-
-                      return DropdownButtonFormField<String>(
-                        key: ValueKey(value),
-                        initialValue: value,
+                  InputDecorator(
+                    decoration: InputDecoration(
+                      labelText: 'Keyboard layout',
+                      helperText: selectedLayout == null
+                          ? 'Saved layout unavailable. Using US.'
+                          : null,
+                    ),
+                    child: DropdownButtonHideUnderline(
+                      child: DropdownButton<String>(
+                        value: selectedLayout?.id ?? 'us',
                         isExpanded: true,
-                        decoration: InputDecoration(
-                          labelText: 'Keyboard layout',
-                          helperText: snap.connectionState == ConnectionState.waiting
-                              ? 'Loading available layouts…'
-                              : null,
-                        ),
-                        items: items,
-                        onChanged: (v) async {
-                          if (v == null) return;
-                          await ref
-                              .read(advancedSettingsControllerProvider.notifier)
-                              .setKeyboardLayout(v);
-                          try {
-                            await ref
-                                .read(platformGadgetServiceProvider)
-                                .setKeyboardLayoutByCode(v);
-                          } catch (_) {}
+                        items: [
+                          for (final layout in layouts)
+                            DropdownMenuItem(
+                              value: layout.id,
+                              child: Text(layout.label, overflow: TextOverflow.ellipsis),
+                            ),
+                        ],
+                        onChanged: (value) {
+                          if (value == null) return;
+                          _applyAdvancedSetting(
+                            context,
+                            () => ref.read(advancedSettingsControllerProvider.notifier).setKeyboardLayout(value),
+                          );
                         },
-                      );
-                    },
+                      ),
+                    ),
                   ),
                   const SizedBox(height: 10),
                   FutureBuilder<List<String>>(
@@ -745,5 +699,20 @@ class _UsbReferenceTile extends StatelessWidget {
       trailing: const Icon(Icons.chevron_right),
       onTap: () => showConfigurationPage<void>(context, (_) => const UsbIdReferenceScreen()),
     );
+  }
+}
+
+Future<void> _applyAdvancedSetting(
+  BuildContext context,
+  Future<void> Function() update,
+) async {
+  try {
+    await update();
+  } catch (_) {
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not apply the change. Try again.')),
+      );
+    }
   }
 }

@@ -7,6 +7,7 @@ final advancedSettingsControllerProvider = AsyncNotifierProvider<AdvancedSetting
 );
 
 class AdvancedSettingsController extends AsyncNotifier<AdvancedSettings> {
+  Future<void> _layoutUpdates = Future.value();
   static const String _none = '—';
   static const List<String> _knownHotkeyActions = <String>[
     'stop_execution',
@@ -26,10 +27,13 @@ class AdvancedSettingsController extends AsyncNotifier<AdvancedSettings> {
     return sanitized;
   }
 
-  Future<void> setKeyboardLayout(String layout) async {
+  Future<void> setKeyboardLayout(String layout) => _queueLayoutUpdate(() async {
     final current = state.value ?? AdvancedSettings.defaults();
-    await _save(current.copyWith(keyboardLayout: layout));
-  }
+    final option = current.copyWith(keyboardLayout: layout).keyboardLayoutOption;
+    if (option == null) throw ArgumentError.value(layout, 'layout', 'Unsupported keyboard layout');
+    await ref.read(platformGadgetServiceProvider).setKeyboardLayout(option.backendId);
+    await _save((state.value ?? current).copyWith(keyboardLayout: option.id));
+  });
 
   Future<void> setDefaultVid(String vid) async {
     final current = state.value ?? AdvancedSettings.defaults();
@@ -92,8 +96,16 @@ class AdvancedSettingsController extends AsyncNotifier<AdvancedSettings> {
     await _save(_sanitizeHotkeys(current.copyWith(hotkeys: next)));
   }
 
-  Future<void> resetToDefaults() async {
-    await _save(AdvancedSettings.defaults());
+  Future<void> resetToDefaults() => _queueLayoutUpdate(() async {
+    final defaults = AdvancedSettings.defaults();
+    await ref.read(platformGadgetServiceProvider).setKeyboardLayout(defaults.keyboardLayoutBackendId);
+    await _save(defaults);
+  });
+
+  Future<void> _queueLayoutUpdate(Future<void> Function() update) {
+    final pending = _layoutUpdates.then((_) => update());
+    _layoutUpdates = pending.then<void>((_) {}, onError: (Object _, StackTrace _) {});
+    return pending;
   }
 
   Future<void> _save(AdvancedSettings s) async {

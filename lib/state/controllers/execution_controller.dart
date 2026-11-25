@@ -162,13 +162,13 @@ class ExecutionController extends Notifier<ExecutionState> {
   }
 
   Future<void> _applySelectedKeyboardLayout() async {
-    final adv = ref.read(advancedSettingsControllerProvider).value;
-    if (adv == null) return;
-    final layoutId = adv.keyboardLayoutBackendId;
     try {
+      final settings = await ref.read(advancedSettingsControllerProvider.future);
       final service = ref.read(platformGadgetServiceProvider);
-      await service.setKeyboardLayout(layoutId);
-    } catch (_) {}
+      await service.setKeyboardLayout(settings.keyboardLayoutBackendId);
+    } catch (_) {
+      throw StateError('Could not apply the selected keyboard layout.');
+    }
   }
 
   void _pushTail(LogEntry entry) {
@@ -675,6 +675,11 @@ class ExecutionController extends Notifier<ExecutionState> {
 
     try {
       await _applySelectedKeyboardLayout();
+      if (_activeExecutionId != executionId) return;
+      if (state.stopRequested) {
+        await _finishFromNative(executionId, {'type': 'done', 'cancelled': true}, startedAt, enableLogging);
+        return;
+      }
       await service.executeDuckyScript(
         script: script,
         delayMultiplier: delayMultiplier,
@@ -685,6 +690,7 @@ class ExecutionController extends Notifier<ExecutionState> {
       await _finishFromNative(executionId, {
         'type': 'error',
         'message': e.toString(),
+        'cancelled': state.stopRequested,
       }, startedAt, enableLogging);
     }
   }
@@ -876,6 +882,11 @@ class ExecutionController extends Notifier<ExecutionState> {
 
     try {
       await _applySelectedKeyboardLayout();
+      if (_activeExecutionId != executionId) return;
+      if (state.stopRequested) {
+        await _finishFromNative(executionId, {'type': 'done', 'cancelled': true}, startedAt, enableLogging, payload: payload);
+        return;
+      }
       await service.executeDuckyScript(
         script: resolved,
         delayMultiplier: delayMultiplier,
@@ -886,6 +897,7 @@ class ExecutionController extends Notifier<ExecutionState> {
       await _finishFromNative(executionId, {
         'type': 'error',
         'message': e.toString(),
+        'cancelled': state.stopRequested,
       }, startedAt, enableLogging, payload: payload);
     }
   }

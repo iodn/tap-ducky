@@ -42,10 +42,17 @@ class _SilentGadget extends PlatformGadgetService {
   final cancelledIds = <String>[];
   final acceptedPrompts = <(String, String)>[];
   final buttonPresses = <String>[];
+  bool rejectLayout = false;
+  Completer<void>? layoutStarted;
+  Completer<void>? layoutPending;
   int panicCount = 0;
 
   @override
-  Future<void> setKeyboardLayout(int layoutId) async {}
+  Future<void> setKeyboardLayout(int layoutId) async {
+    if (rejectLayout) throw StateError('Android rejected the layout');
+    layoutStarted?.complete();
+    await layoutPending?.future;
+  }
 
   @override
   Future<void> executeDuckyScript({
@@ -92,6 +99,40 @@ Future<ProviderContainer> _createContainer(_SilentGadget service) async {
 }
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  test('a rejected keyboard layout stops the run before Android receives the script', () async {
+    final events = StreamController<Map<String, dynamic>>.broadcast();
+    addTearDown(events.close);
+    final service = _SilentGadget(events: events)..rejectLayout = true;
+    final container = await _createContainer(service);
+    final controller = container.read(executionControllerProvider.notifier);
+    await controller.sendRawCommand('DELAY 100');
+
+    expect(service.startedScripts, isEmpty);
+    final execution = container.read(executionControllerProvider);
+    expect(execution.isRunning, isFalse);
+    expect(execution.status, contains('Could not apply the selected keyboard layout'));
+  });
+
+  test('a stop while Android applies the layout prevents execution', () async {
+    final events = StreamController<Map<String, dynamic>>.broadcast();
+    addTearDown(events.close);
+    final service = _SilentGadget(events: events)
+      ..layoutStarted = Completer<void>()
+      ..layoutPending = Completer<void>();
+    final container = await _createContainer(service);
+    final controller = container.read(executionControllerProvider.notifier);
+    final start = controller.sendRawCommand('DELAY 100');
+    await service.layoutStarted!.future;
+    await controller.stop();
+    service.layoutPending!.complete();
+    await start;
+
+    expect(service.startedScripts, isEmpty);
+    expect(container.read(executionControllerProvider).status, 'Cancelled');
+  });
+
   testWidgets('activity indicator updates leave execution progress active', (tester) async {
     final events = StreamController<Map<String, dynamic>>.broadcast();
     addTearDown(events.close);
