@@ -104,9 +104,22 @@ class Prefs(context: Context) {
   val pendingProfileId: String?
     get() = sp.getString(KEY_PENDING_PROFILE_ID, null)
 
-  fun setSharedGadgetDir(gadgetDir: String): Boolean = sp.edit()
+  val sharedController: String?
+    get() = sp.getString(KEY_SHARED_CONTROLLER, null)
+
+  val originalStockUdc: String?
+    get() = sp.getString(KEY_ORIGINAL_STOCK_UDC, null)
+
+  val originalStockLayout: String?
+    get() = sp.getString(KEY_ORIGINAL_STOCK_LAYOUT, null)
+
+  fun setSharedGadgetDir(gadgetDir: String, profileId: String, controller: String, originalUdc: String, layout: String): Boolean = sp.edit()
     .putString(KEY_PENDING_GADGET_DIR, gadgetDir)
+    .putString(KEY_PENDING_PROFILE_ID, profileId)
     .putBoolean(KEY_PENDING_SHARED_GADGET, true)
+    .putString(KEY_SHARED_CONTROLLER, controller)
+    .putString(KEY_ORIGINAL_STOCK_UDC, originalUdc)
+    .putString(KEY_ORIGINAL_STOCK_LAYOUT, layout)
     .commit()
 
   var typingSpeedFactor: Float
@@ -222,6 +235,9 @@ class Prefs(context: Context) {
       .remove(KEY_PENDING_GADGET_DIR)
       .remove(KEY_PENDING_PROFILE_ID)
       .remove(KEY_PENDING_SHARED_GADGET)
+      .remove(KEY_SHARED_CONTROLLER)
+      .remove(KEY_ORIGINAL_STOCK_UDC)
+      .remove(KEY_ORIGINAL_STOCK_LAYOUT)
       .apply()
   }
 
@@ -245,6 +261,9 @@ class Prefs(context: Context) {
       .remove(KEY_PENDING_GADGET_DIR)
       .remove(KEY_PENDING_PROFILE_ID)
       .remove(KEY_PENDING_SHARED_GADGET)
+      .remove(KEY_SHARED_CONTROLLER)
+      .remove(KEY_ORIGINAL_STOCK_UDC)
+      .remove(KEY_ORIGINAL_STOCK_LAYOUT)
       .remove(KEY_PREPARED_VERSION)
       .apply()
   }
@@ -253,6 +272,9 @@ class Prefs(context: Context) {
     private const val NAME = "gadgetfs_prefs"
     private const val KEY_ACTIVE_PROFILE_ID = "active_profile_id"
     private const val KEY_PENDING_PROFILE_ID = "pending_profile_id"
+    private const val KEY_SHARED_CONTROLLER = "shared_controller"
+    private const val KEY_ORIGINAL_STOCK_UDC = "original_stock_udc"
+    private const val KEY_ORIGINAL_STOCK_LAYOUT = "original_stock_layout"
     private const val KEY_ACTIVE_ROLE_TYPE = "active_role_type"
     private const val KEY_ACTIVE_GADGET_DIR = "active_gadget_dir"
     private const val KEY_ACTIVE_KBD_DEV = "active_keyboard_dev"

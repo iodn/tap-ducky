@@ -328,18 +328,18 @@ class _HidReadinessCard extends StatelessWidget {
             label: 'Session State',
             status: hid.sessionArmed ? 'Armed' : 'Disarmed',
             isOk: hid.sessionArmed,
-            description: hid.sessionArmed
-                ? 'USB gadget is active and ready'
-                : 'Activate session to enable HID operations',
+            description: !hid.sessionArmed
+                ? 'Activate session to enable HID operations'
+                : (hid.gadgetBound ? 'USB HID is prepared' : 'USB HID setup is pending'),
           ),
           const Divider(height: 1),
           _StatusRow(
-            icon: hid.deviceConnected ? Icons.usb : Icons.usb_off,
+            icon: hid.pcConnected ? Icons.usb : Icons.usb_off,
             label: 'Target Connection',
-            status: hid.deviceConnected ? 'Connected' : 'Disconnected',
-            isOk: hid.deviceConnected,
-            description: hid.deviceConnected
-                ? 'USB cable connected to target host'
+            status: hid.pcConnected ? 'Connected' : 'Disconnected',
+            isOk: hid.pcConnected,
+            description: hid.pcConnected
+                ? (hid.deviceConnected ? 'PC connected and HID is ready' : 'PC connected')
                 : 'Connect USB cable to target device',
           ),
           if (hid.udcList.isNotEmpty) ...[

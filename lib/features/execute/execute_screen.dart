@@ -618,6 +618,7 @@ class _PreExecutionChecklistState extends State<_PreExecutionChecklist> {
     return !widget.hid.rootAvailable ||
         !widget.hid.hidSupported ||
         !widget.hid.sessionArmed ||
+        !widget.hid.gadgetBound ||
         _hasInvalidRequiredParams();
   }
 
@@ -924,6 +925,10 @@ class _StatusBanner extends StatelessWidget {
       icon = Icons.lock_outline;
       color = cs.tertiary;
       message = 'Session disarmed';
+    } else if (!hid.gadgetBound) {
+      icon = Icons.usb_off;
+      color = cs.tertiary;
+      message = hid.message ?? 'USB HID setup is pending';
     } else if (!hid.deviceConnected) {
       icon = Icons.usb_off;
       color = cs.tertiary;
@@ -1176,7 +1181,8 @@ class _ExecutionControlCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    final canRun = hid.rootAvailable && hid.hidSupported && hid.sessionArmed && !exec.isRunning;
+    final canRun = hid.rootAvailable && hid.hidSupported && hid.sessionArmed &&
+        hid.gadgetBound && !exec.isRunning;
 
     return Card(
       child: Padding(
@@ -1294,6 +1300,7 @@ class _ExecutionControlCard extends StatelessWidget {
     if (!hid.rootAvailable) return 'Root access not available';
     if (!hid.hidSupported) return 'USB HID not supported';
     if (!hid.sessionArmed) return 'Session is disarmed. Arm it from Dashboard first.';
+    if (!hid.gadgetBound) return hid.message ?? 'USB HID setup is pending';
     return 'Cannot execute';
   }
 }

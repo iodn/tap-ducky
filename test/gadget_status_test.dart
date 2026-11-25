@@ -28,17 +28,30 @@ void main() {
     }
   });
 
-  test('disarmed can still have a bound prepared gadget', () {
-    final status = GadgetStatus.fromMap({
-      'state': 'IDLE',
-      'desiredArmed': false,
-      'gadgetBound': true,
-      'prepared': true,
-    });
+  test('disarm distinguishes USB restoration from a restored session', () {
+    final restoring = HidStatus.fromGadgetStatus(
+      GadgetStatus.fromMap({
+        'state': 'RESTORING',
+        'desiredArmed': false,
+        'gadgetBound': true,
+        'prepared': true,
+      }),
+    );
+    final restored = HidStatus.fromGadgetStatus(
+      GadgetStatus.fromMap({
+        'state': 'IDLE',
+        'desiredArmed': false,
+        'gadgetBound': false,
+        'prepared': false,
+      }),
+    );
 
-    expect(status.isActive, isFalse);
-    expect(status.gadgetBound, isTrue);
-    expect(status.prepared, isTrue);
+    expect(restoring.sessionArmed, isFalse);
+    expect(restoring.usbRestoring, isTrue);
+    expect(restoring.gadgetBound, isTrue);
+    expect(restored.sessionArmed, isFalse);
+    expect(restored.usbRestoring, isFalse);
+    expect(restored.gadgetBound, isFalse);
   });
 
   test('armed waiting keeps logical arm separate from host connection', () {
@@ -54,6 +67,22 @@ void main() {
 
     expect(hid.sessionArmed, isTrue);
     expect(hid.gadgetBound, isTrue);
+    expect(hid.deviceConnected, isFalse);
+  });
+
+  test('stock USB can detect a PC before TapDucky HID is prepared', () {
+    final status = GadgetStatus.fromMap({
+      'state': 'ARMING',
+      'desiredArmed': true,
+      'deviceConnected': false,
+      'pcConnected': true,
+      'udcState': 'configured',
+    });
+    final hid = HidStatus.fromGadgetStatus(GadgetStatus.fromMap(status.toMap()));
+
+    expect(hid.sessionArmed, isTrue);
+    expect(hid.pcConnected, isTrue);
+    expect(hid.gadgetBound, isFalse);
     expect(hid.deviceConnected, isFalse);
   });
 }

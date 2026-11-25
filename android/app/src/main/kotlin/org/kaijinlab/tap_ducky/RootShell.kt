@@ -25,15 +25,6 @@ class RootShell(private val log: LogBus) {
         val durationMs: Long,
     )
 
-    // Writer FD numbers inside the persistent root shell:
-    // - FD 3: keyboard (/dev/hidg0)
-    // - FD 4: mouse    (/dev/hidg1)
-    private val HID_FD_KBD = 3
-    private val HID_FD_MOUSE = 4
-
-    @Volatile private var kbdWriterReady: Boolean = false
-    @Volatile private var mouseWriterReady: Boolean = false
-
     private val tokenCounter = AtomicInteger(1)
 
     @Volatile private var session: SuSession? = null
@@ -51,6 +42,7 @@ class RootShell(private val log: LogBus) {
      * NOTE: This executes the provided script via `sh -c '<script>'` inside the session,
      * so it does NOT permanently mutate the session shell environment.
      */
+    @Synchronized
     fun exec(script: String, timeoutSec: Long = 10): ExecResult {
         val first = script.trim().lineSequence().firstOrNull()?.take(160) ?: "(empty)"
         log.log("root", "$ $first")
@@ -59,149 +51,10 @@ class RootShell(private val log: LogBus) {
         val r = s.execShC(script, timeoutSec)
 
         // If the session died or timed out, mark it unusable so we can recreate next time.
-        if (!s.isAlive()) {
+        if (r.exitCode == -1 || !s.isAlive()) {
             dropSession("session_not_alive_after_exec")
         }
         return r
-    }
-
-    /**
-     * Execute commands *directly in the persistent session shell* (no `sh -c`).
-     * Use this ONLY when you need side-effects to persist in the session (e.g. `exec 3> /dev/hidg0`).
-     */
-    fun execDirect(commands: String, timeoutSec: Long = 10): ExecResult {
-        val first = commands.trim().lineSequence().firstOrNull()?.take(160) ?: "(empty)"
-        log.log("root", "$ $first")
-
-        val s = ensureSession() ?: return oneShotExec(commands, timeoutSec) // best-effort fallback
-        val r = s.execDirect(commands, timeoutSec)
-
-        if (!s.isAlive()) {
-            dropSession("session_not_alive_after_execDirect")
-        }
-        return r
-    }
-
-    /**
-     * Send a raw single line command into the persistent session (no completion markers, no waiting).
-     * Intended for extremely fast HID writes like: `printf '\\000\\010\\000\\000' > /dev/hidg0`
-     *
-     * If the session is not available, this throws.
-     */
-    fun sendRaw(line: String, logIt: Boolean = false) {
-        val s = ensureSession() ?: throw IllegalStateException("Root session not available")
-        if (logIt) {
-            val p = line.trim().take(160)
-            log.log("root/raw", p)
-        }
-        s.sendRaw(line)
-        if (!s.isAlive()) {
-            dropSession("session_not_alive_after_sendRaw")
-            throw IllegalStateException("Root session died")
-        }
-    }
-
-    fun isKeyboardWriterReady(): Boolean = kbdWriterReady
-    fun isMouseWriterReady(): Boolean = mouseWriterReady
-
-    /**
-     * Open persistent writer FDs inside the long-lived root shell:
-     * - FD 3 -> keyboardPath (if non-null)
-     * - FD 4 -> mousePath    (if non-null)
-     *
-     * This is the key optimization: subsequent writes can be done via sendRaw(...) without re-opening.
-     */
-    fun openHidWriters(keyboardPath: String?, mousePath: String?, timeoutSec: Long = 6): ExecResult {
-        val k = keyboardPath ?: ""
-        val m = mousePath ?: ""
-
-        // IMPORTANT: must be executed in-session (execDirect) so FDs persist.
-        val script = """
-            K=${shQuote(k)}
-            M=${shQuote(m)}
-
-            # Close any previous writer fds best-effort.
-            (exec $HID_FD_KBD>&-) 2>/dev/null || true
-            (exec $HID_FD_MOUSE>&-) 2>/dev/null || true
-
-            # Wait briefly for device nodes to appear after binding (best-effort).
-            if [ -n "$${'$'}K" ]; then
-              i=0
-              while [ $${'$'}i -lt 60 ] && [ ! -e "$${'$'}K" ]; do
-                sleep 0.05
-                i=$${'$'}((i+1))
-              done
-              exec $HID_FD_KBD> "$${'$'}K"
-            fi
-
-            if [ -n "$${'$'}M" ]; then
-              i=0
-              while [ $${'$'}i -lt 60 ] && [ ! -e "$${'$'}M" ]; do
-                sleep 0.05
-                i=$${'$'}((i+1))
-              done
-              exec $HID_FD_MOUSE> "$${'$'}M"
-            fi
-
-            FD3_OK=0
-            FD4_OK=0
-            [ -e /proc/$$/fd/$HID_FD_KBD ] && FD3_OK=1 || true
-            [ -e /proc/$$/fd/$HID_FD_MOUSE ] && FD4_OK=1 || true
-            echo "FD3_OK=$${'$'}FD3_OK"
-            echo "FD4_OK=$${'$'}FD4_OK"
-
-            # Succeed if requested writers are opened.
-            ok=1
-            if [ -n "$${'$'}K" ] && [ "$${'$'}FD3_OK" != "1" ]; then ok=0; fi
-            if [ -n "$${'$'}M" ] && [ "$${'$'}FD4_OK" != "1" ]; then ok=0; fi
-            [ $${'$'}ok -eq 1 ]
-        """.trimIndent()
-
-        val r = execDirect(script, timeoutSec)
-        val fd3 = r.stdout.lineSequence().any { it.trim() == "FD3_OK=1" }
-        val fd4 = r.stdout.lineSequence().any { it.trim() == "FD4_OK=1" }
-
-        // Update readiness flags. If path wasn't requested, treat as not-ready.
-        kbdWriterReady = keyboardPath != null && fd3 && r.ok
-        mouseWriterReady = mousePath != null && fd4 && r.ok
-
-        return r
-    }
-
-    /**
-     * Close persistent HID writer FDs inside the persistent session shell.
-     */
-    fun closeHidWriters(timeoutSec: Long = 4): ExecResult {
-        kbdWriterReady = false
-        mouseWriterReady = false
-
-        val script = """
-            (exec $HID_FD_KBD>&-) 2>/dev/null || true
-            (exec $HID_FD_MOUSE>&-) 2>/dev/null || true
-            echo "FD3_CLOSED=1"
-            echo "FD4_CLOSED=1"
-            true
-        """.trimIndent()
-        return execDirect(script, timeoutSec)
-    }
-
-    /**
-     * Fast-path write into an already-open writer FD (3 or 4).
-     * No waiting, no markers. Best performance.
-     */
-    fun writeToFdFast(fd: Int, bytes: ByteArray) {
-        val hexEsc = toPrintfEsc(bytes)
-        sendRaw("printf '$hexEsc' >&$fd", logIt = false)
-    }
-
-    fun writeKeyboardFast(bytes: ByteArray) {
-        if (!kbdWriterReady) throw IllegalStateException("Keyboard writer not ready")
-        writeToFdFast(HID_FD_KBD, bytes)
-    }
-
-    fun writeMouseFast(bytes: ByteArray) {
-        if (!mouseWriterReady) throw IllegalStateException("Mouse writer not ready")
-        writeToFdFast(HID_FD_MOUSE, bytes)
     }
 
     /* ---------------- Internals ---------------- */
@@ -213,10 +66,6 @@ class RootShell(private val log: LogBus) {
         synchronized(sessionLock) {
             val cur = session
             if (cur != null && cur.isAlive()) return cur
-
-            // If we had a previous session, drop it and reset writer readiness.
-            kbdWriterReady = false
-            mouseWriterReady = false
 
             return try {
                 val s = SuSession(log)
@@ -245,8 +94,6 @@ class RootShell(private val log: LogBus) {
             } catch (_: Throwable) {
             }
             session = null
-            kbdWriterReady = false
-            mouseWriterReady = false
             log.logError("root", "Dropped persistent su session ($reason)")
         }
     }
@@ -344,15 +191,6 @@ class RootShell(private val log: LogBus) {
     private fun shellQuote(s: String): String {
         // Safe for embedding in: sh -c '<script>'
         return "'" + s.replace("'", "'\\''") + "'"
-    }
-
-    private fun toPrintfEsc(bytes: ByteArray): String {
-        val sb = StringBuilder(bytes.size * 4)
-        for (b in bytes) {
-            val v = b.toInt() and 0xFF
-            sb.append(String.format(java.util.Locale.US, "\\%03o", v))
-        }
-        return sb.toString()
     }
 
     private fun isProcessTerminated(process: Process): Boolean {
@@ -477,13 +315,6 @@ class RootShell(private val log: LogBus) {
             return execWrapped(body, timeoutSec)
         }
 
-        fun execDirect(commands: String, timeoutSec: Long): ExecResult {
-            // Run in the session shell directly. This can persist FD changes (exec 3>...).
-            // We wrap it in `{ ...; }` so it is a single compound command.
-            val body = "{\n$commands\n}\n"
-            return execWrapped(body, timeoutSec)
-        }
-
         private fun execWrapped(body: String, timeoutSec: Long): ExecResult {
             val start = System.currentTimeMillis()
             val token = "GFS_${tokenCounter.getAndIncrement()}_${System.nanoTime()}"
@@ -497,7 +328,7 @@ class RootShell(private val log: LogBus) {
                 append("echo ").append(shQuote(begin)).append(" 1>&2\n")
                 append(body).append("\n")
                 append("RC=$?\n")
-                append("echo ").append(shQuote("${rcPrefix}\$RC")).append("\n")
+                append("printf '%s%s\\n' ").append(shQuote(rcPrefix)).append(" \"\$RC\"\n")
                 append("echo ").append(shQuote(end)).append("\n")
                 append("echo ").append(shQuote(end)).append(" 1>&2\n")
             }

@@ -407,15 +407,19 @@ class _HeroStatusCard extends ConsumerWidget {
       statusText = 'System Not Ready';
       statusIcon = Icons.error_outline;
       statusColor = cs.error;
+    } else if (hid.usbRestoring) {
+      statusText = 'Restoring USB';
+      statusIcon = Icons.settings_input_component;
+      statusColor = cs.warning;
     } else if (!hid.sessionArmed) {
       statusText = 'Session Disarmed';
       statusIcon = Icons.lock_outline;
       statusColor = cs.tertiary;
-    } else if (!hid.gadgetBound) {
-      statusText = 'Arming';
+    } else if (hid.pcConnected && !hid.gadgetBound) {
+      statusText = 'PC Connected - HID Setup Pending';
       statusIcon = Icons.settings_input_component;
       statusColor = cs.tertiary;
-    } else if (!hid.deviceConnected) {
+    } else if (!hid.gadgetBound || !hid.deviceConnected) {
       statusText = 'Armed - Waiting for Host';
       statusIcon = Icons.usb_off;
       statusColor = cs.warning;
@@ -557,7 +561,7 @@ class _HeroStatusCard extends ConsumerWidget {
     if (!hid.sessionArmed) {
       return hid.prepared ? 'USB interface ready; tap to arm' : 'Tap to arm';
     }
-    if (!hid.gadgetBound) return 'Preparing USB interface…';
+    if (!hid.gadgetBound) return 'Preparing USB HID…';
     if (!hid.deviceConnected) {
       return 'Connect the target USB cable. Payloads run when the host appears.';
     }

@@ -169,6 +169,7 @@ class GadgetStatus {
     this.desiredArmed = false,
     this.gadgetBound = false,
     this.prepared = false,
+    this.pcConnected,
   });
 
   final bool rootAvailable;
@@ -187,11 +188,13 @@ class GadgetStatus {
   final bool desiredArmed;
   final bool gadgetBound;
   final bool prepared;
+  final bool? pcConnected;
 
   Map<String, dynamic> toMap() => {
     'rootAvailable': rootAvailable,
     'supportAvailable': supportAvailable,
     'deviceConnected': deviceConnected,
+    if (pcConnected != null) 'pcConnected': pcConnected,
     'isActive': isActive,
     'state': state,
     'activeProfileId': activeProfileId,
@@ -245,6 +248,7 @@ class GadgetStatus {
       rootAvailable: b('rootAvailable'),
       supportAvailable: b('supportAvailable'),
       deviceConnected: b('deviceConnected'),
+      pcConnected: m.containsKey('pcConnected') ? b('pcConnected') : null,
       isActive: isActive,
       state: state,
       activeProfileId: m['activeProfileId']?.toString(),

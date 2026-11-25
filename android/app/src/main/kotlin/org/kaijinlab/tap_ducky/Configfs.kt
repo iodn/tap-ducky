@@ -6,7 +6,71 @@ import java.util.Locale
 object Configfs {
   const val HID_ALLOCATION_FAILED = 23
   const val GADGET_CREATION_FAILED = 24
-  const val HOST_ATTACHED_REFUSED = 25
+  const val HOST_ATTACHED_REFUSED = 26
+  const val SETUP_NOT_STARTED = 27
+  const val STOCK_BINDING_CHANGED = 28
+  const val USB_DATA_RESTORE_FAILED = 29
+
+  private val stockFunctionProbe = """
+    ANDROID_USB_MODES=${'$'}(getprop sys.usb.config 2>/dev/null || :)
+    is_android_function() {
+      case "${'$'}1" in
+        ffs.adb|ffs.mtp|ffs.ptp|ffs.accessory|mtp.gs*|ptp.gs*|accessory.gs*|audio_source.gs*|midi.gs*|rndis.gs*|ncm.gs*|acm.gs*|mass_storage.gs*|uvc.gs*) return 0 ;;
+        *) return 1 ;;
+      esac
+    }
+    matches_android_mode() {
+      case "${'$'}1" in
+        ffs.*) mode=${'$'}{1#ffs.} ;;
+        *.*) mode=${'$'}{1%%.*} ;;
+        *) return 1 ;;
+      esac
+      case "${'$'}mode" in
+        mtp|ptp|accessory|audio_source|midi|rndis|ncm|acm|mass_storage|uvc)
+          case ",${'$'}ANDROID_USB_MODES," in *",${'$'}mode,"*) return 0 ;; esac
+          ;;
+      esac
+      return 1
+    }
+    stock_evidence() {
+      for link in "${'$'}1"/configs/*/*; do
+        [ -L "${'$'}link" ] && [ -d "${'$'}link" ] || continue
+        target=${'$'}(readlink "${'$'}link") || continue
+        if is_android_function "${'$'}{target##*/}" || matches_android_mode "${'$'}{target##*/}"; then
+          printf linked
+          return
+        fi
+      done
+      for fn in "${'$'}1"/functions/*; do
+        [ -d "${'$'}fn" ] || continue
+        if is_android_function "${'$'}{fn##*/}"; then
+          printf defined
+          return
+        fi
+      done
+      printf unknown
+    }
+  """.trimIndent()
+
+  fun buildStockInventoryScript(): String = """
+    $stockFunctionProbe
+    printf 'android:%s\n' "${'$'}(getprop sys.usb.controller 2>/dev/null)"
+    for controller in /sys/class/udc/*; do
+      [ -d "${'$'}controller" ] || continue
+      printf 'udc:%s\n' "${'$'}{controller##*/}"
+    done
+    for base in /config/usb_gadget /sys/kernel/config/usb_gadget; do
+      found=0
+      for g in "${'$'}base"/*; do
+        [ -d "${'$'}g" ] || continue
+        udc=${'$'}(cat "${'$'}g/UDC") || exit 1
+        printf 'gadget:%s:%s:%s\n' "${'$'}{g##*/}" "${'$'}udc" "${'$'}(stock_evidence "${'$'}g")"
+        found=1
+      done
+      [ "${'$'}found" = 0 ] || exit 0
+    done
+    exit 1
+  """.trimIndent()
 
   fun buildProbeSessionScript(gadgetDir: String, shared: Boolean): String {
     val prefix = if (shared) "hid.tapducky" else "hid.usb"
@@ -21,6 +85,8 @@ object Configfs {
         UDC_NAME=${'$'}(cat "${'$'}G/UDC") || exit 2
         [ -n "${'$'}UDC_NAME" ] || continue
         echo bound
+        printf 'state=%s\n' "${'$'}(cat "/sys/class/udc/${'$'}UDC_NAME/state" 2>/dev/null)"
+        devices_ready=1
         for fn in ${prefix}0 ${prefix}1 ${prefix}2; do
           for link in "${'$'}G"/configs/*/"${'$'}fn"; do
             [ -L "${'$'}link" ] && [ -d "${'$'}link" ] || continue
@@ -28,10 +94,12 @@ object Configfs {
             [ "${'$'}{target##*/}" = "${'$'}fn" ] || continue
             protocol=${'$'}(cat "${'$'}G/functions/${'$'}fn/protocol") || exit 2
             dev=${'$'}(cat "${'$'}G/functions/${'$'}fn/dev" 2>/dev/null)
+            [ -c "/dev/hidg${'$'}{dev##*:}" ] || devices_ready=0
             printf '%s=%s:%s\n' "${'$'}fn" "${'$'}protocol" "${'$'}dev"
             break
           done
         done
+        printf 'devices_ready=%s\n' "${'$'}devices_ready"
         exit 0
       done
       [ "${'$'}FOUND" = 1 ] || exit 2
@@ -129,7 +197,8 @@ object Configfs {
       fi
       UDC_CANDIDATES="${'$'}DETACHED_UDCS"
 
-      G="${'$'}CFGBASE/$gadget"      if [ -d "${'$'}G" ]; then
+      G="${'$'}CFGBASE/$gadget"
+      if [ -d "${'$'}G" ]; then
         echo "Gadget already exists: ${'$'}G" >&2
         (echo "" > "${'$'}G/UDC") 2>/dev/null || true
       else
@@ -235,8 +304,7 @@ object Configfs {
     return listOf(create, functions, link, bind).joinToString("\n\n") + "\n"
   }
 
-  fun buildUnbindAndCleanupScript(gadgetDir: String, shared: Boolean = false): String {
-    if (shared) return buildStockCleanupScript(gadgetDir)
+  fun buildUnbindAndCleanupScript(gadgetDir: String): String {
     val gadget = sanitizeGadgetName(gadgetDir)
     return """
       set -e
@@ -264,7 +332,13 @@ object Configfs {
     """.trimIndent() + "\n"
   }
 
-  fun buildAttachToStockScript(profile: ParsedProfile, gadgetDir: String, udc: String): String {
+  fun buildAttachToStockScript(
+    profile: ParsedProfile,
+    gadgetDir: String,
+    udc: String,
+    originalUdc: String,
+    usbDataMarker: String? = null,
+  ): String {
     val composite = profile.roleType.lowercase(Locale.US) !in listOf("keyboard", "mouse")
     val mouse = profile.roleType.equals("mouse", ignoreCase = true)
     val names = when {
@@ -284,48 +358,161 @@ object Configfs {
       set -e
       ${stockGadgetLocation(gadgetDir)}
       UDC_NAME=${shEscape(udc)}
-      CURRENT_UDC=${'$'}(cat UDC 2>/dev/null | tr -d '\r')
-      if [ -n "${'$'}CURRENT_UDC" ] && [ "${'$'}CURRENT_UDC" != "${'$'}UDC_NAME" ]; then
-        echo "Stock USB gadget is bound to a different controller" >&2
-        exit 25
+      ${usbDataFunctions(usbDataMarker)}
+      LIVE_SETUP=0
+      if ! usb_quiet; then
+        [ -n "${'$'}USB_DATA_MARKER" ] && [ ! -e "${'$'}USB_DATA_MARKER" ] || exit $SETUP_NOT_STARTED
+        [ "${'$'}(usb_port_status)" = enabled ] || exit $SETUP_NOT_STARTED
+        LIVE_SETUP=1
       fi
-      $requireDetachedStockHost
+      CURRENT_UDC=${'$'}(cat UDC) || exit $STOCK_BINDING_CHANGED
+      if [ "${'$'}CURRENT_UDC" != ${shEscape(originalUdc)} ] ||
+        { [ -n "${'$'}CURRENT_UDC" ] && [ "${'$'}CURRENT_UDC" != "${'$'}UDC_NAME" ]; }; then
+        echo "Android changed the USB controller binding before setup" >&2
+        exit $STOCK_BINDING_CHANGED
+      fi
       set -- configs/*
       if [ "${'$'}#" -ne 1 ] || [ ! -d "${'$'}1" ]; then
         echo "Stock USB gadget must have exactly one configuration" >&2
         exit 25
       fi
       CFG="${'$'}1"
-      if [ ! -d functions/ffs.adb ]; then
-        echo "Could not identify an Android stock USB gadget to extend" >&2
-        exit 25
+      if [ "${'$'}LIVE_SETUP" = 1 ]; then
+        [ -n "${'$'}CURRENT_UDC" ] || exit $SETUP_NOT_STARTED
+        for link in "${'$'}CFG"/*; do
+          [ -L "${'$'}link" ] || continue
+          target=${'$'}(readlink "${'$'}link") || exit $SETUP_NOT_STARTED
+          case "${'$'}{target##*/}" in hid.*) exit $SETUP_NOT_STARTED ;; esac
+        done
       fi
-      $requireDetachedStockHost
+      $stockFunctionProbe
+      if [ "${'$'}(stock_evidence .)" = unknown ]; then
+        echo "The gadget no longer has recognizable Android stock USB functions" >&2
+        exit $STOCK_BINDING_CHANGED
+      fi
+      check_controller_owner() {
+        for other in ../*/UDC; do
+          [ -f "${'$'}other" ] || continue
+          owner=${'$'}{other%/UDC}
+          [ "${'$'}{owner##*/}" != "${'$'}NAME" ] || continue
+          binding=${'$'}(cat "${'$'}other") || return 1
+          [ "${'$'}binding" != "${'$'}UDC_NAME" ] || return 1
+        done
+        return 0
+      }
+      check_controller_owner || exit $STOCK_BINDING_CHANGED
+      for old in hid.tapducky0 hid.tapducky1 hid.tapducky2; do
+        if [ -L "${'$'}CFG/${'$'}old" ]; then
+          echo "Existing TapDucky links must be restored before creating a new layout" >&2
+          exit 25
+        fi
+      done
+      if [ -d functions/hid.tapducky2 ]; then rmdir functions/hid.tapducky2; fi
+      # Prepare and validate descriptors while the stock functions are still available.
+      $functions
+      for fn in $names; do
+        if [ "${'$'}LIVE_SETUP" = 1 ] &&
+          [ "${'$'}(cat "functions/${'$'}fn/no_out_endpoint" 2>/dev/null)" != 1 ]; then
+          echo "The kernel cannot configure input-only HID for a connected USB setup" >&2
+          exit $HOST_ATTACHED_REFUSED
+        fi
+        dev=${'$'}(cat "functions/${'$'}fn/dev")
+        case "${'$'}dev" in *:[0-9]*) ;; *) exit 25 ;; esac
+        printf 'hid.usb%s=%s\n' "${'$'}{fn#hid.tapducky}" "${'$'}dev"
+      done
+      restore_stock_on_error() {
+        rc=${'$'}?
+        trap - EXIT
+        if [ "${'$'}rc" -ne 0 ] && [ "${'$'}(cat UDC)" = "" ] && usb_quiet; then
+          for fn in hid.tapducky0 hid.tapducky1 hid.tapducky2; do
+            [ "${'$'}(cat UDC)" = "" ] && usb_quiet || break
+            [ ! -L "${'$'}CFG/${'$'}fn" ] || rm "${'$'}CFG/${'$'}fn" || :
+          done
+          if [ -n "${'$'}CURRENT_UDC" ] && [ "${'$'}(cat UDC)" = "" ] && usb_quiet; then
+            printf '%s\n' "${'$'}CURRENT_UDC" > UDC || :
+          fi
+        fi
+        if [ "${'$'}rc" -ne 0 ] && [ "${'$'}LIVE_SETUP" = 1 ] && [ -f "${'$'}USB_DATA_MARKER" ] &&
+          [ "${'$'}(usb_port_status)" = disabled-force ] && usb_controller_detached &&
+          [ "${'$'}(cat UDC)" = "" ] && check_controller_owner; then
+          any_hid_link=0
+          for fn in $names; do
+            if [ -L "${'$'}CFG/${'$'}fn" ]; then any_hid_link=1; break; fi
+          done
+          if [ "${'$'}any_hid_link" = 0 ]; then printf '%s\n' "${'$'}CURRENT_UDC" > UDC || :; fi
+        fi
+        resume_usb_data || exit $USB_DATA_RESTORE_FAILED
+        exit "${'$'}rc"
+      }
+      trap restore_stock_on_error EXIT
+      trap 'exit 1' HUP INT TERM
+      if [ "${'$'}LIVE_SETUP" = 1 ]; then
+        pause_usb_data || exit $HOST_ATTACHED_REFUSED
+      else
+        usb_quiet || exit $HOST_ATTACHED_REFUSED
+      fi
+      [ "${'$'}(cat UDC)" = "${'$'}CURRENT_UDC" ] || exit 25
+      check_controller_owner || exit 25
+      usb_controller_detached || exit $HOST_ATTACHED_REFUSED
       if [ -n "${'$'}CURRENT_UDC" ]; then
         printf '\n' > UDC
       fi
-      # Detach our previous links before rewriting descriptors. f_hid
-      # attributes cannot be changed while a function is linked.
-      for old in hid.tapducky0 hid.tapducky1 hid.tapducky2; do
-        for cfg in configs/*; do
-          if [ -L "${'$'}cfg/${'$'}old" ]; then rm "${'$'}cfg/${'$'}old"; fi
-        done
-      done
-      if [ -d functions/hid.tapducky2 ]; then rmdir functions/hid.tapducky2; fi
-      $functions
       for fn in $names; do
-        if [ ! -L "${'$'}CFG/${'$'}fn" ]; then
-          ln -s "${'$'}G/functions/${'$'}fn" "${'$'}CFG/${'$'}fn"
-        fi
+        ln -s "${'$'}G/functions/${'$'}fn" "${'$'}CFG/${'$'}fn"
       done
-      printf '%s\n' "${'$'}UDC_NAME" > UDC
+      if ! usb_controller_detached || { [ "${'$'}LIVE_SETUP" = 0 ] && ! usb_quiet; }; then
+        echo "USB became active during preparation" >&2
+        exit $HOST_ATTACHED_REFUSED
+      fi
+      if [ -z "${'$'}(cat UDC)" ]; then
+        printf '%s\n' "${'$'}UDC_NAME" > UDC || [ "${'$'}(cat UDC)" = "${'$'}UDC_NAME" ]
+      fi
       [ "${'$'}(cat UDC)" = "${'$'}UDC_NAME" ] || exit 25
-      for fn in $names; do
-        dev=${'$'}(cat "functions/${'$'}fn/dev")
-        printf 'hid.usb%s=%s\n' "${'$'}{fn#hid.tapducky}" "${'$'}dev"
-      done
     """.trimIndent() + "\n"
   }
+
+  fun buildResumeUsbDataScript(marker: String): String = """
+    ${usbDataFunctions(marker)}
+    resume_usb_data
+  """.trimIndent()
+
+  private fun usbDataFunctions(marker: String?): String = """
+    USB_DATA_MARKER=${shEscape(marker.orEmpty())}
+    usb_port_status() {
+      dumpsys -t 2 usb 2>/dev/null | sed -n 's/^[[:space:]]*usb_data_status=//p'
+    }
+    pause_usb_data() {
+      [ -n "${'$'}USB_DATA_MARKER" ] && [ ! -e "${'$'}USB_DATA_MARKER" ] || return 1
+      [ "${'$'}(usb_port_status)" = enabled ] || return 1
+      (umask 077 && : > "${'$'}USB_DATA_MARKER") || return 1
+      svc usb enableUsbDataSignal false || return 1
+      count=0
+      until usb_data_paused; do
+        [ "${'$'}count" -lt 15 ] || return 1
+        count=${'$'}((count + 1))
+        sleep 0.15
+      done
+    }
+    usb_data_paused() {
+      [ -n "${'$'}USB_DATA_MARKER" ] && [ -f "${'$'}USB_DATA_MARKER" ] &&
+        [ "${'$'}(usb_port_status)" = disabled-force ] && usb_controller_detached
+    }
+    resume_usb_data() {
+      [ -n "${'$'}USB_DATA_MARKER" ] && [ -f "${'$'}USB_DATA_MARKER" ] || return 0
+      case "${'$'}(usb_port_status)" in
+        enabled) ;;
+        disabled-force) svc usb enableUsbDataSignal true || return 1 ;;
+        *) return 1 ;;
+      esac
+      count=0
+      until [ "${'$'}(usb_port_status)" = enabled ]; do
+        [ "${'$'}count" -lt 15 ] || return 1
+        count=${'$'}((count + 1))
+        sleep 0.15
+      done
+      rm "${'$'}USB_DATA_MARKER"
+    }
+  """.trimIndent()
 
   private fun stockGadgetLocation(gadgetDir: String): String = """
     NAME=${shEscape(sanitizeGadgetName(gadgetDir))}
@@ -334,26 +521,153 @@ object Configfs {
     cd "${'$'}G"
   """.trimIndent()
 
-  private val requireDetachedStockHost = """
-    HOST_STATE=${'$'}(cat "/sys/class/udc/${'$'}UDC_NAME/state" 2>/dev/null | tr -d '\r' | tr 'A-Z' 'a-z' | tr '-' ' ')
-    if [ "${'$'}HOST_STATE" != "not attached" ]; then
-      echo "Unplug the USB data cable before switching the Android USB configuration, then retry." >&2
-      exit 25
-    fi
+  private val stockLayoutProbe = """
+    stock_layout() {
+      for name in sys.usb.config sys.usb.state persist.sys.usb.config; do
+        printf '%s=%s\n' "${'$'}name" "${'$'}(getprop "${'$'}name")"
+      done
+      for descriptor in UDC idVendor idProduct bcdUSB bcdDevice bDeviceClass bDeviceSubClass bDeviceProtocol \
+        configs/*/bmAttributes configs/*/MaxPower; do
+        [ -f "${'$'}descriptor" ] || continue
+        value=${'$'}(cat "${'$'}descriptor") || return 1
+        printf '%s=%s\n' "${'$'}descriptor" "${'$'}value"
+      done
+      for link in configs/*/*; do
+        [ -L "${'$'}link" ] || continue
+        target=${'$'}(readlink "${'$'}link") || return 1
+        case "${'$'}{target##*/}" in hid.tapducky0|hid.tapducky1|hid.tapducky2) continue ;; esac
+        printf '%s=%s\n' "${'$'}link" "${'$'}target"
+      done
+    }
   """.trimIndent()
 
-  private fun buildStockCleanupScript(gadgetDir: String): String = """
+  fun buildReadStockLayoutScript(gadgetDir: String): String = """
+    set -e
+    export LC_ALL=C
+    ${stockGadgetLocation(gadgetDir)}
+    $stockLayoutProbe
+    mode=${'$'}(svc usb getFunctions 2>/dev/null) || mode='?'
+    case "${'$'}mode" in *[!a-z0-9_,]*) mode='?' ;; esac
+    printf 'mode=%s\n' "${'$'}mode"
+    stock_layout
+  """.trimIndent()
+
+  fun buildVerifyStockLayoutScript(gadgetDir: String, layout: String): String {
+    val reportedMode = layout.lineSequence().first().removePrefix("mode=")
+    val configuredMode = layout.lineSequence().firstOrNull { it.startsWith("sys.usb.config=") }
+      ?.substringAfter('=')?.split(',')?.filterNot { it == "adb" || it == "none" }?.joinToString(",")
+    val originalMode = reportedMode.takeUnless { it.isEmpty() || it == "?" } ?: configuredMode ?: reportedMode
+    return """
+    set -e
+    export LC_ALL=C
+    ${stockGadgetLocation(gadgetDir)}
+    $stockLayoutProbe
+    EXPECTED=${shEscape(layout.substringAfter('\n'))}
+    ORIGINAL_MODE=${shEscape(originalMode)}
+    matches_baseline() {
+      actual=${'$'}(stock_layout) && [ "${'$'}actual" = "${'$'}EXPECTED" ]
+    }
+    if matches_baseline; then exit 0; fi
+    case "${'$'}ORIGINAL_MODE" in
+      *[!a-z0-9_,]*) ;;
+      '') svc usb setFunctions || : ;;
+      *) svc usb setFunctions "${'$'}ORIGINAL_MODE" || : ;;
+    esac
+    for attempt in 1 2 3 4 5 6 7 8 9 10 11 12; do
+      if matches_baseline; then exit 0; fi
+      sleep 0.5
+    done
+    echo "Android has not restored the USB layout captured before arming" >&2
+    exit 25
+    """.trimIndent()
+  }
+
+  fun buildStockUsbTransaction(udc: String, operation: String): String = """
+    UDC_NAME=${shEscape(udc)}
+    usb_controller_detached() {
+      [ "${'$'}(cat "/sys/class/udc/${'$'}UDC_NAME/state" 2>/dev/null)" = "not attached" ]
+    }
+    usb_quiet() {
+      usb_controller_detached || return 1
+      for partner in /sys/class/typec/*-partner; do
+        [ ! -e "${'$'}partner" ] || return 1
+      done
+      for signal in present online; do
+        [ "${'$'}(cat "/sys/class/power_supply/usb/${'$'}signal" 2>/dev/null)" != 1 ] || return 1
+      done
+    }
+    $operation
+  """.trimIndent()
+
+  fun buildRestoreStockScript(gadgetDir: String, originalUdc: String, usbDataMarker: String? = null): String = """
     set -e
     ${stockGadgetLocation(gadgetDir)}
+    ${usbDataFunctions(usbDataMarker)}
+    ORIGINAL_UDC=${shEscape(originalUdc)}
+    CURRENT_UDC=${'$'}(cat UDC)
+    if [ -n "${'$'}CURRENT_UDC" ] && [ "${'$'}CURRENT_UDC" != "${'$'}UDC_NAME" ]; then
+      exit 25
+    fi
+    ARTIFACTS=0
+    for fn in functions/hid.tapducky0 functions/hid.tapducky1 functions/hid.tapducky2; do
+      if [ -d "${'$'}fn" ]; then ARTIFACTS=1; break; fi
+    done
+    if [ "${'$'}ARTIFACTS" -eq 0 ] && [ "${'$'}CURRENT_UDC" = "${'$'}ORIGINAL_UDC" ]; then
+      exit 0
+    fi
+    can_restore_binding() {
+      usb_quiet || usb_data_paused
+    }
+    finish_restoration() {
+      rc=${'$'}?
+      trap - EXIT
+      if [ "${'$'}BINDING_CHECK_NEEDED" = 1 ]; then
+        BOUND_UDC=${'$'}(cat UDC) || rc=25
+        if [ -n "${'$'}ORIGINAL_UDC" ] && [ -z "${'$'}BOUND_UDC" ]; then
+          if can_restore_binding; then
+            printf '%s\n' "${'$'}ORIGINAL_UDC" > UDC || :
+          fi
+          BOUND_UDC=${'$'}(cat UDC) || rc=25
+        fi
+        if [ "${'$'}BOUND_UDC" != "${'$'}ORIGINAL_UDC" ]; then
+          echo "Android changed the USB controller binding during restoration" >&2
+          rc=25
+        fi
+      fi
+      resume_usb_data || exit $USB_DATA_RESTORE_FAILED
+      exit "${'$'}rc"
+    }
+    set --
     for link in configs/*/hid.tapducky0 configs/*/hid.tapducky1 configs/*/hid.tapducky2; do
-      [ -L "${'$'}link" ] || continue
-      UDC_NAME=${'$'}(cat UDC)
-      if [ -n "${'$'}UDC_NAME" ]; then
-        $requireDetachedStockHost
+      if [ -L "${'$'}link" ]; then set -- "${'$'}@" "${'$'}link"; fi
+    done
+    BINDING_CHECK_NEEDED=0
+    trap finish_restoration EXIT
+    trap 'exit 1' HUP INT TERM
+    if ! usb_quiet; then
+      [ -n "${'$'}ORIGINAL_UDC" ] && [ "${'$'}CURRENT_UDC" = "${'$'}ORIGINAL_UDC" ] || exit $HOST_ATTACHED_REFUSED
+      for link in configs/*/*; do
+        [ -L "${'$'}link" ] || continue
+        target=${'$'}(readlink "${'$'}link") || exit $HOST_ATTACHED_REFUSED
+        case "${'$'}{target##*/}" in
+          hid.tapducky0|hid.tapducky1|hid.tapducky2)
+            [ "${'$'}(cat "${'$'}link/no_out_endpoint" 2>/dev/null)" = 1 ] || exit $HOST_ATTACHED_REFUSED
+            ;;
+          hid.*) exit $HOST_ATTACHED_REFUSED ;;
+        esac
+      done
+      pause_usb_data || exit $HOST_ATTACHED_REFUSED
+    fi
+    can_restore_binding || exit $HOST_ATTACHED_REFUSED
+    [ "${'$'}(cat UDC)" = "${'$'}CURRENT_UDC" ] || exit 25
+    BINDING_CHECK_NEEDED=1
+    if [ "${'$'}#" -gt 0 ]; then
+      if [ -n "${'$'}CURRENT_UDC" ]; then
         printf '\n' > UDC
       fi
-      rm "${'$'}link"
-    done
+      [ -z "${'$'}(cat UDC)" ] || exit 25
+      rm "${'$'}@"
+    fi
     for fn in functions/hid.tapducky0 functions/hid.tapducky1 functions/hid.tapducky2; do
       if [ -d "${'$'}fn" ]; then rmdir "${'$'}fn"; fi
     done
@@ -403,6 +717,10 @@ object Configfs {
       echo $protocol > functions/$fn/protocol
       echo $subclass > functions/$fn/subclass
       echo $reportLength > functions/$fn/report_length
+      if [ -f functions/$fn/no_out_endpoint ]; then
+        # The app sends reports to the host. Avoid queued interrupt OUT requests on disconnect.
+        printf '1\n' > functions/$fn/no_out_endpoint
+      fi
       EXPECTED_LEN=$expectedLen
       EXPECTED_HEX=$expectedHex
       EXPECTED_HEX_LEN=$expectedHexLen

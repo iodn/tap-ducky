@@ -476,7 +476,7 @@ class ExecutionController extends Notifier<ExecutionState> {
         timestamp: DateTime.now(),
         level: 'warn',
         message: hid.sessionArmed
-            ? 'USB HID interface is still being prepared. Try again shortly.'
+            ? (hid.message ?? 'USB HID interface is still being prepared.')
             : 'HID session not armed. Arm the session first.',
         success: false,
         meta: {'guard': hid.sessionArmed ? 'gadget_not_ready' : 'session_not_armed'},
@@ -620,7 +620,7 @@ class ExecutionController extends Notifier<ExecutionState> {
         timestamp: DateTime.now(),
         level: 'warn',
         message: hid.sessionArmed
-            ? 'USB HID interface is still being prepared. Try again shortly.'
+            ? (hid.message ?? 'USB HID interface is still being prepared.')
             : 'HID session not armed. Arm the session first.',
         success: false,
         payloadId: payload.id,

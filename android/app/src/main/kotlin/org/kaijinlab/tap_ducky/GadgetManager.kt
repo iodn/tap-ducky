@@ -2,6 +2,8 @@ package org.kaijinlab.tap_ducky
 
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
+import android.os.BatteryManager
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -23,9 +25,9 @@ class GadgetManager(
   private val main = Handler(Looper.getMainLooper())
   private val root = RootShell(log)
   private val prefs = Prefs(context)
+  private val usbDataMarker = java.io.File(context.filesDir, "resume-usb-data")
   private val udcNameRegex = Regex("^[A-Za-z0-9._-]+$")
   private val HID_KBD_FD = 3
-  private val HID_MOUSE_FD = 4
 
   private val baseKeyDownHoldUs: Int = 4000
   private val baseInterKeyDelayUs: Int = 600
@@ -44,12 +46,8 @@ class GadgetManager(
   private val PREPARED_LAYOUT_VERSION = 2
   private var keyboardMapper: KeyboardMapper = KeyboardMapper(KeyboardLayout.LAYOUT_US)
 
-  private val udcStatePoller = Handler(Looper.getMainLooper())
-  private var pollingRunnable: Runnable? = null
   private var polling = false
-  private var lastUdcState: String? = null
   private var hostConfigurationRequestCount: Int = 0
-  private var lastHostLikelyConnected: Boolean = false
 
   private val execSinkRef = AtomicReference<EventChannel.EventSink?>(null)
   private val cancelExecRef = AtomicReference<String?>(null)
@@ -61,6 +59,8 @@ class GadgetManager(
 
   private var consecutiveWriteFailures = 0
   private var lastWriteFailureAtMs: Long? = null
+  private var keyboardMayBeHeld = false
+  private var mouseButtonsMayBeHeld = false
 
   class HidWriteException(
     val errorCode: String,
@@ -83,6 +83,7 @@ class GadgetManager(
     val desiredArmed: Boolean = false,
     val gadgetBound: Boolean = false,
     val prepared: Boolean = false,
+    val pcConnected: Boolean = false,
   ) {
     val isActive: Boolean get() = desiredArmed
     fun toMap(): Map<String, Any?> = mapOf(
@@ -100,6 +101,7 @@ class GadgetManager(
       "keyboardWriterReady" to keyboardWriterReady,
       "mouseWriterReady" to mouseWriterReady,
       "deviceConnected" to deviceConnected,
+      "pcConnected" to pcConnected,
       "udcState" to udcState,
       "hostConfigurationRequestCount" to hostConfigurationRequestCount,
     )
@@ -122,14 +124,17 @@ class GadgetManager(
   )
 
   @Volatile private var prepareAttempted = false
+  @Volatile private var deferredPreparationUdc: String? = null
   @Volatile private var preparing = false
   @Volatile private var desiredProfile: Configfs.ParsedProfile? = null
-  private val lifecycleExecutor = java.util.concurrent.Executors.newSingleThreadExecutor()
+  private var restoreAttempted = false
+  private var restoreDeferred = false
+  private val lifecycleExecutor = java.util.concurrent.Executors.newSingleThreadScheduledExecutor()
 
   private val sinkRef = AtomicReference<EventChannel.EventSink?>(null)
 
   init {
-    refreshAndEmitStatus()
+    lifecycleExecutor.execute { refreshAndEmitStatus() }
     setRiskyFastMode(prefs.riskyFastMode)
   }
 
@@ -180,94 +185,87 @@ class GadgetManager(
   fun refreshAndEmitStatus(): Status {
     val current = statusRef.get()
     val rootOk = checkRoot()
+    if (rootOk) resumeUsbDataIfNeeded()
     val configfsOk = rootOk && ensureConfigfsAvailable()
     val udcs = if (rootOk) listUdcs() else emptyList()
     val supportOk = rootOk && configfsOk && udcs.isNotEmpty()
 
-    var gadgetBound = current.gadgetBound
-    var prepared = current.prepared
-    var activeId = current.activeProfileId
-    var activeRole = current.activeRoleType
-    var msg = current.message
-    var deviceConnected = current.deviceConnected
-    var udcState = current.udcState
-
-    val dir = prefs.activeGadgetDir
-    if (dir != null && rootOk && prefs.preparedVersion == PREPARED_LAYOUT_VERSION) {
-      when (val probe = probeSavedSession(dir)) {
-        is SessionProbe.Bound -> {
-          val profile = prefs.activeProfileId ?: prefs.pendingProfileId ?: "recovered:$dir"
-          prefs.setActive(profile, probe.role, dir, probe.keyboard, probe.mouse, probe.media)
-          gadgetBound = true
-          prepared = true
-          activeId = profile
-          activeRole = probe.role
-          msg = null
-          if (!current.gadgetBound) {
-            log.log("gadget", "Adopted bound USB gadget $dir (${probe.role}); no rebind performed")
-            startForeground("TapDucky USB ready")
-          }
-          if (probe.keyboard != null || probe.mouse != null) {
-            openHidWritersBestEffort(probe.keyboard, probe.mouse)
-          }
-        }
-        SessionProbe.Unbound, SessionProbe.Unknown -> {
-          // The prepared gadget is gone (typically after a reboot). Clear
-          // metadata, but never run a cleanup/bind script here.
-          log.log("gadget", "Prepared USB session $dir is absent; clearing metadata without touching USB")
-          prefs.clearSessionArtifacts()
-          gadgetBound = false
-          prepared = false
-          activeId = null
-          activeRole = null
-          deviceConnected = false
-          udcState = null
-          msg = null
-        }
-      }
-    } else if (prefs.pendingGadgetDir != null || dir != null) {
-      // Legacy or obsolete prepared metadata. It is not a reason to touch
-      // stock g1; the next detached prepare will rebuild the layout.
-      log.log("gadget", "Prepared USB metadata is obsolete or incomplete; clearing it without touching USB")
-      prefs.clearSessionArtifacts()
-      gadgetBound = false
-      prepared = false
-      activeId = null
-      activeRole = null
-      deviceConnected = false
-      udcState = null
-      msg = null
-    }
-
-    val desiredArmed = prefs.armed
-    val state = when {
-      current.state == "ERROR" && msg != null -> "ERROR"
-      desiredArmed && gadgetBound -> "ACTIVE"
-      desiredArmed -> "ARMING"
-      else -> "IDLE"
-    }
-
-    val next = Status(
+    val next = readPhysicalStatus(current.copy(
       rootAvailable = rootOk,
       supportAvailable = supportOk,
       udcList = udcs,
-      state = state,
-      activeProfileId = activeId,
-      message = msg,
-      keyboardWriterReady = root.isKeyboardWriterReady(),
-      mouseWriterReady = root.isMouseWriterReady(),
-      deviceConnected = deviceConnected,
-      udcState = udcState,
-      hostConfigurationRequestCount = hostConfigurationRequestCount,
-      activeRoleType = activeRole,
-      desiredArmed = desiredArmed,
-      gadgetBound = gadgetBound,
-      prepared = prepared,
-    )
+    ))
     statusRef.set(next)
     emit(next)
-    if (rootOk && !polling) startUdcPolling()
+    if (supportOk && !polling) startUdcPolling()
     return next
+  }
+
+  private fun readPhysicalStatus(current: Status): Status {
+    val dir = prefs.pendingGadgetDir.takeIf { prefs.pendingSharedGadget }
+      ?: prefs.activeGadgetDir.takeIf { prefs.preparedVersion == PREPARED_LAYOUT_VERSION }
+    val probe = if (current.supportAvailable && dir != null) {
+      probeSavedSession(dir) as? SessionProbe.Bound
+    } else {
+      null
+    }
+    val udcState = probe?.udcState ?: if (current.supportAvailable) pollUdcState() else null
+    val connected = probe?.udcState == "configured" && probe.devicesReady
+    val pcConnected = when (udcState) {
+      "default", "addressed", "configured", "suspended" -> true
+      "not attached" -> false
+      else -> context.registerReceiver(null, IntentFilter("android.hardware.usb.action.USB_STATE"))
+        ?.getBooleanExtra("connected", false) == true
+    }
+    if (probe != null && dir != null && (prefs.activeGadgetDir != dir ||
+      prefs.activeRoleType != probe.role || prefs.activeKeyboardDev != probe.keyboard ||
+      prefs.activeMouseDev != probe.mouse || prefs.activeMediaDev != probe.media)
+    ) {
+      prefs.setActive(
+        prefs.activeProfileId.takeIf { prefs.activeGadgetDir == dir }
+          ?: prefs.pendingProfileId ?: "recovered:$dir", probe.role, dir,
+        probe.keyboard, probe.mouse, probe.media,
+      )
+    }
+    if (connected && !current.deviceConnected) {
+      hostConfigurationRequestCount += 1
+      if (!prefs.armed) releaseHeldInputBestEffort()
+      log.log("udc", "TapDucky configured by host (cfgReq=$hostConfigurationRequestCount)")
+    } else if (!connected && current.deviceConnected) {
+      log.log("udc", "TapDucky no longer configured (state=${udcState ?: "unknown"})")
+    }
+    if (probe == null || udcState == "not attached") {
+      keyboardMayBeHeld = false
+      mouseButtonsMayBeHeld = false
+    }
+    if (current.gadgetBound && probe == null) prepareAttempted = false
+
+    val armed = prefs.armed
+    val error = armed && probe == null && current.state == "ERROR"
+    val state = when {
+      !armed && prefs.pendingSharedGadget -> "RESTORING"
+      !armed -> "IDLE"
+      error -> "ERROR"
+      probe != null -> "ACTIVE"
+      else -> "ARMING"
+    }
+    return current.copy(
+      state = state,
+      activeProfileId = prefs.activeProfileId.takeIf { probe != null },
+      message = current.message.takeIf {
+        error || (armed && probe == null) || (!armed && prefs.pendingSharedGadget)
+      },
+      keyboardWriterReady = armed && connected && probe?.keyboard != null,
+      mouseWriterReady = armed && connected && probe?.mouse != null,
+      deviceConnected = connected,
+      pcConnected = pcConnected,
+      udcState = udcState,
+      hostConfigurationRequestCount = hostConfigurationRequestCount,
+      activeRoleType = probe?.role,
+      desiredArmed = armed,
+      gadgetBound = probe != null,
+      prepared = probe != null,
+    )
   }
 
   fun checkRoot(): Boolean = root.hasRoot()
@@ -432,19 +430,12 @@ class GadgetManager(
     val refreshed = refreshAndEmitStatus()
     if (refreshed.gadgetBound) {
       setState("ACTIVE", prefs.activeProfileId ?: profile.id, null)
-      openHidWritersBestEffort(prefs.activeKeyboardDev, prefs.activeMouseDev)
       startForeground("TapDucky USB ready")
       log.log("gadget", "Armed logical session; prepared USB gadget stays bound")
       return
     }
 
-    if (hostAttachedNow() != false) {
-      setArming("Preparing USB interface…")
-      log.log("usb", "Arm accepted; USB preparation deferred until the bus is safely detached")
-      return
-    }
-
-    prepareStock(profile)
+    prepareStock(profile, allowConnected = true)
   }
 
   private fun setArming(message: String?) {
@@ -456,13 +447,6 @@ class GadgetManager(
       gadgetBound = current.gadgetBound,
       prepared = current.prepared,
     )
-    statusRef.set(next)
-    emit(next)
-  }
-
-  private fun setGadgetBound(bound: Boolean) {
-    val current = statusRef.get()
-    val next = current.copy(gadgetBound = bound, prepared = bound)
     statusRef.set(next)
     emit(next)
   }
@@ -491,14 +475,12 @@ class GadgetManager(
   }
 
   @Synchronized
-  private fun prepareStock(profile: Configfs.ParsedProfile) {
-    if (preparing) return
-    if (hostAttachedNow() != false) {
-      setArming("Preparing USB interface…")
-      return
-    }
+  private fun prepareStock(profile: Configfs.ParsedProfile, allowConnected: Boolean = false) {
+    if (preparing || !prefs.armed) return
+    setArming(null)
     preparing = true
     prepareAttempted = true
+    deferredPreparationUdc = null
     try {
       if (!checkRoot()) {
         setError("Root not available (su denied).")
@@ -509,69 +491,63 @@ class GadgetManager(
         return
       }
 
-      val snap = captureUsbSnapshot()
-      val stockBound = snap.boundGadgetsRaw.orEmpty().lineSequence()
-        .map { it.trim() }
-        .filter { it.isNotEmpty() && it.contains(':') }
-        .map { it.split(':', limit = 2) }
-        .firstOrNull { it.size == 2 }
-      var stockDir = stockBound?.getOrNull(0)?.takeIf { it.matches(Regex("[A-Za-z0-9_-]+")) }
-      var stockUdc = stockBound?.getOrNull(1)?.takeIf { udcNameRegex.matches(it) }
-      if (stockDir == null || stockUdc == null) {
-        val candidates = root.exec(
-          "ls -1 /config/usb_gadget 2>/dev/null || true",
-          timeoutSec = 3,
-        ).stdout.lineSequence().map { it.trim() }.filter { it.isNotEmpty() }.toList()
-        stockDir = candidates.firstOrNull { dir ->
-          dir.matches(Regex("[A-Za-z0-9_-]+")) &&
-            root.exec("test -d /config/usb_gadget/$dir/functions/ffs.adb", timeoutSec = 3).ok
-        }
-        if (stockUdc == null) {
-          val prop = root.exec("getprop sys.usb.controller 2>/dev/null || true", timeoutSec = 3)
-            .stdout.lineSequence().firstOrNull()?.trim()?.trim('\r')
-          stockUdc = prop?.takeIf { udcNameRegex.matches(it) && !it.startsWith("dummy_udc") }
-        }
-        if (stockUdc == null) {
-          stockUdc = root.exec("ls -1 /sys/class/udc 2>/dev/null || true", timeoutSec = 3)
-            .stdout.lineSequence().map { it.trim().trim('\r') }
-            .firstOrNull { it.isNotBlank() && udcNameRegex.matches(it) && !it.startsWith("dummy_udc") }
-        }
-      }
-      if (stockDir == null || stockUdc == null) {
-        setError("No usable Android stock USB gadget was found. Tap Arm again to retry.")
+      val inventory = root.exec(Configfs.buildStockInventoryScript(), timeoutSec = 8)
+      if (!inventory.ok) {
+        setError("Could not read Android's USB gadget layout.")
         return
       }
-
-      log.log("usb", "Preparing persistent HID interface on stock gadget $stockDir")
-      prefs.setSharedGadgetDir(stockDir)
-      val r = root.exec(Configfs.buildAttachToStockScript(profile, stockDir, stockUdc), timeoutSec = 30)
-      if (r.exitCode == Configfs.HOST_ATTACHED_REFUSED) {
-        val attached = r.stderr.contains("Unplug the USB data cable", ignoreCase = true)
-        prefs.clearSessionArtifacts()
-        if (attached) {
-          prepareAttempted = false
-          setArming("Preparing USB interface…")
-          log.log("usb", "USB preparation deferred: host attached")
-        } else {
-          val detail = r.stderr.trim().ifEmpty { r.stdout.trim() }
-          setError("USB preparation failed (exit=${r.exitCode}). $detail")
+      val pendingDir = prefs.pendingGadgetDir.takeIf { prefs.pendingSharedGadget }
+      val (stockDir, stockUdc, currentUdc) = try {
+        StockUsbDiscovery.select(inventory.stdout, profile.preferredUdc, pendingDir, prefs.sharedController)
+      } catch (e: IllegalArgumentException) {
+        setError(e.message ?: "Could not identify Android's USB gadget.")
+        return
+      }
+      val originalUdc = prefs.originalStockUdc.takeIf { pendingDir != null } ?: currentUdc
+      val stockLayout = prefs.originalStockLayout.takeIf { pendingDir != null } ?: run {
+        val snapshot = root.exec(Configfs.buildReadStockLayoutScript(stockDir), timeoutSec = 8)
+        if (!snapshot.ok || !snapshot.stdout.startsWith("mode=") ||
+          snapshot.stdout.lineSequence().none { it == "UDC=$currentUdc" }
+        ) {
+          setError("Could not save Android's current USB layout.")
+          return
         }
+        snapshot.stdout.trimEnd('\n')
+      }
+      log.log("usb", "Preparing HID interfaces on stock gadget $stockDir")
+      if (!prefs.setSharedGadgetDir(stockDir, profile.id, stockUdc, originalUdc, stockLayout)) {
+        setError("Could not save USB preparation state.")
+        return
+      }
+      val r = changeStockUsb(stockUdc, Configfs.buildAttachToStockScript(
+        profile, stockDir, stockUdc, currentUdc, usbDataMarker.path.takeIf { allowConnected },
+      ))
+      if (pendingDir == null && r.exitCode == Configfs.STOCK_BINDING_CHANGED) {
+        prefs.clearSessionArtifacts()
+      }
+      if (r.exitCode == Configfs.HOST_ATTACHED_REFUSED || r.exitCode == Configfs.SETUP_NOT_STARTED) {
+        deferredPreparationUdc = stockUdc
+        setArming("USB interface setup will start after you unplug the cable.")
+        log.log("usb", "USB preparation deferred: ${r.stderr.trim()}")
+        return
+      }
+      if (r.exitCode == Configfs.USB_DATA_RESTORE_FAILED) {
+        setError("Android did not resume USB data. Reopen TapDucky to retry restoring it.")
         return
       }
       if (!r.ok) {
         val detail = r.stderr.trim().ifEmpty { r.stdout.trim() }
-        prefs.clearUsbSnapshot()
         setError("USB preparation failed (exit=${r.exitCode}). $detail")
         return
       }
 
-      val firstHid = resolveHidDevice(r.stdout, "hid.usb0", legacyMinor = 0)
+      val firstHid = resolveHidDevice(r.stdout, "hid.usb0")
       val role = profile.roleType.lowercase(Locale.US)
       val kbdDev = firstHid.takeUnless { role == "mouse" }
       val mouseDev = when (role) {
         "mouse" -> firstHid
         "keyboard" -> null
-        else -> resolveHidDevice(r.stdout, "hid.usb1", legacyMinor = 1)
+        else -> resolveHidDevice(r.stdout, "hid.usb1")
       }
       val mediaDev = when (role) {
         "keyboard" -> null
@@ -580,78 +556,108 @@ class GadgetManager(
 
       prefs.setActive(profile.id, profile.roleType, stockDir, kbdDev, mouseDev, mediaDev)
       prefs.preparedVersion = PREPARED_LAYOUT_VERSION
-      hostConfigurationRequestCount = 0
-      lastHostLikelyConnected = false
-      setGadgetBound(true)
+      refreshAndEmitStatus()
       startForeground("TapDucky USB ready")
-      openHidWritersBestEffort(kbdDev, mouseDev)
-      setState(if (prefs.armed) "ACTIVE" else "IDLE", profile.id, null)
-      startUdcPolling()
-      log.log("gadget", "Prepared persistent HID profile: ${profile.id} (${profile.roleType})")
+      log.log("gadget", "Prepared HID profile ${profile.id} (${profile.roleType})")
     } finally {
       preparing = false
     }
   }
 
   private fun prepareFromPoll() {
-    if (preparing) return
+    if (preparing || !prefs.armed) return
     if (statusRef.get().gadgetBound) return
-    if (hostAttachedNow() != false) return
     val profile = desiredProfile ?: defaultProfile(prefs.desiredRole)
     desiredProfile = profile
-    log.log("usb", "Running deferred USB preparation after stable detach")
+    log.log("usb", "Preparing the armed USB session")
     prepareStock(profile)
   }
 
-  private fun resolveHidDevice(stdout: String, function: String, legacyMinor: Int): String {
-    val raw = stdout.lineSequence()
+  private fun resolveHidDevice(stdout: String, function: String): String? {
+    val dev = stdout.lineSequence()
       .firstOrNull { it.startsWith("$function=") }
       ?.substringAfter('=')?.trim()
-    if (raw != null && raw.matches(Regex("/dev/hidg[0-9]+"))) return raw
-    val minor = raw?.substringAfter(':')?.trim()?.toIntOrNull()?.takeIf { it >= 0 }
-    return "/dev/hidg${minor ?: legacyMinor}"
+    return hidDevicePath(dev)
   }
 
+  private fun hidDevicePath(dev: String?): String? =
+    dev?.takeIf { it.matches(Regex("[0-9]+:[0-9]+")) }
+      ?.substringAfter(':')?.toIntOrNull()?.let { "/dev/hidg$it" }
+
   fun retryOpenHidWriters() {
-    val kbdDev = prefs.activeKeyboardDev
-    val mouseDev = prefs.activeMouseDev
-    if (kbdDev.isNullOrBlank() && mouseDev.isNullOrBlank()) {
-      log.logError("hid", "Cannot retry: no active HID devices in prefs")
-      return
-    }
-    log.log("hid", "Retrying HID writer open (user-requested)")
-    openHidWritersBestEffort(kbdDev, mouseDev)
     refreshAndEmitStatus()
   }
 
+  @Synchronized
   fun deactivate() {
-    if (statusRef.get().state == "ACTIVATING") return
     prefs.armed = false
     cancelExecRef.set("*")
-    try {
-      releaseAllKeysBestEffort()
-    } catch (_: Throwable) {
-    }
     val current = statusRef.get()
+    val restoring = prefs.pendingSharedGadget
     val next = current.copy(
       desiredArmed = false,
-      state = "IDLE",
-      message = null,
+      keyboardWriterReady = false,
+      mouseWriterReady = false,
+      state = if (restoring) "RESTORING" else "IDLE",
+      message = if (restoring) "Restoring the original USB configuration…" else null,
     )
     statusRef.set(next)
     emit(next)
-    log.log("usb", "Disarmed logically; prepared USB interface remains bound")
+    releaseHeldInputBestEffort()
+    restoreStockUsb()
   }
 
+  private fun changeStockUsb(udc: String, operation: String): RootShell.ExecResult = root.exec(
+    Configfs.buildStockUsbTransaction(udc, operation), timeoutSec = 45,
+  )
+
+  private fun resumeUsbDataIfNeeded() {
+    if (usbDataMarker.exists()) {
+      val result = root.exec(Configfs.buildResumeUsbDataScript(usbDataMarker.path), timeoutSec = 15)
+      if (!result.ok) log.logError("usb", "Could not resume Android USB data: ${result.stderr.trim()}")
+    }
+  }
+
+  private fun restoreStockUsb() {
+    val dir = prefs.pendingGadgetDir?.takeIf { prefs.pendingSharedGadget } ?: return
+    if (prefs.armed) return
+    restoreAttempted = true
+    restoreDeferred = false
+    val udc = prefs.sharedController ?: readActiveUdcName() ?: readAnyUdcName()
+    val result = udc?.let {
+      val original = prefs.originalStockUdc ?: it
+      val restored = changeStockUsb(it, Configfs.buildRestoreStockScript(dir, original, usbDataMarker.path))
+      val layout = prefs.originalStockLayout
+      if (restored.ok && layout != null) {
+        root.exec(Configfs.buildVerifyStockLayoutScript(dir, layout), timeoutSec = 16)
+      } else {
+        restored
+      }
+    }
+    if (result?.ok == true) {
+      prefs.clearSessionArtifacts()
+      stopForeground()
+      log.log("usb", "Restored the original stock USB configuration")
+    } else {
+      restoreDeferred = result == null || result.exitCode == Configfs.HOST_ATTACHED_REFUSED
+      val detail = if (restoreDeferred) {
+        "USB restoration will finish after you unplug the cable."
+      } else {
+        "USB restoration incomplete (exit=${result?.exitCode}). ${result?.stderr?.trim().orEmpty()}"
+      }
+      setState("RESTORING", null, detail)
+      log.logError("usb", detail)
+    }
+    refreshAndEmitStatus()
+  }
+
+  @Synchronized
   fun panicStop() {
     // Emergency brake for reports only. It must never touch the UDC or the
     // stock USB configuration; the session stays armed until the user disarms.
     cancelExecRef.set("*")
-    try {
-      releaseAllKeysBestEffort()
-    } catch (_: Throwable) {
-    }
-    log.log("usb", "Panic stop released keys; session armed state unchanged")
+    releaseHeldInputBestEffort()
+    log.log("usb", "Panic stop requested")
   }
 
   private fun readActiveUdcName(): String? {
@@ -670,90 +676,27 @@ class GadgetManager(
   private fun readAnyUdcName(): String? {
     val prop = root.exec("getprop sys.usb.controller 2>/dev/null || true", timeoutSec = 3)
       .stdout.lineSequence().firstOrNull()?.trim()?.trim('\r')
-    if (!prop.isNullOrBlank() && udcNameRegex.matches(prop) && !prop.startsWith("dummy_udc")) {
-      return prop
-    }
     val list = root.exec("ls -1 /sys/class/udc 2>/dev/null || true", timeoutSec = 3).stdout
-    return list.lineSequence()
+    val controllers = list.lineSequence()
       .map { it.trim().trim('\r') }
-      .firstOrNull { it.isNotBlank() && udcNameRegex.matches(it) && !it.startsWith("dummy_udc") }
-  }
-
-  private fun readUdcStateNow(): String? {
-    val udc = readActiveUdcName() ?: readAnyUdcName() ?: return null
-    val out = root.exec("cat /sys/class/udc/$udc/state 2>/dev/null || true", timeoutSec = 3).stdout
-    return out.lineSequence().firstOrNull()?.trim()?.trim('\r')?.takeIf { it.isNotBlank() }
+      .filter { udcNameRegex.matches(it) && !it.startsWith("dummy_udc") }
+      .toList()
+    return controllers.firstOrNull { it == prop } ?: controllers.firstOrNull()
   }
 
   /**
    * null means "cannot prove the host is detached". Callers must treat null
    * as unsafe and avoid touching the UDC or USB properties.
    */
-  private fun hostAttachedNow(): Boolean? {
-    val raw = readUdcStateNow() ?: return null
-    val state = raw.lowercase(Locale.US).replace('-', ' ').replace('_', ' ')
-    if (state.contains("not attached") || state.contains("disconnected") ||
-      state.contains("unbound") || state.contains("disabled") ||
-      state.contains("not connected")
-    ) {
-      return false
-    }
-    return true
+  private fun hostAttachedNow(udcState: String? = pollUdcState()): Boolean? {
+    val usb = context.registerReceiver(null, IntentFilter("android.hardware.usb.action.USB_STATE"))
+    if (usb?.getBooleanExtra("connected", false) == true) return true
+    val battery = context.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+    if ((battery?.getIntExtra(BatteryManager.EXTRA_PLUGGED, 0) ?: 0) and
+      BatteryManager.BATTERY_PLUGGED_USB != 0
+    ) return true
+    return udcState?.let { it != "not attached" }
   }
-
-  private fun setNotice(message: String) {
-    val current = statusRef.get()
-    if (current.state == "ACTIVATING") return
-    val next = current.copy(message = message)
-    statusRef.set(next)
-    emit(next)
-    log.log("usb", message)
-  }
-
-  @Synchronized
-  private fun stopUsbSession(message: String, reason: String) {
-    if (hostAttachedNow() != false) {
-      setNotice("Unplug the USB data cable before changing the USB session.")
-      log.log("usb", "USB teardown blocked: host attached or state unknown")
-      return
-    }
-    val gadgetDir = prefs.activeGadgetDir ?: prefs.pendingGadgetDir ?: return
-    setState("ACTIVATING", null, message)
-    stopUdcPolling()
-    try {
-      releaseAllKeysBestEffort()
-    } catch (_: Throwable) {
-    }
-    closeHidWritersBestEffort()
-    stopForeground()
-    hostConfigurationRequestCount = 0
-    lastHostLikelyConnected = false
-    if (recoverUsbSession(gadgetDir, reason)) {
-      setState("IDLE", null, null)
-    } else {
-      setError("USB recovery incomplete. The previous mode is saved. Retry Panic Stop or Arm Session.")
-    }
-  }
-
-  private fun recoverUsbSession(gadgetDir: String, reason: String, restore: Boolean = true): Boolean {
-    if (hostAttachedNow() != false) {
-      log.log("usb", "USB recovery deferred: unplug the USB data cable first ($reason)")
-      return false
-    }
-    val shared = prefs.pendingSharedGadget && gadgetDir == prefs.pendingGadgetDir
-    val cleanup = root.exec(Configfs.buildUnbindAndCleanupScript(gadgetDir, shared), timeoutSec = 12)
-    if (!cleanup.ok) {
-      log.logError("gadget", "Gadget cleanup failed ($reason): ${cleanup.stderr.trim()}")
-      return false
-    }
-    if (restore && !restoreUsbSnapshotBestEffort(reason)) return false
-    prefs.clearActive()
-    prefs.clearUsbSnapshot()
-    return true
-  }
-
-  private fun recoveryHint(recovered: Boolean): String =
-    if (recovered) "" else " USB recovery is incomplete. Retry Panic Stop or Arm Session."
 
   fun testMouseMove(dx: Int, dy: Int, wheel: Int, buttons: Int) {
     requireReportsAllowed()
@@ -897,7 +840,8 @@ class GadgetManager(
 
   private fun writeHidReport(path: String, bytes: ByteArray): Boolean {
     val hexEsc = toPrintfEsc(bytes)
-    val script = "printf '$hexEsc' > ${shQuote(path)}"
+    val quotedPath = shQuote(path)
+    val script = "test -c $quotedPath && printf '$hexEsc' > $quotedPath"
     var attempt = 0
     while (attempt < 3) {
       val r = root.exec(script, timeoutSec = 5)
@@ -1004,149 +948,64 @@ class GadgetManager(
   }
 
   private fun pollUdcState(): String? {
-    val safeDir = (prefs.activeGadgetDir ?: "")
-      .replace("\"", "")
-      .replace("'", "")
-      .takeIf { it.matches(Regex("[A-Za-z0-9._-]+")) }
-      ?: ""
+    val pendingController = prefs.sharedController.takeIf { prefs.pendingSharedGadget }
+    val knownController = pendingController ?: deferredPreparationUdc.takeIf { prefs.armed }
+    val gadgetDir = prefs.pendingGadgetDir.takeIf { prefs.pendingSharedGadget } ?: prefs.activeGadgetDir
     val script = """
-      CFGBASE="/config/usb_gadget"
-      [ -d "${'$'}CFGBASE" ] || CFGBASE="/sys/kernel/config/usb_gadget"
-
-      G=""
-      if [ -n "${safeDir}" ]; then
-        G="${'$'}CFGBASE/${safeDir}"
+      UDC_NAME=${shQuote(knownController?.takeIf { udcNameRegex.matches(it) }.orEmpty())}
+      GADGET=${shQuote(gadgetDir?.takeIf { it.matches(Regex("[A-Za-z0-9._-]+")) }.orEmpty())}
+      if [ -z "${'$'}UDC_NAME" ] && [ -n "${'$'}GADGET" ]; then
+        for base in /config/usb_gadget /sys/kernel/config/usb_gadget; do
+          UDC_NAME=${'$'}(cat "${'$'}base/${'$'}GADGET/UDC" 2>/dev/null)
+          [ -z "${'$'}UDC_NAME" ] || break
+        done
       fi
-      UDC_NAME=""
-      if [ -n "${'$'}G" ] && [ -f "${'$'}G/UDC" ]; then
-        UDC_NAME=${'$'}(cat "${'$'}G/UDC" 2>/dev/null | tr -d '\r')
+      if [ -n "${'$'}UDC_NAME" ]; then
+        case "${'$'}UDC_NAME" in *[!A-Za-z0-9._-]*) exit 1 ;; esac
+        cat "/sys/class/udc/${'$'}UDC_NAME/state" 2>/dev/null
+        exit ${'$'}?
       fi
-      if [ -z "${'$'}UDC_NAME" ]; then
-        UDC_NAME=${'$'}(getprop sys.usb.controller 2>/dev/null | tr -d '\r')
-      fi
-      if [ -z "${'$'}UDC_NAME" ]; then
-        UDC_NAME=${'$'}(ls -1 /sys/class/udc 2>/dev/null | head -n 1 | tr -d '\r')
-      fi
-      if [ -z "${'$'}UDC_NAME" ]; then
-        exit 1
-      fi
-
-      if [ -f "/sys/class/udc/${'$'}UDC_NAME/state" ]; then
-        cat "/sys/class/udc/${'$'}UDC_NAME/state" 2>/dev/null | tr -d '\r'
-      else
-        echo "unknown"
-      fi
+      SYS_UDC=${'$'}(getprop sys.usb.controller 2>/dev/null)
+      case "${'$'}SYS_UDC" in *[!A-Za-z0-9._-]*) SYS_UDC="" ;; esac
+      for candidate in "/sys/class/udc/${'$'}SYS_UDC" /sys/class/udc/*; do
+        case "${'$'}{candidate##*/}" in dummy_udc*) continue ;; esac
+        [ -f "${'$'}candidate/state" ] || continue
+        cat "${'$'}candidate/state" 2>/dev/null
+        exit ${'$'}?
+      done
+      exit 1
     """.trimIndent()
     val r = root.exec(script, timeoutSec = 3)
-    return if (r.ok) r.stdout.trim().takeIf { it.isNotBlank() } else null
+    return if (r.ok) r.stdout.trim().lowercase(Locale.US).ifEmpty { null } else null
   }
 
   private fun startUdcPolling() {
-    stopUdcPolling()
     polling = true
-    pollingRunnable = object : Runnable {
-      override fun run() {
-        try {
-          val udcState = pollUdcState()
-          val isConnected = isLikelyHostPresent(udcState)
-          if (isConnected && !lastHostLikelyConnected) {
-            hostConfigurationRequestCount += 1
-          }
-          val shouldEmit = udcState != lastUdcState || isConnected != lastHostLikelyConnected
-          if (shouldEmit) {
-            val current = statusRef.get()
-            val next = current.copy(
-              deviceConnected = isConnected,
-              udcState = udcState,
-              hostConfigurationRequestCount = hostConfigurationRequestCount,
-            )
-            statusRef.set(next)
-            emit(next)
-            if (isConnected) {
-              log.log("udc", "Host connected (state: ${udcState ?: "unknown"}, cfgReq=$hostConfigurationRequestCount)")
-            } else {
-              log.log("udc", "Host disconnected (state: ${udcState ?: "unknown"})")
-            }
-          }
-
-          val current = statusRef.get()
-          if (!isConnected && prefs.armed && !current.gadgetBound &&
-            !preparing && !prepareAttempted
-          ) {
-            lifecycleExecutor.execute { prepareFromPoll() }
-          }
-
-          if (isConnected && !lastHostLikelyConnected) {
-            // Android may have re-bound g1 and recreated /dev/hidgN on plug.
-            main.post { refreshAndEmitStatus() }
-          } else if (!isConnected && lastHostLikelyConnected) {
-            closeHidWritersBestEffort()
-          }
-
-          lastUdcState = udcState
-          lastHostLikelyConnected = isConnected
-        } catch (t: Throwable) {
-          log.logError("udc", "Polling failed: ${t.message}")
-        }
-        udcStatePoller.postDelayed(this, 2000)
+    lifecycleExecutor.scheduleWithFixedDelay({
+      try {
+        pollUsbSession()
+      } catch (t: Throwable) {
+        log.logError("udc", "Polling failed: ${t.message}")
       }
+    }, 0, 2, java.util.concurrent.TimeUnit.SECONDS)
+  }
+
+  @Synchronized
+  private fun pollUsbSession() {
+    val current = statusRef.get()
+    val next = readPhysicalStatus(current)
+    if (next != current) {
+      statusRef.set(next)
+      emit(next)
     }
-    udcStatePoller.post(pollingRunnable!!)
-    log.log("udc", "Started UDC state polling")
-  }
-
-  private fun stopUdcPolling() {
-    pollingRunnable?.let { udcStatePoller.removeCallbacks(it) }
-    pollingRunnable = null
-    polling = false
-    lastUdcState = null
-    lastHostLikelyConnected = false
-  }
-
-  private fun isLikelyHostPresent(udcState: String?): Boolean {
-    val s = udcState?.trim()?.lowercase(Locale.US) ?: return false
-    if (s.isEmpty()) return false
-    if (s.contains("not attached") ||
-      s.contains("disconnected") ||
-      s.contains("unbound") ||
-      s.contains("disabled") ||
-      s.contains("not connected")
+    if (next.supportAvailable && next.desiredArmed && !current.gadgetBound && !next.gadgetBound &&
+      (!prepareAttempted || (deferredPreparationUdc != null && hostAttachedNow(next.udcState) == false))
     ) {
-      return false
-    }
-    if (s.contains("configured")) return true
-    if (s.contains("connected")) return true
-    if (s.contains("addressed")) return true
-    if (s.contains("default")) return true
-    if (s.contains("powered")) return true
-    if (s.contains("suspended")) return true
-    if (s.contains("active")) return true
-    return false
-  }
-
-  private fun openHidWritersBestEffort(kbdDev: String?, mouseDev: String?) {
-    try {
-      val rr = root.openHidWriters(kbdDev, mouseDev, timeoutSec = 6)
-      if (rr.ok) {
-        log.log(
-          "hid",
-          "Persistent HID writers ready: kbd=${root.isKeyboardWriterReady()} mouse=${root.isMouseWriterReady()}"
-        )
-      } else {
-        log.logError(
-          "hid",
-          "Failed to open persistent HID writers (exit=${rr.exitCode}). Falling back to per-write opens."
-        )
-      }
-    } catch (t: Throwable) {
-      log.logError("hid", "openHidWriters failed: ${t.message}")
-    }
-  }
-
-  private fun closeHidWritersBestEffort() {
-    try {
-      root.closeHidWriters(timeoutSec = 4)
-    } catch (_: Throwable) {
+      prepareFromPoll()
+    } else if (next.supportAvailable && !next.desiredArmed && prefs.pendingSharedGadget &&
+      (!restoreAttempted || (restoreDeferred && hostAttachedNow(next.udcState) == false))
+    ) {
+      restoreStockUsb()
     }
   }
 
@@ -1264,10 +1123,7 @@ class GadgetManager(
   }
 
   fun isHostConnected(): Boolean {
-    val current = statusRef.get()
-    val udc = current.udcState?.trim()?.lowercase(Locale.US)
-    val configured = udc?.contains("configured") == true
-    return current.deviceConnected || configured
+    return statusRef.get().deviceConnected
   }
 
   /**
@@ -1277,8 +1133,7 @@ class GadgetManager(
   fun isHostAttached(): Boolean = hostAttachedNow() != false
 
   fun isUdcConfigured(): Boolean {
-    val udc = statusRef.get().udcState?.trim()?.lowercase(Locale.US)
-    return udc?.contains("configured") == true
+    return statusRef.get().deviceConnected
   }
 
   fun isKeyboardWriterReady(): Boolean = statusRef.get().keyboardWriterReady
@@ -1288,8 +1143,12 @@ class GadgetManager(
   fun isActive(): Boolean = statusRef.get().gadgetBound
 
   private fun requireReportsAllowed() {
-    if (!prefs.armed || !statusRef.get().gadgetBound) {
+    if (!prefs.armed) {
       throw HidWriteException("SESSION_DISARMED", "Session is not armed")
+    }
+    val status = statusRef.get()
+    if (!status.gadgetBound) {
+      throw HidWriteException("HID_NOT_READY", status.message ?: "USB HID is still being prepared")
     }
   }
 
@@ -1317,19 +1176,32 @@ class GadgetManager(
     return predicate()
   }
 
-  private fun releaseAllKeysBestEffort() {
-    val path = prefs.activeKeyboardDev ?: return
-    val up = keyboardReport(0x00, 0x00)
+  private fun releaseHeldInputBestEffort() {
+    if (!keyboardMayBeHeld && !mouseButtonsMayBeHeld) return
     try {
-      writeKeyboardReportsWithDelays(
-        path,
-        reports = listOf(up, up, up),
-        delaysUs = listOf(0, 0)
-      )
-      log.log("kbd", "Sent all-keys-up before teardown")
-    } catch (t: Throwable) {
-      log.logError("kbd", "Failed to send all-keys-up: ${t.message}")
+      val dir = prefs.activeGadgetDir ?: return
+      val probe = probeSavedSession(dir) as? SessionProbe.Bound ?: return
+      if (probe.udcState != "configured" || !probe.devicesReady) return
+      val udc = readActiveUdcName() ?: return
+      if (keyboardMayBeHeld) {
+        keyboardMayBeHeld = !sendReleaseReport(udc, probe.keyboard, keyboardReport(0, 0))
+      }
+      if (mouseButtonsMayBeHeld) {
+        mouseButtonsMayBeHeld = !sendReleaseReport(udc, probe.mouse, byteArrayOf(1, 0, 0, 0, 0))
+      }
+    } catch (t: Exception) {
+      log.logError("hid", "Could not release held input: ${t.message}")
     }
+  }
+
+  private fun sendReleaseReport(udc: String, path: String?, bytes: ByteArray): Boolean {
+    if (path == null) return true
+    val quotedPath = shQuote(path)
+    return root.exec(
+      "[ \"\$(cat /sys/class/udc/$udc/state)\" = configured ] && [ -c $quotedPath ] && " +
+        "printf '${toPrintfEsc(bytes)}' | dd of=$quotedPath conv=nocreat,notrunc status=none",
+      timeoutSec = 2,
+    ).ok
   }
 
   private fun writeKeyboardTap(
@@ -1582,13 +1454,15 @@ class GadgetManager(
     }
   }
 
+  @Synchronized
   private fun writeKeyboardReportsWithDelays(
     path: String,
     reports: List<ByteArray>,
     delaysUs: List<Int>
   ) {
     if (reports.isEmpty()) return
-    val useDirect = root.isKeyboardWriterReady()
+    requireReportsAllowed()
+    if (reports.any { report -> report.any { it != 0.toByte() } }) keyboardMayBeHeld = true
     val usleepSnippet = """
       USLP=""
       if command -v toybox >/dev/null 2>&1 && toybox usleep 1 >/dev/null 2>&1; then
@@ -1620,24 +1494,23 @@ class GadgetManager(
       }
     }
 
-    val openLocal = if (useDirect) "" else "exec $HID_KBD_FD> \"${'$'}P\""
-    val closeLocal = if (useDirect) "" else "(exec $HID_KBD_FD>&-) 2>/dev/null || true"
     val script = """
       set -e
       P=${shQuote(path)}
+      [ -c "${'$'}P" ]
       $usleepSnippet
-      $openLocal
+      exec $HID_KBD_FD> "${'$'}P"
 
       $writes
 
-      $closeLocal
     """.trimIndent()
 
     var attempt = 0
     var lastErr: String? = null
     while (attempt < 3) {
-      val r = if (useDirect) root.execDirect(script, timeoutSec = 8) else root.exec(script, timeoutSec = 8)
+      val r = root.exec(script, timeoutSec = 8)
       if (r.ok) {
+        keyboardMayBeHeld = reports.last().any { it != 0.toByte() }
         recordWriteSuccess()
         return
       }
@@ -1658,22 +1531,20 @@ class GadgetManager(
     )
   }
 
+  @Synchronized
   private fun writeMouseReport(path: String, bytes: ByteArray) {
-    if (root.isMouseWriterReady()) {
-      try {
-        root.writeMouseFast(bytes)
-        return
-      } catch (t: Throwable) {
-        log.logError("hid", "Mouse fast-writer failed; fallback to slow path: ${t.message}")
-      }
-    }
+    requireReportsAllowed()
+    val buttonsHeld = bytes[1] != 0.toByte()
+    if (buttonsHeld) mouseButtonsMayBeHeld = true
     val hexEsc = toPrintfEsc(bytes)
-    val script = "printf '$hexEsc' > ${shQuote(path)}"
+    val quotedPath = shQuote(path)
+    val script = "test -c $quotedPath && printf '$hexEsc' > $quotedPath"
     var attempt = 0
     var lastErr: String? = null
     while (attempt < 3) {
       val r = root.exec(script, timeoutSec = 5)
       if (r.ok) {
+        mouseButtonsMayBeHeld = buttonsHeld
         recordWriteSuccess()
         return
       }
@@ -1718,6 +1589,8 @@ class GadgetManager(
       val keyboard: String?,
       val mouse: String?,
       val media: String?,
+      val udcState: String?,
+      val devicesReady: Boolean,
     ) : SessionProbe
     data object Unbound : SessionProbe
     data object Unknown : SessionProbe
@@ -1725,51 +1598,37 @@ class GadgetManager(
 
   private fun probeSavedSession(gadgetDir: String): SessionProbe {
     val shared = prefs.pendingSharedGadget && gadgetDir == prefs.pendingGadgetDir
-    if (!gadgetDir.matches(Regex("[A-Za-z0-9_-]+")) ||
+    if (!gadgetDir.matches(Regex("[A-Za-z0-9._-]+")) ||
       (!shared && !gadgetDir.startsWith("gadgetfs_"))) return SessionProbe.Unknown
     val r = root.exec(Configfs.buildProbeSessionScript(gadgetDir, shared), timeoutSec = 5)
     if (!r.ok) return SessionProbe.Unknown
     val lines = r.stdout.lineSequence().map { it.trim() }.filter { it.isNotEmpty() }.toList()
     if (lines == listOf("unbound")) return SessionProbe.Unbound
     if (lines.firstOrNull() != "bound") return SessionProbe.Unknown
-    // Stock USB can remain bound after its TapDucky functions have been removed.
-    if (shared && lines.size == 1) return SessionProbe.Unbound
+    val udcState = lines.getOrNull(1)?.takeIf { it.startsWith("state=") }
+      ?.substringAfter('=')?.trim()?.lowercase(Locale.US)?.ifEmpty { null }
     val prefix = if (shared) "hid.tapducky" else "hid.usb"
-    val functions = lines.drop(1).map { it.split('=', ':', limit = 4) }
-    val first = functions.firstOrNull { it.firstOrNull() == "${prefix}0" }
-      ?: return SessionProbe.Unknown
-    val second = functions.firstOrNull { it.firstOrNull() == "${prefix}1" }
-    val third = functions.firstOrNull { it.firstOrNull() == "${prefix}2" }
-    val role = when {
-      first.getOrNull(1) == "1" && second != null -> "composite"
-      first.getOrNull(1) == "1" -> "keyboard"
-      first.getOrNull(1) == "2" || first.getOrNull(1) == "0" -> "mouse"
+    val functions = lines.drop(2).associate { line -> line.substringBefore('=') to line.substringAfter('=') }
+    val devicesReady = functions["devices_ready"] == "1"
+    val first = functions["${prefix}0"] ?: return SessionProbe.Unbound
+    val second = functions["${prefix}1"]
+    val firstDev = hidDevicePath(first.substringAfter(':')) ?: return SessionProbe.Unknown
+    val secondDev = hidDevicePath(second?.substringAfter(':'))
+    val thirdDev = hidDevicePath(functions["${prefix}2"]?.substringAfter(':'))
+    val binding = when (first.substringBefore(':')) {
+      "1" -> if (second == null) {
+        SessionProbe.Bound("keyboard", firstDev, null, null, udcState, devicesReady)
+      } else {
+        if (secondDev == null) return SessionProbe.Unknown
+        val media = thirdDev ?: secondDev.takeIf { second.substringBefore(':') == "0" }
+        SessionProbe.Bound("composite", firstDev, secondDev, media, udcState, devicesReady)
+      }
+      "0", "2" -> SessionProbe.Bound("mouse", null, firstDev, firstDev, udcState, devicesReady)
       else -> return SessionProbe.Unknown
     }
-    val saved = prefs.activeGadgetDir == gadgetDir && prefs.activeRoleType == role
-    fun endpoint(fields: List<String>?, fallback: String?): String? {
-      val dev = fields?.getOrNull(2)?.trim()
-      if (dev != null && dev.matches(Regex("/dev/hidg[0-9]+"))) return dev
-      return fallback?.takeIf { saved && it.matches(Regex("/dev/hidg[0-9]+")) }
-    }
-    val keyboardFields = if (first.getOrNull(1) == "1") first else null
-    val mouseFields = when (role) {
-      "mouse" -> first
-      "composite" -> second
-      else -> null
-    }
-    val mediaFields = when (role) {
-      "mouse" -> first
-      "composite" -> third?.takeIf { it.getOrNull(1) == "0" }
-        ?: second?.takeIf { it.getOrNull(1) == "0" }
-      else -> null
-    }
-    return SessionProbe.Bound(
-      role,
-      endpoint(keyboardFields, prefs.activeKeyboardDev),
-      endpoint(mouseFields, prefs.activeMouseDev),
-      endpoint(mediaFields, prefs.activeMediaDev.takeIf { mediaFields != null }),
-    )
+    val expectedRole = prefs.activeRoleType.takeIf { prefs.activeGadgetDir == gadgetDir }
+      ?: prefs.desiredRole.takeIf { shared }
+    return if (expectedRole == null || binding.role == expectedRole.lowercase(Locale.US)) binding else SessionProbe.Unknown
   }
 
   private fun startForeground(title: String) {
@@ -1797,8 +1656,6 @@ class GadgetManager(
       activeProfileId = activeProfileId,
       activeRoleType = current.activeRoleType ?: prefs.activeRoleType,
       message = message,
-      keyboardWriterReady = root.isKeyboardWriterReady(),
-      mouseWriterReady = root.isMouseWriterReady(),
       hostConfigurationRequestCount = hostConfigurationRequestCount,
       desiredArmed = prefs.armed,
       gadgetBound = current.gadgetBound,
@@ -1813,8 +1670,6 @@ class GadgetManager(
     val next = current.copy(
       state = "ERROR",
       message = message,
-      keyboardWriterReady = root.isKeyboardWriterReady(),
-      mouseWriterReady = root.isMouseWriterReady(),
       hostConfigurationRequestCount = hostConfigurationRequestCount,
       desiredArmed = prefs.armed,
       gadgetBound = current.gadgetBound,
@@ -1823,166 +1678,6 @@ class GadgetManager(
     statusRef.set(next)
     emit(next)
     log.logError("gadget", message)
-  }
-
-  private data class UsbSnapshot(
-    val sysUsbConfig: String?,
-    val sysUsbState: String?,
-    val sysUsbConfigfs: String?,
-    val persistSysUsbConfig: String?,
-    val boundGadgetsRaw: String?,
-  )
-
-  private fun captureUsbSnapshot(): UsbSnapshot {
-    fun getProp(name: String): String? {
-      val r = root.exec("getprop $name 2>/dev/null || true", timeoutSec = 5)
-      val v = r.stdout.lineSequence().firstOrNull()?.trim()?.trim('\r')
-      return v?.takeIf { it.isNotBlank() }
-    }
-    val bound = root.exec(buildListBoundGadgetsScript(), timeoutSec = 8).stdout
-      .lineSequence()
-      .map { it.trim().trim('\r') }
-      .filter { it.isNotBlank() }
-      .joinToString("\n")
-      .ifBlank { null }
-    val snap = UsbSnapshot(
-      sysUsbConfig = getProp("sys.usb.config"),
-      sysUsbState = getProp("sys.usb.state"),
-      sysUsbConfigfs = getProp("sys.usb.configfs"),
-      persistSysUsbConfig = getProp("persist.sys.usb.config"),
-      boundGadgetsRaw = bound,
-    )
-    log.log(
-      "usb",
-      "Snapshot sys.usb.config=${snap.sysUsbConfig ?: "?"} sys.usb.state=${snap.sysUsbState ?: "?"} " +
-        "sys.usb.configfs=${snap.sysUsbConfigfs ?: "?"} persist.sys.usb.config=${snap.persistSysUsbConfig ?: "?"} " +
-        "bound=${if (snap.boundGadgetsRaw.isNullOrBlank()) "none" else "yes"}"
-    )
-    return snap
-  }
-
-  private fun buildListBoundGadgetsScript(): String {
-    return """
-      CFGBASE="/config/usb_gadget"
-      if [ ! -d "${'$'}CFGBASE" ]; then
-        CFGBASE="/sys/kernel/config/usb_gadget"
-      fi
-      if [ ! -d "${'$'}CFGBASE" ]; then
-        exit 0
-      fi
-      for g in "${'$'}CFGBASE"/*; do
-        [ -d "${'$'}g" ] || continue
-        if [ -f "${'$'}g/UDC" ]; then
-          udc=${'$'}(cat "${'$'}g/UDC" 2>/dev/null | tr -d '\r')
-          if [ -n "${'$'}udc" ]; then
-            echo "${'$'}(basename "${'$'}g"):${'$'}udc"
-          fi
-        fi
-      done
-      exit 0
-    """.trimIndent()
-  }
-
-  private fun restoreUsbSnapshotBestEffort(reason: String): Boolean {
-    val prevConfig = prefs.prevSysUsbConfig?.trim()?.takeIf { it.isNotEmpty() }
-    val prevConfigfs = prefs.prevSysUsbConfigfs?.trim()?.takeIf { it.isNotEmpty() }
-    val prevPersist = prefs.prevPersistSysUsbConfig?.trim()?.takeIf { it.isNotEmpty() }
-    val prevBound = prefs.prevBoundGadgets?.trim()?.takeIf { it.isNotEmpty() }
-    if (prevConfig == null && prevConfigfs == null && prevPersist == null && prevBound == null) {
-      log.log("usb", "No snapshot to restore ($reason)")
-      return true
-    }
-    log.log("usb", "Restoring USB snapshot ($reason) prevConfig=${prevConfig ?: "?"}")
-    val script = buildRestoreUsbScript(prevConfig, prevConfigfs, prevPersist, prevBound)
-    val r = root.exec(script, timeoutSec = 20)
-    if (!r.ok) {
-      val detail = r.stderr.trim().ifEmpty { "exit=${r.exitCode}" }
-      log.logError("usb", "USB restore incomplete: $detail")
-    } else {
-      log.log("usb", "USB restore script completed")
-    }
-    return r.ok
-  }
-
-  private fun buildRestoreUsbScript(
-    prevConfig: String?,
-    prevConfigfs: String?,
-    prevPersist: String?,
-    prevBoundRaw: String?
-  ): String {
-    val cfg = prevConfig ?: ""
-    val cfgfs = prevConfigfs ?: ""
-    val pcfg = prevPersist ?: ""
-    val boundLines = (prevBoundRaw ?: "")
-      .lineSequence()
-      .map { it.trim() }
-      .filter { it.isNotEmpty() }
-      .toList()
-    val rebindBlock = if (boundLines.isNotEmpty()) {
-      val entries = boundLines.joinToString("\n") { it }
-      """
-        CFGBASE="/config/usb_gadget"
-        if [ ! -d "${'$'}CFGBASE" ]; then
-          CFGBASE="/sys/kernel/config/usb_gadget"
-        fi
-        while IFS=: read -r g u; do
-          udc_file="${'$'}CFGBASE/${'$'}g/UDC"
-          i=0
-          if [ -f "${'$'}udc_file" ]; then
-            while [ "${'$'}(cat "${'$'}udc_file" 2>/dev/null)" != "${'$'}u" ] && [ "${'$'}i" -lt 30 ]; do
-              (printf '%s\n' "${'$'}u" > "${'$'}udc_file") 2>/dev/null || true
-              i=${'$'}((i+1))
-              sleep 0.1
-            done
-          fi
-          if [ "${'$'}(cat "${'$'}udc_file" 2>/dev/null)" != "${'$'}u" ]; then
-            echo "Could not restore USB binding ${'$'}g to ${'$'}u" >&2
-            restore_failed=1
-          fi
-        done <<'EOF_BOUND'
-        $entries
-        EOF_BOUND
-      """.trimIndent()
-    } else {
-      "true"
-    }
-    return """
-      set -e
-
-      PREV_CFG=${shQuote(cfg)}
-      PREV_CFGFS=${shQuote(cfgfs)}
-      PREV_PERSIST=${shQuote(pcfg)}
-      restore_failed=0
-
-      restore_prop() {
-        if [ -n "${'$'}2" ] && [ "${'$'}(getprop "${'$'}1")" != "${'$'}2" ]; then
-          if ! setprop "${'$'}1" "${'$'}2" || [ "${'$'}(getprop "${'$'}1")" != "${'$'}2" ]; then
-            echo "Could not restore ${'$'}1 to ${'$'}2" >&2
-            restore_failed=1
-          fi
-        fi
-      }
-
-      restore_prop sys.usb.configfs "${'$'}PREV_CFGFS"
-      restore_prop persist.sys.usb.config "${'$'}PREV_PERSIST"
-      restore_prop sys.usb.config "${'$'}PREV_CFG"
-
-      $rebindBlock
-
-      if [ -n "${'$'}PREV_CFG" ]; then
-        i=0
-        while [ "${'$'}(getprop sys.usb.state)" != "${'$'}PREV_CFG" ] && [ "${'$'}i" -lt 80 ]; do
-          sleep 0.1
-          i=${'$'}((i+1))
-        done
-        if [ "${'$'}(getprop sys.usb.state)" != "${'$'}PREV_CFG" ]; then
-          echo "USB state did not return to ${'$'}PREV_CFG" >&2
-          restore_failed=1
-        fi
-      fi
-
-      exit "${'$'}restore_failed"
-    """.trimIndent()
   }
 
   private fun kernelVersionBase(unameR: String): String {
@@ -2386,7 +2081,7 @@ class GadgetManager(
       fi
       exit 1
     """.trimIndent()
-    val ok = root.execDirect(script, timeoutSec = 3).ok
+    val ok = root.exec(script, timeoutSec = 3).ok
     cachedUsleepSupport = ok
     return ok
   }
@@ -2414,7 +2109,7 @@ class GadgetManager(
       echo "USLP=${'$'}USLP"
     """.trimIndent()
     val started = System.currentTimeMillis()
-    val r = root.execDirect(script, timeoutSec = 6)
+    val r = root.exec(script, timeoutSec = 6)
     val elapsedMs = (System.currentTimeMillis() - started).coerceAtLeast(1L)
     if (!r.ok) return 10_000
     val perIterMs = elapsedMs.toDouble() / iterations.toDouble()

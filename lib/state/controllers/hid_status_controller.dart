@@ -20,6 +20,8 @@ class HidStatus {
     this.hostConfigurationRequestCount = 0,
     this.gadgetBound = false,
     this.prepared = false,
+    this.usbRestoring = false,
+    this.pcConnected = false,
   });
 
   final bool isInitializing;
@@ -37,6 +39,8 @@ class HidStatus {
   final int hostConfigurationRequestCount;
   final bool gadgetBound;
   final bool prepared;
+  final bool usbRestoring;
+  final bool pcConnected;
 
   HidStatus copyWith({
     bool? isInitializing,
@@ -54,6 +58,8 @@ class HidStatus {
     int? hostConfigurationRequestCount,
     bool? gadgetBound,
     bool? prepared,
+    bool? usbRestoring,
+    bool? pcConnected,
   }) {
     return HidStatus(
       isInitializing: isInitializing ?? this.isInitializing,
@@ -71,6 +77,8 @@ class HidStatus {
       hostConfigurationRequestCount: hostConfigurationRequestCount ?? this.hostConfigurationRequestCount,
       gadgetBound: gadgetBound ?? this.gadgetBound,
       prepared: prepared ?? this.prepared,
+      usbRestoring: usbRestoring ?? this.usbRestoring,
+      pcConnected: pcConnected ?? this.pcConnected,
     );
   }
 
@@ -83,6 +91,7 @@ class HidStatus {
       rootAvailable: gs.rootAvailable,
       hidSupported: gs.supportAvailable,
       deviceConnected: gs.deviceConnected,
+      pcConnected: gs.pcConnected ?? gs.deviceConnected,
       sessionArmed: gs.isActive,
       activeProfileId: gs.activeProfileId,
       activeProfileType: gs.activeRoleType,
@@ -94,6 +103,7 @@ class HidStatus {
       hostConfigurationRequestCount: gs.hostConfigurationRequestCount,
       gadgetBound: gs.gadgetBound,
       prepared: gs.prepared,
+      usbRestoring: gs.state == 'RESTORING',
     );
   }
 }
