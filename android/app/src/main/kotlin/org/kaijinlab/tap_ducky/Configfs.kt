@@ -87,34 +87,41 @@ object Configfs {
         echo bound
         printf 'state=%s\n' "${'$'}(cat "/sys/class/udc/${'$'}UDC_NAME/state" 2>/dev/null)"
         printf 'vid=%s\npid=%s\n' "${'$'}(cat "${'$'}G/idVendor")" "${'$'}(cat "${'$'}G/idProduct")"
-        storage=
+        attack_mode=
         for config in "${'$'}G"/configs/*; do
           [ -d "${'$'}config" ] || continue
           primary="${'$'}config/${prefix}0"
           primary_target=${'$'}(readlink "${'$'}primary" 2>/dev/null)
-          if [ ! -L "${'$'}primary" ] || [ ! -d "${'$'}primary" ] ||
-            [ "${'$'}{primary_target##*/}" != "${prefix}0" ]; then
-            storage=unknown
-            break
+          hid=0
+          if [ -L "${'$'}primary" ] && [ -d "${'$'}primary" ] &&
+            [ "${'$'}{primary_target##*/}" = "${prefix}0" ]; then
+            hid=1
           fi
-          config_storage=0
+          storage=0
+          other_function=0
           for link in "${'$'}config"/*; do
             [ -L "${'$'}link" ] || continue
-            target=${'$'}(readlink "${'$'}link") || { config_storage=unknown; break; }
+            if ! target=${'$'}(readlink "${'$'}link") || [ ! -d "${'$'}link" ]; then
+              attack_mode=unknown
+              break 2
+            fi
             case "${'$'}{target##*/}" in
-              mass_storage.*)
-                if [ -d "${'$'}link" ]; then config_storage=1; else config_storage=unknown; fi
-                break
-                ;;
+              mass_storage.*) storage=1 ;;
+              *) other_function=1 ;;
             esac
           done
-          if [ -n "${'$'}storage" ] && [ "${'$'}storage" != "${'$'}config_storage" ]; then
-            storage=unknown
+          if [ "${'$'}hid" = 0 ] && { [ "${'$'}storage" = 0 ] || [ "${'$'}other_function" = 1 ]; }; then
+            attack_mode=unknown
             break
           fi
-          storage=${'$'}config_storage
+          config_mode=${'$'}((hid + 2 * storage))
+          if [ -n "${'$'}attack_mode" ] && [ "${'$'}attack_mode" != "${'$'}config_mode" ]; then
+            attack_mode=unknown
+            break
+          fi
+          attack_mode=${'$'}config_mode
         done
-        printf 'storage=%s\n' "${'$'}{storage:-unknown}"
+        printf 'attack_mode=%s\n' "${'$'}{attack_mode:-unknown}"
         devices_ready=1
         for fn in ${prefix}0 ${prefix}1 ${prefix}2; do
           for link in "${'$'}G"/configs/*/"${'$'}fn"; do

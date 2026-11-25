@@ -338,8 +338,8 @@ class GadgetManager(
       inferredHostOs = fingerprint?.os,
       hostOsDetectionAvailable = armed && hostOsObserver.available,
       hostOsDetecting = fingerprint?.detecting == true,
-      scriptVid = probe?.vid,
-      scriptPid = probe?.pid,
+      scriptVid = session.vid,
+      scriptPid = session.pid,
       scriptAttackMode = session.scriptAttackMode,
       udcState = udcState,
       hostConfigurationRequestCount = hostConfigurationRequestCount,
@@ -1672,9 +1672,12 @@ class GadgetManager(
     val scriptAttackMode: Int?
       get() = when (this) {
         is Bound -> storage?.let { if (it) 3 else 1 }
+        is StorageOnly -> 2
         Unbound -> 0
         Unknown -> null
       }
+    val vid: Int? get() = null
+    val pid: Int? get() = null
 
     data class Bound(
       val role: String,
@@ -1683,10 +1686,11 @@ class GadgetManager(
       val media: String?,
       val udcState: String?,
       val devicesReady: Boolean,
-      val vid: Int? = null,
-      val pid: Int? = null,
+      override val vid: Int? = null,
+      override val pid: Int? = null,
       val storage: Boolean? = null,
     ) : SessionProbe
+    data class StorageOnly(override val vid: Int?, override val pid: Int?) : SessionProbe
     data object Unbound : SessionProbe
     data object Unknown : SessionProbe
   }
@@ -1704,8 +1708,12 @@ class GadgetManager(
       ?.substringAfter('=')?.trim()?.lowercase(Locale.US)?.ifEmpty { null }
     val prefix = if (shared) "hid.tapducky" else "hid.usb"
     val functions = lines.drop(2).associate { line -> line.substringBefore('=') to line.substringAfter('=') }
+    val vid = hak5UsbId(functions["vid"])
+    val pid = hak5UsbId(functions["pid"])
+    val attackMode = functions["attack_mode"]
     val devicesReady = functions["devices_ready"] == "1"
-    val first = functions["${prefix}0"] ?: return SessionProbe.Unbound
+    val first = functions["${prefix}0"]
+      ?: return if (attackMode == "2") SessionProbe.StorageOnly(vid, pid) else SessionProbe.Unknown
     val second = functions["${prefix}1"]
     val firstDev = hidDevicePath(first.substringAfter(':')) ?: return SessionProbe.Unknown
     val secondDev = hidDevicePath(second?.substringAfter(':'))
@@ -1725,11 +1733,11 @@ class GadgetManager(
       ?: prefs.desiredRole.takeIf { shared }
     return if (expectedRole == null || binding.role == expectedRole.lowercase(Locale.US)) {
       binding.copy(
-        vid = hak5UsbId(functions["vid"]),
-        pid = hak5UsbId(functions["pid"]),
-        storage = when (functions["storage"]) {
-          "0" -> false
-          "1" -> true
+        vid = vid,
+        pid = pid,
+        storage = when (attackMode) {
+          "1" -> false
+          "3" -> true
           else -> null
         },
       )

@@ -15,7 +15,7 @@ class StockUsbVerificationTest {
   @get:Rule val directory = TemporaryFolder()
 
   @Test
-  fun reportsStorageOnlyWhenEveryUsbConfigurationAgrees() {
+  fun reportsUsbModeOnlyWhenEveryConfigurationAgrees() {
     val base = directory.newFolder()
     val gadget = File(base, "stock").apply { mkdir() }
     val udc = File(gadget, "UDC").apply { writeText("fixture_udc\n") }
@@ -41,15 +41,24 @@ class StockUsbVerificationTest {
         shell.destroyForcibly()
       }
     }
-    fun readStorage(): String = readProbe().single { it.startsWith("storage=") }
+    fun readMode(): String = readProbe().single { it.startsWith("attack_mode=") }
 
-    assertEquals("storage=0", readStorage())
+    assertEquals("attack_mode=1", readMode())
     Files.createSymbolicLink(File(second, storage.name).toPath(), storage.toPath())
-    assertEquals("storage=unknown", readStorage())
+    assertEquals("attack_mode=unknown", readMode())
     Files.createSymbolicLink(File(first, storage.name).toPath(), storage.toPath())
-    assertEquals("storage=1", readStorage())
+    assertEquals("attack_mode=3", readMode())
     Files.delete(File(second, keyboard.name).toPath())
-    assertEquals("storage=unknown", readStorage())
+    assertEquals("attack_mode=unknown", readMode())
+    Files.delete(File(first, keyboard.name).toPath())
+    assertEquals("attack_mode=2", readMode())
+
+    val adb = File(gadget, "functions/ffs.adb").apply { mkdirs() }
+    Files.createSymbolicLink(File(first, adb.name).toPath(), adb.toPath())
+    assertEquals("attack_mode=unknown", readMode())
+    Files.delete(File(first, adb.name).toPath())
+    Files.delete(storage.toPath())
+    assertEquals("attack_mode=unknown", readMode())
     udc.writeText("\n")
     assertEquals(listOf("unbound"), readProbe())
   }

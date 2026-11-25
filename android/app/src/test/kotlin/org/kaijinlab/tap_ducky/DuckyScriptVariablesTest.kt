@@ -293,6 +293,10 @@ class DuckyScriptVariablesTest {
     assertNull(keyboard.scriptAttackMode)
     assertEquals(1, keyboard.copy(storage = false).scriptAttackMode)
     assertEquals(3, keyboard.copy(storage = true).scriptAttackMode)
+    val storage = GadgetManager.SessionProbe.StorageOnly(vid = 0x3412, pid = 0x7856)
+    assertEquals(2, storage.scriptAttackMode)
+    assertEquals(0x3412, storage.vid)
+    assertEquals(0x7856, storage.pid)
     assertEquals(0, GadgetManager.SessionProbe.Unbound.scriptAttackMode)
     assertNull(GadgetManager.SessionProbe.Unknown.scriptAttackMode)
   }

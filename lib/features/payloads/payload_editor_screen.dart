@@ -777,7 +777,7 @@ class _Hak5VariablesPage extends StatelessWidget {
 
   static const _compatibilityNotes = {
     r'$_OS': 'Auto-detects Windows, macOS, Linux, and Android. Compare with symbolic OS names.',
-    r'$_CURRENT_ATTACKMODE': 'Reports OFF, HID, or HID plus storage when the USB configuration can be verified.',
+    r'$_CURRENT_ATTACKMODE': 'Reports OFF, HID, storage, or HID plus storage when the USB configuration can be verified.',
     r'$_RANDOM_SEED': 'TapDucky generates a fresh seed for each run.',
     r'$_RANDOM_CHAR_KEYCODE': 'Uses the selected layout and TapDucky’s scancode format.',
     r'$_BUTTON_ENABLED': 'Controls the optional Press button action in the task bar.',
