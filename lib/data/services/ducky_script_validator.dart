@@ -568,6 +568,12 @@ class DuckyScriptValidator {
           severity: IssueSeverity.error,
           message: '$name is read-only',
         ));
+      } else if (_unsupportedHak5Variables.contains(name)) {
+        issues.add(ValidationIssue(
+          line: line,
+          severity: IssueSeverity.error,
+          message: '$name is a Hak5 variable unavailable in TapDucky',
+        ));
       } else if (_unsignedHak5Variables.contains(name) && expression != null) {
         final literal = expression.trim();
         if (!_integerLiteral.hasMatch(literal)) return;
@@ -640,7 +646,10 @@ class DuckyScriptValidator {
       if (const {'IF', 'ELSE', 'ELSE_IF', 'WHILE', 'RETURN', 'DELAY', 'INJECT_VAR'}
               .contains(command) ||
           declaration != null || assignMatch != null || functionCall != null) {
-        for (final match in _variablePattern.allMatches(expanded)) {
+        final references = declaration != null
+            ? declaration[2] ?? declaration[3] ?? ''
+            : assignMatch != null ? assignMatch[2]! : expanded;
+        for (final match in _variablePattern.allMatches(references)) {
           final variable = match.group(0)!;
           if (_unsupportedHak5Variables.contains(variable)) {
             if (warnedVariables.add(variable)) {

@@ -4,6 +4,14 @@ import 'package:tap_ducky/data/services/ducky_script_validator.dart';
 void main() {
   final validator = DuckyScriptValidator();
 
+  test('reports unsupported writes once as errors', () {
+    for (final script in [r'$_JITTER_MAX = 20', r'VAR $_BUTTON_ENABLED = TRUE']) {
+      final result = validator.validate(script);
+      expect(result.issues.single.severity, IssueSeverity.error);
+      expect(result.issues.single.message, contains('unavailable in TapDucky'));
+    }
+  });
+
   test('accepts Hak5 OS extension imports and symbolic comparisons', () {
     final result = validator.validate(r'''
 EXTENSION OS_DETECTION

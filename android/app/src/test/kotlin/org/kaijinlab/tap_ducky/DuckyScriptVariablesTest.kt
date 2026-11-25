@@ -9,6 +9,17 @@ import org.junit.Test
 
 class DuckyScriptVariablesTest {
   @Test
+  fun rejectsUnsupportedWritesBeforeRunningAnyCommands() {
+    for (assignment in listOf("\$_JITTER_MAX = 20", "VAR \$_BUTTON_ENABLED = TRUE")) {
+      val error = assertThrows(DuckyExpressionSyntaxException::class.java) {
+        DuckyScriptParser().parse("STRING sample\n$assignment")
+      }
+      assertEquals(2, error.lineNumber)
+      assertTrue(error.message!!.contains("unavailable in TapDucky"))
+    }
+  }
+
+  @Test
   fun reportsMisspelledInternalVariablesWhilePreservingAssignedNames() {
     val variables = DuckyScriptVariables({ null }, { null })
     val estimator = DuckyScriptEstimator(variables, { _, _ -> 0 }, { 0 })

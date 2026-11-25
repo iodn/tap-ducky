@@ -629,8 +629,12 @@ class DuckyScriptParser {
   }
 
   private fun requireWritableVariable(name: String, lineNumber: Int) {
-    require(normalizeVariableName(name) !in DuckyScriptVariables.readOnly) {
-      "Line $lineNumber: $name is read-only"
+    val key = normalizeVariableName(name)
+    if (key in DuckyScriptVariables.readOnly) {
+      variableSyntaxError(lineNumber, "$name is read-only")
+    }
+    if (key in DuckyScriptVariables.unavailable) {
+      variableSyntaxError(lineNumber, "$name is a Hak5 variable unavailable in TapDucky")
     }
   }
 
