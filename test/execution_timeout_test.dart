@@ -92,6 +92,28 @@ Future<ProviderContainer> _createContainer(_SilentGadget service) async {
 }
 
 void main() {
+  testWidgets('activity indicator updates leave execution progress active', (tester) async {
+    final events = StreamController<Map<String, dynamic>>.broadcast();
+    addTearDown(events.close);
+    final service = _SilentGadget(events: events);
+    final container = await _createContainer(service);
+    final controller = container.read(executionControllerProvider.notifier);
+    await controller.sendRawCommand('DELAY 20');
+    final id = service.startedId!;
+    events.add({'type': 'activity_indicator', 'executionId': id, 'enabled': false});
+    events.add({'type': 'step', 'executionId': id, 'progress': 0.5});
+    await tester.pump();
+    final active = container.read(executionControllerProvider);
+    expect(active.activityIndicatorEnabled, isFalse);
+    expect(active.activityStep, 1);
+    expect(active.isRunning, isTrue);
+    expect(active.progress, 0.5);
+    await controller.stop();
+    expect(service.cancelledIds, [id]);
+    events.add({'type': 'done', 'executionId': id, 'cancelled': true});
+    await tester.pump();
+  });
+
   testWidgets('polling scripts receive presses only for the active run', (tester) async {
     final events = StreamController<Map<String, dynamic>>.broadcast();
     addTearDown(events.close);

@@ -9,6 +9,18 @@ import org.junit.Test
 
 class DuckyScriptVariablesTest {
   @Test
+  fun readsAndWritesTheRunActivityIndicatorSetting() {
+    val variables = DuckyScriptVariables({ null }, { null })
+    val estimator = DuckyScriptEstimator(variables, { _, _ -> 0 }, { 0 })
+    val name = DuckyScriptVariables.INJECTING_LEDS_ENABLED
+    assertEquals(1, variables.read(name))
+    assertEquals(20L, estimator.estimate("$name = FALSE\nIF ($name == FALSE) THEN\nDELAY 20\nEND_IF"))
+    assertEquals(0, variables.read(name))
+    estimator.estimate("$name = TRUE")
+    assertEquals(1, variables.read(name))
+  }
+
+  @Test
   fun stopPayloadEndsTheWholeRunEvenInsideAFunctionAndTryBlock() {
     val estimator = DuckyScriptEstimator(DuckyScriptVariables({ null }, { null }), { _, _ -> 0 }, { 0 })
     val script = """

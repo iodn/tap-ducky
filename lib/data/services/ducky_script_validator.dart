@@ -419,6 +419,7 @@ class DuckyScriptValidator {
     ..._unsignedHak5Variables,
     r'$_BUTTON_ENABLED',
     r'$_BUTTON_USER_DEFINED',
+    r'$_INJECTING_LEDS_ENABLED',
     r'$_BUTTON_PUSH_RECEIVED',
   };
   static const _variableName = r'\$(?:[A-Za-z0-9_]+|\?)';
@@ -444,7 +445,7 @@ class DuckyScriptValidator {
   static final _defineDeclaration = RegExp(r'^DEFINE\s+(\S+)\s(.*)$', caseSensitive: false);
   static const _unsupportedHak5Variables = {
     r'$_SYSTEM_LEDS_ENABLED', r'$_STORAGE_LEDS_ENABLED',
-    r'$_LED_CONTINUOUS_SHOW_STORAGE_ACTIVITY', r'$_INJECTING_LEDS_ENABLED',
+    r'$_LED_CONTINUOUS_SHOW_STORAGE_ACTIVITY',
     r'$_EXFIL_LEDS_ENABLED', r'$_LED_SHOW_CAPS', r'$_LED_SHOW_NUM',
     r'$_LED_SHOW_SCROLL', r'$_JITTER_ENABLED', r'$_JITTER_MAX',
     r'$_CAPSLOCK_ON', r'$_NUMLOCK_ON', r'$_SCROLLLOCK_ON',

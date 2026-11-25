@@ -59,7 +59,12 @@ class TaskBar extends ConsumerWidget {
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
-                _StatusDot(ok: hid.rootAvailable && hid.hidSupported),
+                _StatusDot(
+                  ok: hid.rootAvailable && hid.hidSupported,
+                  pulseStep: exec.isRunning && !exec.stopRequested && exec.activityIndicatorEnabled
+                      ? exec.activityStep
+                      : 0,
+                ),
                 const SizedBox(width: 10),
                 Expanded(
                   child: Column(
@@ -214,19 +219,28 @@ class TaskBar extends ConsumerWidget {
 }
 
 class _StatusDot extends StatelessWidget {
-  const _StatusDot({required this.ok});
+  const _StatusDot({required this.ok, required this.pulseStep});
 
   final bool ok;
+  final int pulseStep;
 
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     final color = ok ? cs.primary : cs.error;
 
-    return Container(
+    final dot = Container(
       width: 10,
       height: 10,
       decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+    );
+    if (!ok || pulseStep == 0 || MediaQuery.disableAnimationsOf(context)) return dot;
+    return TweenAnimationBuilder<double>(
+      key: ValueKey(pulseStep),
+      tween: Tween<double>(begin: 0.45, end: 1),
+      duration: const Duration(milliseconds: 220),
+      builder: (context, opacity, child) => Opacity(opacity: opacity, child: child),
+      child: dot,
     );
   }
 }

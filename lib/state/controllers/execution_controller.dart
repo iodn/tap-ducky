@@ -22,6 +22,8 @@ class ExecutionState {
     this.panicAvailable = false,
     this.buttonPromptId,
     this.scriptButtonAvailable = false,
+    this.activityIndicatorEnabled = true,
+    this.activityStep = 0,
     this.payloadId,
     this.payloadName,
     this.startedAt,
@@ -38,6 +40,8 @@ class ExecutionState {
   final bool panicAvailable;
   final String? buttonPromptId;
   final bool scriptButtonAvailable;
+  final bool activityIndicatorEnabled;
+  final int activityStep;
   final String? payloadId;
   final String? payloadName;
   final DateTime? startedAt;
@@ -55,6 +59,8 @@ class ExecutionState {
     String? buttonPromptId,
     bool clearButtonPrompt = false,
     bool? scriptButtonAvailable,
+    bool? activityIndicatorEnabled,
+    int? activityStep,
     String? payloadId,
     String? payloadName,
     DateTime? startedAt,
@@ -71,6 +77,8 @@ class ExecutionState {
       panicAvailable: panicAvailable ?? this.panicAvailable,
       buttonPromptId: clearButtonPrompt ? null : buttonPromptId ?? this.buttonPromptId,
       scriptButtonAvailable: scriptButtonAvailable ?? this.scriptButtonAvailable,
+      activityIndicatorEnabled: activityIndicatorEnabled ?? this.activityIndicatorEnabled,
+      activityStep: activityStep ?? this.activityStep,
       payloadId: payloadId ?? this.payloadId,
       payloadName: payloadName ?? this.payloadName,
       startedAt: startedAt ?? this.startedAt,
@@ -530,6 +538,12 @@ class ExecutionController extends Notifier<ExecutionState> {
       if (id != executionId) return;
 
       final type = evt['type']?.toString() ?? '';
+      if (type == 'activity_indicator') {
+        if (_activeExecutionId == executionId && evt['enabled'] is bool) {
+          state = state.copyWith(activityIndicatorEnabled: evt['enabled'] as bool);
+        }
+        return;
+      }
       if (type == 'button_available') {
         if (_activeExecutionId == executionId && !state.stopRequested) {
           state = state.copyWith(scriptButtonAvailable: evt['available'] != false);
@@ -549,6 +563,7 @@ class ExecutionController extends Notifier<ExecutionState> {
         final msg = (evt['message']?.toString() ?? '').trim();
         state = state.copyWith(
           progress: p.clamp(0.0, 0.99),
+          activityStep: state.activityStep + 1,
           clearButtonPrompt: true,
           status: msg.isNotEmpty ? msg : state.status,
         );
@@ -691,6 +706,12 @@ class ExecutionController extends Notifier<ExecutionState> {
       if (id != executionId) return;
 
       final type = evt['type']?.toString() ?? '';
+      if (type == 'activity_indicator') {
+        if (_activeExecutionId == executionId && evt['enabled'] is bool) {
+          state = state.copyWith(activityIndicatorEnabled: evt['enabled'] as bool);
+        }
+        return;
+      }
       if (type == 'button_available') {
         if (_activeExecutionId == executionId && !state.stopRequested) {
           state = state.copyWith(scriptButtonAvailable: evt['available'] != false);
@@ -717,6 +738,7 @@ class ExecutionController extends Notifier<ExecutionState> {
         final msg = (evt['message']?.toString() ?? '').trim();
         state = state.copyWith(
           progress: p.clamp(0.0, 0.99),
+          activityStep: state.activityStep + 1,
           clearButtonPrompt: true,
           status: msg.isNotEmpty ? msg : state.status,
         );
