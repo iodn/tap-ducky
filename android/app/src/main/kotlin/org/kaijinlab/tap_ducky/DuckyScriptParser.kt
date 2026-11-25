@@ -1459,9 +1459,7 @@ class DuckyScriptExecutor(
 
   private fun evaluateCondition(condition: String, lineNumber: Int): Boolean {
     currentLine = lineNumber
-    return evaluator.evaluateCondition(condition, currentVarsView()) {
-      log.logError("ducky", "Failed to evaluate condition: $condition")
-    }
+    return evaluate(condition) != 0
   }
 
   private fun clampU16(v: Int): Int = v.coerceIn(0, 65535)
@@ -1520,7 +1518,7 @@ class DuckyScriptExecutor(
       }
 
       CommandType.DELAY -> {
-        val delayMs = timing.scaleMs(evaluator.evaluate(cmd.args.first(), currentVarsView()))
+        val delayMs = timing.scaleMs(evaluate(cmd.args.first()))
         sleepMsCancellable(delayMs.toLong(), "Script pause")
         setExitCode(0)
         return "DELAY ${delayMs}ms"
@@ -1604,7 +1602,7 @@ class DuckyScriptExecutor(
 
       CommandType.DEFAULTDELAY,
       CommandType.DEFAULT_DELAY -> {
-        defaultDelay = evaluator.evaluate(cmd.args.first(), currentVarsView())
+        defaultDelay = evaluate(cmd.args.first())
         setExitCode(0)
       }
 
@@ -1647,7 +1645,7 @@ class DuckyScriptExecutor(
       }
 
       CommandType.INJECT_VAR -> {
-        val stroke = decodeDuckyKeyStroke(evaluator.evaluate(cmd.args.first(), currentVarsView()))
+        val stroke = decodeDuckyKeyStroke(evaluate(cmd.args.first()))
         sendKeyWithInjectedMods(stroke.keyCode, stroke.modifiers)
         setExitCode(0)
       }
@@ -1666,14 +1664,14 @@ class DuckyScriptExecutor(
 
       CommandType.RETURN -> {
         val expr = cmd.args.firstOrNull() ?: "0"
-        val value = if (expr.isBlank()) 0 else evaluator.evaluate(expr, currentVarsView())
+        val value = if (expr.isBlank()) 0 else evaluate(expr)
         throw ReturnSignal(clampU16(value))
       }
 
       CommandType.VAR -> {
         val varName = cmd.args.getOrNull(0) ?: ""
         val expr = cmd.args.getOrNull(1) ?: "0"
-        val value = if (expr.isBlank()) 0 else evaluator.evaluate(expr, currentVarsView())
+        val value = if (expr.isBlank()) 0 else evaluate(expr)
         setVar(varName, value)
         setExitCode(0)
       }
@@ -1842,12 +1840,22 @@ class DuckyScriptExecutor(
     return null
   }
 
-  private fun callFunction(name: String, argsPassed: List<String>) {
+  private fun evaluate(expression: String): Int =
+    evaluator.evaluate(expression, ::readUserVariable, ::callExpressionFunction)
+
+  private fun callExpressionFunction(name: String): Int {
+    if (name !in functions) throw DuckyExpressionSyntaxException("Function '$name' is not declared")
+    val callerLine = currentLine
+    val result = callFunction(name, emptyList())
+    currentLine = callerLine
+    return result
+  }
+
+  private fun callFunction(name: String, argsPassed: List<String>): Int {
     val def = functions[name]
-    val body = def?.body
-    if (body == null) {
+    if (def == null) {
       setExitCode(0)
-      return
+      return 0
     }
     callDepth++
     if (callDepth > 64) {
@@ -1855,27 +1863,25 @@ class DuckyScriptExecutor(
       throw IllegalStateException("Max function call depth exceeded")
     }
     try {
-      val callerVariables = currentVarsView()
       val scope = mutableMapOf<String, Int>()
-      localScopes.addLast(scope)
-      if (def != null) {
-        val params = def.params
-        for (i in params.indices) {
-          val param = params[i]
-          if (param.isBlank()) continue
-          val expr = argsPassed.getOrNull(i) ?: "0"
-          val value = if (expr.isBlank()) 0 else evaluator.evaluate(expr, callerVariables)
-          scope[normalizeVarName(param)] = clampU16(value)
-        }
+      for ((i, param) in def.params.withIndex()) {
+        val expr = argsPassed.getOrNull(i) ?: "0"
+        scope[normalizeVarName(param)] = clampU16(evaluate(expr))
       }
+      localScopes.addLast(scope)
       try {
-        executeRange(body, 0, body.size)
-        setExitCode(0)
-      } catch (r: ReturnSignal) {
-        setExitCode(r.value)
+        val result = try {
+          executeRange(def.body, 0, def.body.size)
+          0
+        } catch (r: ReturnSignal) {
+          r.value
+        }
+        setExitCode(result)
+        return result
+      } finally {
+        localScopes.removeLast()
       }
     } finally {
-      if (localScopes.isNotEmpty()) localScopes.removeLast()
       callDepth--
     }
   }
@@ -1913,13 +1919,11 @@ class DuckyScriptExecutor(
     globalVariables[key] = stored
   }
 
-  private fun currentVarsView(): Map<String, Int> {
-    if (localScopes.isEmpty()) return globalVariables
-    val out = LinkedHashMap<String, Int>(globalVariables)
-    for (scope in localScopes) {
-      for ((k, v) in scope) out[k] = v
+  private fun readUserVariable(name: String): Int? {
+    for (scope in localScopes.asReversed()) {
+      scope[name]?.let { return it }
     }
-    return out
+    return globalVariables[name]
   }
 
   private fun parseModifierMask(tokens: List<String>): Int {
@@ -2376,7 +2380,7 @@ internal class DuckyScriptEstimator(
 
   private fun evaluateCondition(condition: String, lineNumber: Int): Boolean {
     currentLine = lineNumber
-    return evaluator.evaluateCondition(condition, currentVarsView())
+    return evaluate(condition) != 0
   }
 
   private fun executeCommand(cmd: DuckyCommand) {
@@ -2403,7 +2407,7 @@ internal class DuckyScriptEstimator(
       }
 
       CommandType.DELAY -> {
-        val ms = evaluator.evaluate(cmd.args.first(), currentVarsView())
+        val ms = evaluate(cmd.args.first())
         elapsedMs += timing.scaleMs(ms).toLong()
         setExitCode(0)
       }
@@ -2433,7 +2437,7 @@ internal class DuckyScriptEstimator(
 
       CommandType.DEFAULTDELAY,
       CommandType.DEFAULT_DELAY -> {
-        defaultDelay = evaluator.evaluate(cmd.args.first(), currentVarsView())
+        defaultDelay = evaluate(cmd.args.first())
         setExitCode(0)
       }
 
@@ -2444,7 +2448,7 @@ internal class DuckyScriptEstimator(
       }
 
       CommandType.INJECT_VAR -> {
-        decodeDuckyKeyStroke(evaluator.evaluate(cmd.args.first(), currentVarsView()))
+        decodeDuckyKeyStroke(evaluate(cmd.args.first()))
         elapsedMs += estimateKeyTapDuration()
         setExitCode(0)
       }
@@ -2457,14 +2461,14 @@ internal class DuckyScriptEstimator(
 
       CommandType.RETURN -> {
         val expr = cmd.args.firstOrNull() ?: "0"
-        val value = if (expr.isBlank()) 0 else evaluator.evaluate(expr, currentVarsView())
+        val value = if (expr.isBlank()) 0 else evaluate(expr)
         throw ReturnSignal(clampU16(value))
       }
 
       CommandType.VAR -> {
         val varName = cmd.args.getOrNull(0) ?: ""
         val expr = cmd.args.getOrNull(1) ?: "0"
-        val value = if (expr.isBlank()) 0 else evaluator.evaluate(expr, currentVarsView())
+        val value = if (expr.isBlank()) 0 else evaluate(expr)
         setVar(varName, value)
         setExitCode(0)
       }
@@ -2596,40 +2600,48 @@ internal class DuckyScriptEstimator(
     }
   }
 
-  private fun callFunction(name: String, argsPassed: List<String>) {
+  private fun evaluate(expression: String): Int =
+    evaluator.evaluate(expression, ::readUserVariable, ::callExpressionFunction)
+
+  private fun callExpressionFunction(name: String): Int {
+    if (name !in functions) throw DuckyExpressionSyntaxException("Function '$name' is not declared")
+    val callerLine = currentLine
+    val result = callFunction(name, emptyList())
+    currentLine = callerLine
+    return result
+  }
+
+  private fun callFunction(name: String, argsPassed: List<String>): Int {
     val def = functions[name]
-    val body = def?.body
-    if (body == null) {
+    if (def == null) {
       setExitCode(0)
-      return
+      return 0
     }
     callDepth++
     if (callDepth > 64) {
       callDepth--
-      return
+      throw EstimateLimit()
     }
     try {
-      val callerVariables = currentVarsView()
       val scope = mutableMapOf<String, Int>()
-      localScopes.addLast(scope)
-      if (def != null) {
-        val params = def.params
-        for (i in params.indices) {
-          val param = params[i]
-          if (param.isBlank()) continue
-          val expr = argsPassed.getOrNull(i) ?: "0"
-          val value = if (expr.isBlank()) 0 else evaluator.evaluate(expr, callerVariables)
-          scope[normalizeVarName(param)] = clampU16(value)
-        }
+      for ((i, param) in def.params.withIndex()) {
+        val expr = argsPassed.getOrNull(i) ?: "0"
+        scope[normalizeVarName(param)] = clampU16(evaluate(expr))
       }
+      localScopes.addLast(scope)
       try {
-        executeRange(body, 0, body.size)
-        setExitCode(0)
-      } catch (r: ReturnSignal) {
-        setExitCode(r.value)
+        val result = try {
+          executeRange(def.body, 0, def.body.size)
+          0
+        } catch (r: ReturnSignal) {
+          r.value
+        }
+        setExitCode(result)
+        return result
+      } finally {
+        localScopes.removeLast()
       }
     } finally {
-      if (localScopes.isNotEmpty()) localScopes.removeLast()
       callDepth--
     }
   }
@@ -2669,13 +2681,11 @@ internal class DuckyScriptEstimator(
     globalVariables[key] = stored
   }
 
-  private fun currentVarsView(): Map<String, Int> {
-    if (localScopes.isEmpty()) return globalVariables
-    val out = LinkedHashMap<String, Int>(globalVariables)
-    for (scope in localScopes) {
-      for ((k, v) in scope) out[k] = v
+  private fun readUserVariable(name: String): Int? {
+    for (scope in localScopes.asReversed()) {
+      scope[name]?.let { return it }
     }
-    return out
+    return globalVariables[name]
   }
 
   private fun clampU16(v: Int): Int = v.coerceIn(0, 65535)

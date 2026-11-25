@@ -342,11 +342,11 @@ class DuckyScriptVariablesTest {
     )
     for ((variable, expectedMessage) in invalidReads) {
       val error = assertThrows(DuckyVariableException::class.java) {
-        evaluator.evaluateCondition("$variable == 0", emptyMap())
+        evaluator.evaluate("$variable == 0", emptyMap())
       }
       assertEquals(expectedMessage, error.message)
     }
-    assertTrue(evaluator.evaluateCondition("\$_RANDOM_MIN == 10", emptyMap()))
+    assertEquals(1, evaluator.evaluate("\$_RANDOM_MIN == 10", emptyMap()))
   }
 
   @Test
@@ -408,6 +408,51 @@ class DuckyScriptVariablesTest {
       applyDelay(120, ${'$'}duration)
     """.trimIndent()
     assertEquals(78L, estimator.estimate(script))
+  }
+
+  @Test
+  fun evaluatesFunctionResultsAndTheirVariableChangesInOrder() {
+    val estimator = DuckyScriptEstimator(DuckyScriptVariables({ null }, { null }), { _, _ -> 0 }, { 0 })
+    val script = """
+      VAR ${'$'}total = 0
+      FUNCTION change()
+        ${'$'}total = ${'$'}total + 2
+        DELAY 10
+        RETURN 3
+      END_FUNCTION
+      FUNCTION scoped(${'$'}extra)
+        RETURN (change() + ${'$'}total + ${'$'}extra)
+      END_FUNCTION
+      scoped(4)
+      VAR ${'$'}result = ${'$'}?
+      IF ((change() == 3) AND (${'$'}result == 9)) THEN
+        DELAY ${'$'}total
+      END_IF
+      VAR ${'$'}pause = change()
+      DELAY ${'$'}pause
+    """.trimIndent()
+    assertEquals(37L, estimator.estimate(script))
+  }
+
+  @Test
+  fun propagatesStopAndReportsUndefinedFunctionsInConditions() {
+    val estimator = DuckyScriptEstimator(DuckyScriptVariables({ null }, { null }), { _, _ -> 0 }, { 0 })
+    val stop = """
+      FUNCTION finish()
+        STOP_PAYLOAD
+      END_FUNCTION
+      DELAY 30
+      IF finish() THEN
+        DELAY 100
+      END_IF
+      DELAY 200
+    """.trimIndent()
+    assertEquals(30L, estimator.estimate(stop))
+    val error = assertThrows(DuckyExpressionSyntaxException::class.java) {
+      estimator.estimate("REM sample\nIF missing() THEN\nEND_IF")
+    }
+    assertEquals(2, error.lineNumber)
+    assertEquals("Function 'missing' is not declared", error.message)
   }
 
   @Test

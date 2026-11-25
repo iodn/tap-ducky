@@ -14,30 +14,20 @@ class ExpressionEvaluator(
   private enum class Kind { NUM, VAR, IDENT, OP, LPAREN, RPAREN, END }
   private data class Tok(val kind: Kind, val text: String)
 
-  fun evaluate(expression: String, variables: Map<String, Int>): Int {
-    val tokens = tokenize(expression)
-    val p = Parser(tokens, variables, readInternalVariable)
-    return p.parse()
-  }
+  fun evaluate(expression: String, variables: Map<String, Int>): Int =
+    evaluate(expression, variables::get)
+
+  internal fun evaluate(
+    expression: String,
+    readUserVariable: (String) -> Int?,
+    callFunction: ((String) -> Int)? = null,
+  ): Int = Parser(tokenize(expression), readUserVariable, readInternalVariable, callFunction).parse()
 
   internal fun validateSyntax(expression: String, onVariableRead: (String) -> Unit) {
-    Parser(tokenize(expression), emptyMap(), { name ->
+    Parser(tokenize(expression), { null }, { name ->
       onVariableRead(name)
       0
     }, syntaxOnly = true).parse()
-  }
-
-  internal fun evaluateCondition(
-    expression: String,
-    variables: Map<String, Int>,
-    onInvalidExpression: () -> Unit = {},
-  ): Boolean = try {
-    evaluate(expression, variables) != 0
-  } catch (error: DuckyScriptValueException) {
-    throw error
-  } catch (_: Exception) {
-    onInvalidExpression()
-    false
   }
 
   private fun tokenize(expr: String): List<Tok> {
@@ -151,8 +141,9 @@ class ExpressionEvaluator(
 
   private class Parser(
     private val tokens: List<Tok>,
-    private val vars: Map<String, Int>,
+    private val readUserVariable: (String) -> Int?,
     private val readInternalVariable: (String) -> Int?,
+    private val callFunction: ((String) -> Int)? = null,
     private val syntaxOnly: Boolean = false,
   ) {
     private var pos = 0
@@ -355,7 +346,7 @@ class ExpressionEvaluator(
       val v = match(Kind.VAR)
       if (v != null) {
         val name = v.text
-        val value = readInternalVariable(name) ?: vars[name]
+        val value = readInternalVariable(name) ?: readUserVariable(name)
         if (value != null) return value
         if (name.startsWith("\$_")) throw DuckyVariableException("Unknown internal variable '$name'")
         return 0
@@ -363,6 +354,14 @@ class ExpressionEvaluator(
 
       val id = match(Kind.IDENT)
       if (id != null) {
+        if (match(Kind.LPAREN) != null) {
+          if (match(Kind.RPAREN) == null) {
+            throw DuckyExpressionSyntaxException("Expected ')' in ${id.text}(). Function calls in expressions take no arguments")
+          }
+          if (syntaxOnly) return 0
+          return callFunction?.invoke(id.text)
+            ?: throw DuckyExpressionSyntaxException("Function '${id.text}' is not declared")
+        }
         if (id.text.equals("TRUE", ignoreCase = true)) return 1
         if (id.text.equals("FALSE", ignoreCase = true)) return 0
         return DuckyScriptHostOs.constant(id.text)

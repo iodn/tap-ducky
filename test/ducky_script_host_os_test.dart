@@ -173,6 +173,19 @@ DELAY (($ready and TRUE) * 20)
     expect(validator.validate('DELAY 2 CANDY 3').hasErrors, isTrue);
   });
 
+  test('accepts no-argument function results in expressions', () {
+    final result = validator.validate(r'''
+FUNCTION delay_amount()
+  RETURN 40
+END_FUNCTION
+VAR $pause = delay_amount()
+IF (delay_amount() == $pause) THEN
+  DELAY (delay_amount() + $pause)
+END_IF
+''');
+    expect(result.issues, isEmpty);
+  });
+
   test('DEFINE protects variable names and preserves nested labels', () {
     final result = validator.validate(r'''
 DEFINE WAIT 100

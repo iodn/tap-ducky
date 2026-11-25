@@ -438,6 +438,7 @@ class DuckyScriptValidator {
   static final _functionCallPattern = RegExp(r'^([A-Za-z_]\w*)\s*\((.*)\)\s*$');
   static final _delayValueToken = RegExp(
     '$_variableName|'
+    r'\b[A-Za-z_]\w*\s*\(\s*\)|'
     r'0x[0-9a-f]+|\d+|'
     r'\b(?:TRUE|FALSE|UNKNOWN|WINDOWS|MACOS|LINUX|CHROMEOS|ANDROID|IOS)\b',
     caseSensitive: false,
