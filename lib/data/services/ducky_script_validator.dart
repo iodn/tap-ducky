@@ -406,7 +406,7 @@ class DuckyScriptValidator {
   static const int _commandOverheadMs = 3;
   static const int _maxScriptRepeats = 20000;
   static const _hostOsVariable = r'$_OS';
-  static const _readOnlyHak5Variables = {
+  static const readOnlyHak5Variables = {
     _hostOsVariable, r'$_CURRENT_VID', r'$_CURRENT_PID', r'$_CURRENT_ATTACKMODE',
     r'$_RANDOM_INT', r'$_RANDOM_SEED', r'$_RANDOM_LOWER_LETTER_KEYCODE',
     r'$_RANDOM_UPPER_LETTER_KEYCODE', r'$_RANDOM_LETTER_KEYCODE',
@@ -416,7 +416,7 @@ class DuckyScriptValidator {
   static const _unsignedHak5Variables = {
     r'$_RANDOM_MIN', r'$_RANDOM_MAX', r'$_BUTTON_TIMEOUT',
   };
-  static const _writableHak5Variables = {
+  static const writableHak5Variables = {
     ..._unsignedHak5Variables,
     r'$_BUTTON_ENABLED',
     r'$_BUTTON_USER_DEFINED',
@@ -445,7 +445,7 @@ class DuckyScriptValidator {
   }
   static final _integerLiteral = RegExp(r'^[+-]?(?:0x[0-9a-f]+|\d+)$', caseSensitive: false);
   static final _defineDeclaration = RegExp(r'^DEFINE\s+(\S+)\s(.*)$', caseSensitive: false);
-  static const _unsupportedHak5Variables = {
+  static const unsupportedHak5Variables = {
     r'$_STORAGE_LEDS_ENABLED',
     r'$_LED_CONTINUOUS_SHOW_STORAGE_ACTIVITY',
     r'$_EXFIL_LEDS_ENABLED', r'$_LED_SHOW_CAPS', r'$_LED_SHOW_NUM',
@@ -482,7 +482,7 @@ class DuckyScriptValidator {
     final warnedVariables = <String>{};
     final defines = <String, String>{};
     RegExp? definePattern;
-    final scriptVariables = <String>{r'$?', ..._readOnlyHak5Variables, ..._writableHak5Variables};
+    final scriptVariables = <String>{r'$?', ...readOnlyHak5Variables, ...writableHak5Variables};
     final referencedVariables = <String, int>{};
     final functionParameters = <Set<String>>[];
 
@@ -576,13 +576,13 @@ class DuckyScriptValidator {
         ));
         return;
       }
-      if (_readOnlyHak5Variables.contains(name)) {
+      if (readOnlyHak5Variables.contains(name)) {
         issues.add(ValidationIssue(
           line: line,
           severity: IssueSeverity.error,
           message: '$name is read-only',
         ));
-      } else if (_unsupportedHak5Variables.contains(name)) {
+      } else if (unsupportedHak5Variables.contains(name)) {
         issues.add(ValidationIssue(
           line: line,
           severity: IssueSeverity.error,
@@ -665,7 +665,7 @@ class DuckyScriptValidator {
             : assignMatch != null ? assignMatch[2]! : expanded;
         for (final match in _variablePattern.allMatches(references)) {
           final variable = match.group(0)!;
-          if (_unsupportedHak5Variables.contains(variable)) {
+          if (unsupportedHak5Variables.contains(variable)) {
             if (warnedVariables.add(variable)) {
               issues.add(ValidationIssue(
                 line: lineNum,
@@ -954,9 +954,9 @@ class DuckyScriptValidator {
               if (name.isEmpty) continue;
               final variable = name.startsWith(r'$') ? name : '\$$name';
               parameters.add(variable);
-              if (_readOnlyHak5Variables.contains(variable) ||
-                  _unsupportedHak5Variables.contains(variable) ||
-                  _writableHak5Variables.contains(variable)) {
+              if (readOnlyHak5Variables.contains(variable) ||
+                  unsupportedHak5Variables.contains(variable) ||
+                  writableHak5Variables.contains(variable)) {
                 issues.add(ValidationIssue(
                   line: lineNum,
                   severity: IssueSeverity.error,

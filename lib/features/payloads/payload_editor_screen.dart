@@ -759,10 +759,51 @@ class _PayloadEditorScreenState extends ConsumerState<PayloadEditorScreen>
         ),
         actions: [
           TextButton(
+            onPressed: () => showConfigurationPage<void>(context, (_) => const _Hak5VariablesPage()),
+            child: const Text('Internal variables'),
+          ),
+          TextButton(
             onPressed: () => Navigator.pop(context),
             child: const Text('Close'),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _Hak5VariablesPage extends StatelessWidget {
+  const _Hak5VariablesPage();
+
+  @override
+  Widget build(BuildContext context) {
+    const groups = [
+      ('Read-only', DuckyScriptValidator.readOnlyHak5Variables),
+      ('Writable', DuckyScriptValidator.writableHak5Variables),
+      ('Unavailable', DuckyScriptValidator.unsupportedHak5Variables),
+    ];
+    return Scaffold(
+      appBar: AppBar(leading: const CloseButton(), title: const Text('Hak5 variables')),
+      body: SafeArea(
+        top: false,
+        child: ListView(
+          padding: const EdgeInsets.all(12),
+          children: [
+            for (final (title, names) in groups)
+              ExpansionTile(
+                title: Text('$title (${names.length})'),
+                childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                expandedCrossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  for (final name in names.toList()..sort())
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 4),
+                      child: SelectableText(name, style: const TextStyle(fontFamily: 'monospace')),
+                    ),
+                ],
+              ),
+          ],
+        ),
       ),
     );
   }

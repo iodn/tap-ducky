@@ -191,6 +191,21 @@ final _longPayload = Payload(
 );
 
 void main() {
+  testWidgets('syntax help opens internal variable support at large text', (tester) async {
+    await _pumpScreen(tester, const PayloadEditorScreen(), size: const Size(320, 568));
+    await tester.tap(find.byTooltip('Syntax'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Internal variables').hitTestable());
+    await tester.pumpAndSettle();
+    expect(find.text('Hak5 variables'), findsOneWidget);
+    expect(find.text('Writable (8)'), findsOneWidget);
+    expect(find.text('Unavailable (18)'), findsOneWidget);
+    await tester.tap(find.text('Read-only (12)'));
+    await tester.pumpAndSettle();
+    expect(find.text(r'$_OS'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('button prompt keeps Continue and Stop visible at large text', (tester) async {
     final execution = _WaitingExecution();
     await _pumpScreen(
