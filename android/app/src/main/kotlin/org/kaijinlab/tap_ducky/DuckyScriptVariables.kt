@@ -35,6 +35,7 @@ internal class DuckyScriptVariables(
   private var buttonEnabled = true
   private var buttonInputClosed = false
   private var injectingLedsEnabled = true
+  private var systemLedsEnabled = true
   private var buttonDefined = false
   private var buttonCallbackEnabled = false
   private var buttonCallbackPending = false
@@ -85,6 +86,7 @@ internal class DuckyScriptVariables(
     BUTTON_ENABLED -> if (buttonEnabled) 1 else 0
     BUTTON_USER_DEFINED -> if (buttonCallbackEnabled) 1 else 0
     INJECTING_LEDS_ENABLED -> if (injectingLedsEnabled) 1 else 0
+    SYSTEM_LEDS_ENABLED -> if (systemLedsEnabled) 1 else 0
     "\$_BUTTON_PUSH_RECEIVED" -> if (buttonPressed) 1 else 0
     "\$_BUTTON_TIMEOUT" -> buttonTimeoutMs
     "\$_RANDOM_MIN" -> randomMin
@@ -110,6 +112,7 @@ internal class DuckyScriptVariables(
   @Synchronized fun write(name: String, value: Int): Boolean {
     when (name) {
       INJECTING_LEDS_ENABLED -> injectingLedsEnabled = value != 0
+      SYSTEM_LEDS_ENABLED -> systemLedsEnabled = value != 0
       BUTTON_ENABLED -> {
         buttonEnabled = value != 0
         if (!buttonEnabled) buttonCallbackPending = false
@@ -143,6 +146,7 @@ internal class DuckyScriptVariables(
     const val BUTTON_ENABLED = "\$_BUTTON_ENABLED"
     const val BUTTON_USER_DEFINED = "\$_BUTTON_USER_DEFINED"
     const val INJECTING_LEDS_ENABLED = "\$_INJECTING_LEDS_ENABLED"
+    const val SYSTEM_LEDS_ENABLED = "\$_SYSTEM_LEDS_ENABLED"
     private const val lower = "abcdefghijklmnopqrstuvwxyz"
     private const val upper = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
     private const val digits = "0123456789"
@@ -160,7 +164,7 @@ internal class DuckyScriptVariables(
     )
     val readOnly = usbVariables + randomKeySets.keys + setOf("\$_RANDOM_INT", "\$_RANDOM_SEED")
     val unavailable = setOf(
-      "\$_SYSTEM_LEDS_ENABLED", "\$_STORAGE_LEDS_ENABLED",
+      "\$_STORAGE_LEDS_ENABLED",
       "\$_LED_CONTINUOUS_SHOW_STORAGE_ACTIVITY",
       "\$_EXFIL_LEDS_ENABLED", "\$_LED_SHOW_CAPS", "\$_LED_SHOW_NUM", "\$_LED_SHOW_SCROLL",
       "\$_JITTER_ENABLED", "\$_JITTER_MAX", "\$_CAPSLOCK_ON", "\$_NUMLOCK_ON", "\$_SCROLLLOCK_ON",
@@ -170,7 +174,7 @@ internal class DuckyScriptVariables(
     )
     val reserved = readOnly + unavailable + setOf(
       BUTTON_ENABLED, BUTTON_USER_DEFINED, "\$_BUTTON_PUSH_RECEIVED", "\$_BUTTON_TIMEOUT",
-      "\$_RANDOM_MIN", "\$_RANDOM_MAX", INJECTING_LEDS_ENABLED,
+      "\$_RANDOM_MIN", "\$_RANDOM_MAX", INJECTING_LEDS_ENABLED, SYSTEM_LEDS_ENABLED,
     )
   }
 }

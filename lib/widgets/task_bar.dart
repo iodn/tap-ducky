@@ -44,6 +44,16 @@ class TaskBar extends ConsumerWidget {
         : exec.status;
     final buttonPromptId = exec.isRunning && !exec.stopRequested ? exec.buttonPromptId : null;
     final showScriptButton = exec.isRunning && !exec.stopRequested && exec.scriptButtonAvailable;
+    final Object? pulseKey;
+    if (exec.stopRequested) {
+      pulseKey = null;
+    } else if (exec.isRunning && exec.activityStep > 0) {
+      pulseKey = exec.activityIndicatorEnabled ? (exec.executionId, 'activity', exec.activityStep) : null;
+    } else {
+      pulseKey = exec.systemIndicatorEnabled && exec.systemIndicatorStep > 0
+          ? (exec.executionId, 'system', exec.systemIndicatorStep)
+          : null;
+    }
 
     return Material(
       color: bg,
@@ -61,9 +71,7 @@ class TaskBar extends ConsumerWidget {
               children: [
                 _StatusDot(
                   ok: hid.rootAvailable && hid.hidSupported,
-                  pulseStep: exec.isRunning && !exec.stopRequested && exec.activityIndicatorEnabled
-                      ? exec.activityStep
-                      : 0,
+                  pulseKey: pulseKey,
                 ),
                 const SizedBox(width: 10),
                 Expanded(
@@ -219,10 +227,10 @@ class TaskBar extends ConsumerWidget {
 }
 
 class _StatusDot extends StatelessWidget {
-  const _StatusDot({required this.ok, required this.pulseStep});
+  const _StatusDot({required this.ok, required this.pulseKey});
 
   final bool ok;
-  final int pulseStep;
+  final Object? pulseKey;
 
   @override
   Widget build(BuildContext context) {
@@ -234,9 +242,9 @@ class _StatusDot extends StatelessWidget {
       height: 10,
       decoration: BoxDecoration(color: color, shape: BoxShape.circle),
     );
-    if (!ok || pulseStep == 0 || MediaQuery.disableAnimationsOf(context)) return dot;
+    if (!ok || pulseKey == null || MediaQuery.disableAnimationsOf(context)) return dot;
     return TweenAnimationBuilder<double>(
-      key: ValueKey(pulseStep),
+      key: ValueKey(pulseKey),
       tween: Tween<double>(begin: 0.45, end: 1),
       duration: const Duration(milliseconds: 220),
       builder: (context, opacity, child) => Opacity(opacity: opacity, child: child),

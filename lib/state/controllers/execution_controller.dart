@@ -24,6 +24,8 @@ class ExecutionState {
     this.scriptButtonAvailable = false,
     this.activityIndicatorEnabled = true,
     this.activityStep = 0,
+    this.systemIndicatorEnabled = true,
+    this.systemIndicatorStep = 0,
     this.payloadId,
     this.payloadName,
     this.startedAt,
@@ -42,6 +44,8 @@ class ExecutionState {
   final bool scriptButtonAvailable;
   final bool activityIndicatorEnabled;
   final int activityStep;
+  final bool systemIndicatorEnabled;
+  final int systemIndicatorStep;
   final String? payloadId;
   final String? payloadName;
   final DateTime? startedAt;
@@ -61,6 +65,8 @@ class ExecutionState {
     bool? scriptButtonAvailable,
     bool? activityIndicatorEnabled,
     int? activityStep,
+    bool? systemIndicatorEnabled,
+    int? systemIndicatorStep,
     String? payloadId,
     String? payloadName,
     DateTime? startedAt,
@@ -79,6 +85,8 @@ class ExecutionState {
       scriptButtonAvailable: scriptButtonAvailable ?? this.scriptButtonAvailable,
       activityIndicatorEnabled: activityIndicatorEnabled ?? this.activityIndicatorEnabled,
       activityStep: activityStep ?? this.activityStep,
+      systemIndicatorEnabled: systemIndicatorEnabled ?? this.systemIndicatorEnabled,
+      systemIndicatorStep: systemIndicatorStep ?? this.systemIndicatorStep,
       payloadId: payloadId ?? this.payloadId,
       payloadName: payloadName ?? this.payloadName,
       startedAt: startedAt ?? this.startedAt,
@@ -207,6 +215,7 @@ class ExecutionController extends Notifier<ExecutionState> {
 
     state = state.copyWith(
       isRunning: false,
+      systemIndicatorStep: state.systemIndicatorStep + 1,
       progress: ok ? 1.0 : state.progress,
       status: cancelled ? 'Cancelled' : ok ? 'Completed' : message,
       finishedAt: finishedAt,
@@ -538,9 +547,12 @@ class ExecutionController extends Notifier<ExecutionState> {
       if (id != executionId) return;
 
       final type = evt['type']?.toString() ?? '';
-      if (type == 'activity_indicator') {
-        if (_activeExecutionId == executionId && evt['enabled'] is bool) {
-          state = state.copyWith(activityIndicatorEnabled: evt['enabled'] as bool);
+      if (type == 'activity_indicator' || type == 'system_indicator') {
+        final enabled = evt['enabled'];
+        if (_activeExecutionId == executionId && enabled is bool) {
+          state = type == 'system_indicator'
+              ? state.copyWith(systemIndicatorEnabled: enabled)
+              : state.copyWith(activityIndicatorEnabled: enabled);
         }
         return;
       }
@@ -553,7 +565,7 @@ class ExecutionController extends Notifier<ExecutionState> {
       if (type == 'start') {
         final msg = (evt['message']?.toString() ?? '').trim();
         final m = msg.isNotEmpty ? msg : 'Executing…';
-        state = state.copyWith(progress: 0, status: m);
+        state = state.copyWith(progress: 0, status: m, systemIndicatorStep: state.systemIndicatorStep + 1);
         _pushTail(_mkTail(executionId: executionId, level: 'info', message: m, success: true));
         return;
       }
@@ -706,9 +718,12 @@ class ExecutionController extends Notifier<ExecutionState> {
       if (id != executionId) return;
 
       final type = evt['type']?.toString() ?? '';
-      if (type == 'activity_indicator') {
-        if (_activeExecutionId == executionId && evt['enabled'] is bool) {
-          state = state.copyWith(activityIndicatorEnabled: evt['enabled'] as bool);
+      if (type == 'activity_indicator' || type == 'system_indicator') {
+        final enabled = evt['enabled'];
+        if (_activeExecutionId == executionId && enabled is bool) {
+          state = type == 'system_indicator'
+              ? state.copyWith(systemIndicatorEnabled: enabled)
+              : state.copyWith(activityIndicatorEnabled: enabled);
         }
         return;
       }
@@ -721,7 +736,7 @@ class ExecutionController extends Notifier<ExecutionState> {
       if (type == 'start') {
         final msg = (evt['message']?.toString() ?? '').trim();
         final m = msg.isNotEmpty ? msg : 'Executing…';
-        state = state.copyWith(progress: 0, status: m);
+        state = state.copyWith(progress: 0, status: m, systemIndicatorStep: state.systemIndicatorStep + 1);
         _pushTail(_mkTail(
           executionId: executionId,
           level: 'info',

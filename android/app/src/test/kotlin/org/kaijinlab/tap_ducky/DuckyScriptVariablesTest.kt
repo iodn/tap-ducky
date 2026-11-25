@@ -135,13 +135,25 @@ class DuckyScriptVariablesTest {
 
   @Test
   fun rejectsUnsupportedWritesBeforeRunningAnyCommands() {
-    for (assignment in listOf("\$_JITTER_MAX = 20", "VAR \$_SYSTEM_LEDS_ENABLED = TRUE")) {
+    for (assignment in listOf("\$_JITTER_MAX = 20", "VAR \$_STORAGE_LEDS_ENABLED = TRUE")) {
       val error = assertThrows(DuckyExpressionSyntaxException::class.java) {
         DuckyScriptParser().parse("STRING sample\n$assignment")
       }
       assertEquals(2, error.lineNumber)
       assertTrue(error.message!!.contains("unavailable in TapDucky"))
     }
+  }
+
+  @Test
+  fun keepsTheSystemAndActivityIndicatorsIndependent() {
+    val variables = DuckyScriptVariables({ null }, { null })
+    val estimator = DuckyScriptEstimator(variables, { _, _ -> 0 }, { 0 })
+    val system = DuckyScriptVariables.SYSTEM_LEDS_ENABLED
+    val activity = DuckyScriptVariables.INJECTING_LEDS_ENABLED
+    assertEquals(1, variables.read(system))
+    assertEquals(20L, estimator.estimate("$system = FALSE\nIF ( !$system && $activity ) THEN\nDELAY 20\nEND_IF"))
+    assertEquals(0, variables.read(system))
+    assertEquals(1, variables.read(activity))
   }
 
   @Test

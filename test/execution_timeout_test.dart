@@ -100,18 +100,26 @@ void main() {
     final controller = container.read(executionControllerProvider.notifier);
     await controller.sendRawCommand('DELAY 20');
     final id = service.startedId!;
+    events.add({'type': 'start', 'executionId': id});
     events.add({'type': 'activity_indicator', 'executionId': id, 'enabled': false});
+    events.add({'type': 'system_indicator', 'executionId': id, 'enabled': true});
     events.add({'type': 'step', 'executionId': id, 'progress': 0.5});
     await tester.pump();
     final active = container.read(executionControllerProvider);
     expect(active.activityIndicatorEnabled, isFalse);
     expect(active.activityStep, 1);
+    expect(active.systemIndicatorEnabled, isTrue);
+    expect(active.systemIndicatorStep, 1);
     expect(active.isRunning, isTrue);
     expect(active.progress, 0.5);
+    events.add({'type': 'system_indicator', 'executionId': id, 'enabled': false});
+    await tester.pump();
+    expect(container.read(executionControllerProvider).systemIndicatorEnabled, isFalse);
     await controller.stop();
     expect(service.cancelledIds, [id]);
     events.add({'type': 'done', 'executionId': id, 'cancelled': true});
     await tester.pump();
+    expect(container.read(executionControllerProvider).systemIndicatorStep, 2);
   });
 
   testWidgets('polling scripts receive presses only for the active run', (tester) async {

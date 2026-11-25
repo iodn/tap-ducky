@@ -1861,9 +1861,9 @@ class DuckyScriptExecutor(
     val key = normalizeVarName(name)
     if (internalVariables.write(key, value)) {
       if (key == DuckyScriptVariables.BUTTON_ENABLED) updateScriptButton()
-      if (key == DuckyScriptVariables.INJECTING_LEDS_ENABLED) {
+      if (key == DuckyScriptVariables.INJECTING_LEDS_ENABLED || key == DuckyScriptVariables.SYSTEM_LEDS_ENABLED) {
         emitExec(mapOf(
-          "type" to "activity_indicator",
+          "type" to if (key == DuckyScriptVariables.SYSTEM_LEDS_ENABLED) "system_indicator" else "activity_indicator",
           "executionId" to executionId,
           "enabled" to (value != 0),
         ))

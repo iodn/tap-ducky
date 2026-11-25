@@ -29,7 +29,7 @@ END_IF
   });
 
   test('reports unsupported writes once as errors', () {
-    for (final script in [r'$_JITTER_MAX = 20', r'VAR $_SYSTEM_LEDS_ENABLED = TRUE']) {
+    for (final script in [r'$_JITTER_MAX = 20', r'VAR $_STORAGE_LEDS_ENABLED = TRUE']) {
       final result = validator.validate(script);
       expect(result.issues.single.severity, IssueSeverity.error);
       expect(result.issues.single.message, contains('unavailable in TapDucky'));
