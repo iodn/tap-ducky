@@ -678,6 +678,10 @@ class DuckyScriptParser {
 
   private fun validateExpressions(commands: List<DuckyCommand>) {
     val evaluator = ExpressionEvaluator()
+    val functionNames = commands.asSequence()
+      .filter { it.type == CommandType.FUNCTION }
+      .map { it.args.first() }
+      .toSet()
     for (command in commands) {
       val expressions = when (command.type) {
         CommandType.VAR, CommandType.CALL_FUNCTION -> command.args.drop(1)
@@ -689,9 +693,15 @@ class DuckyScriptParser {
       for (expression in expressions) {
         if (expression.isBlank()) continue
         try {
-          evaluator.validateSyntax(expression) { name ->
-            if (name == DuckyScriptVariables.BUTTON_PUSH_RECEIVED) readsButtonPress = true
-          }
+          evaluator.validateSyntax(
+            expression,
+            onVariableRead = { name ->
+              if (name == DuckyScriptVariables.BUTTON_PUSH_RECEIVED) readsButtonPress = true
+            },
+            onFunctionCall = { name ->
+              if (name !in functionNames) throw DuckyExpressionSyntaxException("Function '$name' is not declared")
+            },
+          )
         } catch (e: DuckyExpressionSyntaxException) {
           e.lineNumber = command.lineNumber
           throw e

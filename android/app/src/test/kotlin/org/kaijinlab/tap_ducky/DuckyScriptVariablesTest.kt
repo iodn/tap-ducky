@@ -456,6 +456,25 @@ class DuckyScriptVariablesTest {
   }
 
   @Test
+  fun validatesExpressionCallsBeforeExecutionAndAcceptsForwardDeclarations() {
+    val script = """
+      DELAY (duration() + 1)
+      FUNCTION duration()
+        RETURN 19
+      END_FUNCTION
+    """.trimIndent()
+    val estimator = DuckyScriptEstimator(DuckyScriptVariables({ null }, { null }), { _, _ -> 0 }, { 0 })
+    assertEquals(20L, estimator.estimate(script))
+
+    val invalid = "$script\nIF FALSE THEN\n  DELAY Duration()\nEND_IF"
+    val error = assertThrows(DuckyExpressionSyntaxException::class.java) {
+      DuckyScriptParser().parse(invalid)
+    }
+    assertEquals(6, error.lineNumber)
+    assertEquals("Function 'Duration' is not declared", error.message)
+  }
+
+  @Test
   fun usesTheSameVariableNamesForDeclarationsAssignmentsAndReads() {
     val estimator = DuckyScriptEstimator(DuckyScriptVariables({ null }, { null }), { _, _ -> 0 }, { 0 })
     val script = """

@@ -23,11 +23,24 @@ class ExpressionEvaluator(
     callFunction: ((String) -> Int)? = null,
   ): Int = Parser(tokenize(expression), readUserVariable, readInternalVariable, callFunction).parse()
 
-  internal fun validateSyntax(expression: String, onVariableRead: (String) -> Unit) {
-    Parser(tokenize(expression), { null }, { name ->
-      onVariableRead(name)
-      0
-    }, syntaxOnly = true).parse()
+  internal fun validateSyntax(
+    expression: String,
+    onVariableRead: (String) -> Unit,
+    onFunctionCall: (String) -> Unit,
+  ) {
+    Parser(
+      tokenize(expression),
+      readUserVariable = { null },
+      readInternalVariable = { name ->
+        onVariableRead(name)
+        0
+      },
+      callFunction = { name ->
+        onFunctionCall(name)
+        0
+      },
+      syntaxOnly = true,
+    ).parse()
   }
 
   private fun tokenize(expr: String): List<Tok> {
@@ -358,7 +371,6 @@ class ExpressionEvaluator(
           if (match(Kind.RPAREN) == null) {
             throw DuckyExpressionSyntaxException("Expected ')' in ${id.text}(). Function calls in expressions take no arguments")
           }
-          if (syntaxOnly) return 0
           return callFunction?.invoke(id.text)
             ?: throw DuckyExpressionSyntaxException("Function '${id.text}' is not declared")
         }
