@@ -87,12 +87,34 @@ object Configfs {
         echo bound
         printf 'state=%s\n' "${'$'}(cat "/sys/class/udc/${'$'}UDC_NAME/state" 2>/dev/null)"
         printf 'vid=%s\npid=%s\n' "${'$'}(cat "${'$'}G/idVendor")" "${'$'}(cat "${'$'}G/idProduct")"
-        for link in "${'$'}G"/configs/*/*; do
-          [ -L "${'$'}link" ] || continue
-          case "${'$'}(readlink "${'$'}link")" in
-            */mass_storage.*|mass_storage.*) echo storage=1; break ;;
-          esac
+        storage=
+        for config in "${'$'}G"/configs/*; do
+          [ -d "${'$'}config" ] || continue
+          primary="${'$'}config/${prefix}0"
+          primary_target=${'$'}(readlink "${'$'}primary" 2>/dev/null)
+          if [ ! -L "${'$'}primary" ] || [ ! -d "${'$'}primary" ] ||
+            [ "${'$'}{primary_target##*/}" != "${prefix}0" ]; then
+            storage=unknown
+            break
+          fi
+          config_storage=0
+          for link in "${'$'}config"/*; do
+            [ -L "${'$'}link" ] || continue
+            target=${'$'}(readlink "${'$'}link") || { config_storage=unknown; break; }
+            case "${'$'}{target##*/}" in
+              mass_storage.*)
+                if [ -d "${'$'}link" ]; then config_storage=1; else config_storage=unknown; fi
+                break
+                ;;
+            esac
+          done
+          if [ -n "${'$'}storage" ] && [ "${'$'}storage" != "${'$'}config_storage" ]; then
+            storage=unknown
+            break
+          fi
+          storage=${'$'}config_storage
         done
+        printf 'storage=%s\n' "${'$'}{storage:-unknown}"
         devices_ready=1
         for fn in ${prefix}0 ${prefix}1 ${prefix}2; do
           for link in "${'$'}G"/configs/*/"${'$'}fn"; do

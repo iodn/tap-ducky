@@ -1649,7 +1649,7 @@ class GadgetManager(
   internal sealed interface SessionProbe {
     val scriptAttackMode: Int?
       get() = when (this) {
-        is Bound -> if (storage) 3 else 1
+        is Bound -> storage?.let { if (it) 3 else 1 }
         Unbound -> 0
         Unknown -> null
       }
@@ -1663,7 +1663,7 @@ class GadgetManager(
       val devicesReady: Boolean,
       val vid: Int? = null,
       val pid: Int? = null,
-      val storage: Boolean = false,
+      val storage: Boolean? = null,
     ) : SessionProbe
     data object Unbound : SessionProbe
     data object Unknown : SessionProbe
@@ -1705,7 +1705,11 @@ class GadgetManager(
       binding.copy(
         vid = hak5UsbId(functions["vid"]),
         pid = hak5UsbId(functions["pid"]),
-        storage = functions["storage"] == "1",
+        storage = when (functions["storage"]) {
+          "0" -> false
+          "1" -> true
+          else -> null
+        },
       )
     } else SessionProbe.Unknown
   }

@@ -65,7 +65,8 @@ class DuckyScriptVariablesTest {
     val keyboard = GadgetManager.SessionProbe.Bound(
       "keyboard", "/dev/hidg0", null, null, "not attached", false,
     )
-    assertEquals(1, keyboard.scriptAttackMode)
+    assertNull(keyboard.scriptAttackMode)
+    assertEquals(1, keyboard.copy(storage = false).scriptAttackMode)
     assertEquals(3, keyboard.copy(storage = true).scriptAttackMode)
     assertEquals(0, GadgetManager.SessionProbe.Unbound.scriptAttackMode)
     assertNull(GadgetManager.SessionProbe.Unknown.scriptAttackMode)

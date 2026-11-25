@@ -1,6 +1,7 @@
 package org.kaijinlab.tap_ducky
 
 import java.io.File
+import java.nio.file.Files
 import java.util.concurrent.TimeUnit
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -12,6 +13,43 @@ import org.junit.rules.TemporaryFolder
 
 class StockUsbVerificationTest {
   @get:Rule val directory = TemporaryFolder()
+
+  @Test
+  fun reportsStorageOnlyWhenEveryUsbConfigurationAgrees() {
+    val base = directory.newFolder()
+    val gadget = File(base, "stock").apply { mkdir() }
+    File(gadget, "UDC").writeText("fixture_udc\n")
+    File(gadget, "idVendor").writeText("0x1234\n")
+    File(gadget, "idProduct").writeText("0x5678\n")
+    val keyboard = File(gadget, "functions/hid.tapducky0").apply { mkdirs() }
+    File(keyboard, "protocol").writeText("1\n")
+    val storage = File(gadget, "functions/mass_storage.0").apply { mkdirs() }
+    val first = File(gadget, "configs/b.1").apply { mkdirs() }
+    val second = File(gadget, "configs/b.2").apply { mkdirs() }
+    Files.createSymbolicLink(File(first, keyboard.name).toPath(), keyboard.toPath())
+    Files.createSymbolicLink(File(second, keyboard.name).toPath(), keyboard.toPath())
+    val script = Configfs.buildProbeSessionScript("stock", shared = true)
+      .replace("/config/usb_gadget /sys/kernel/config/usb_gadget", "'${base.path}'")
+
+    fun readStorage(): String {
+      val shell = ProcessBuilder("/bin/sh", "-c", script).start()
+      try {
+        assertTrue(shell.waitFor(10, TimeUnit.SECONDS))
+        assertEquals(0, shell.exitValue())
+        return shell.inputStream.bufferedReader().use { it.lines().filter { line -> line.startsWith("storage=") }.findFirst().get() }
+      } finally {
+        shell.destroyForcibly()
+      }
+    }
+
+    assertEquals("storage=0", readStorage())
+    Files.createSymbolicLink(File(second, storage.name).toPath(), storage.toPath())
+    assertEquals("storage=unknown", readStorage())
+    Files.createSymbolicLink(File(first, storage.name).toPath(), storage.toPath())
+    assertEquals("storage=1", readStorage())
+    Files.delete(File(second, keyboard.name).toPath())
+    assertEquals("storage=unknown", readStorage())
+  }
 
   @Test
   fun restoresOnlyChangedPowerDescriptorsOnAnUnpluggedPhone() {
