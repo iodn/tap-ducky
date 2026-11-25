@@ -683,13 +683,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 ExpansionTile(
                   leading: const Icon(Icons.tune),
                   title: const Text('Keyboard reliability'),
-                  subtitle: const Text('USB readiness and unsupported characters'),
                   childrenPadding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
                   expandedCrossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     _ExecutionSlider(
-                      title: 'USB readiness wait',
-                      summary: 'How long Android waits for the USB gadget to become ready.',
+                      title: 'Direct USB report wait',
+                      summary: 'How long raw keyboard and media controls wait for USB.',
                       value: settings.hidGraceWindowMs.toDouble(),
                       min: 0,
                       max: 5000,

@@ -436,23 +436,34 @@ class GadgetManager(
     return kotlin.math.max(0L, (totalUs / 1000.0).roundToInt().toLong())
   }
 
-  fun estimateTypeStringDurationMs(text: String, perCharDelayMs: Int): Long {
+  private fun estimateTypeStringDurationMs(text: String, perCharDelayMs: Int, mapper: KeyboardMapper): Long {
     if (text.isEmpty()) return 0
     val timing = keyboardTiming
     val interUs = effectiveDelayUsForEstimate(timing.interKeyUs)
     val downUs = effectiveDelayUsForEstimate(timing.holdUs())
-    var count = 0
+    var strokes = 0
+    var pauses = 0
     for (ch in text) {
-      if (keyboardMapper.getStrokeForChar(ch) != null) {
-        count++
-      } else {
-        count += countFallbackChars(ch)
+      val direct = mapper.getStrokeForChar(ch)
+      if (direct != null) {
+        strokes += if (direct.terminatorKeyCode == null) 1 else 2
+        pauses++
+        continue
       }
+      val composed = ArrayList<KeyStroke>(2)
+      if (addComposedUnicodeStrokes(ch, composed, mapper)) {
+        strokes += composed.size + composed.count { it.terminatorKeyCode != null }
+        pauses++
+        continue
+      }
+      val fallback = countFallbackChars(ch, mapper)
+      strokes += fallback
+      pauses += fallback
     }
-    if (count <= 0) return 0
-    val baseMs = ((interUs + downUs) * count) / 1000.0
-    val delayMs = perCharDelayMs.coerceAtLeast(0) * count.toLong()
-    val reportCount = 1L + (count.toLong() * 2L)
+    if (strokes <= 0) return 0
+    val baseMs = ((interUs + downUs).toLong() * strokes) / 1000.0
+    val delayMs = perCharDelayMs.coerceAtLeast(0) * pauses.toLong()
+    val reportCount = 1L + (strokes.toLong() * 2L)
     val overheadMs = (reportCount * timing.estimatedReportOverheadUs) / 1000.0
     var extraMs = 0L
     if (perCharDelayMs <= 0 && flushEveryChars > 0 && flushDelayMs > 0) {
@@ -1014,10 +1025,11 @@ class GadgetManager(
     log.log("dial", "Dial shortcuts updated (count=${bindings.size})")
   }
 
-  fun estimateDuckyScriptDurationMs(script: String, delayMultiplier: Double = 1.0): Long {
+  fun estimateDuckyScriptDurationMs(script: String, delayMultiplier: Double = 1.0, layoutId: Int? = null): Long {
+    val mapper = layoutId?.let(::KeyboardMapper) ?: keyboardMapper
     val estimator = DuckyScriptEstimator(
-      internalVariables = DuckyScriptVariables(::readScriptUsbVariable, ::scriptKeyStroke),
-      estimateTextDuration = ::estimateTypeStringDurationMs,
+      internalVariables = DuckyScriptVariables(::readScriptUsbVariable, mapper::getStrokeForChar),
+      estimateTextDuration = { text, delay -> estimateTypeStringDurationMs(text, delay, mapper) },
       estimateKeyTapDuration = ::estimateKeyTapDurationMs,
       delayMultiplier = delayMultiplier,
       onDelayClamp = { log.log("ducky", it) },
@@ -1407,14 +1419,18 @@ class GadgetManager(
     }
   }
 
-  private fun addComposedUnicodeStrokes(ch: Char, strokes: MutableList<KeyStroke>): Boolean {
+  private fun addComposedUnicodeStrokes(
+    ch: Char,
+    strokes: MutableList<KeyStroke>,
+    mapper: KeyboardMapper = keyboardMapper,
+  ): Boolean {
     val normalized = Normalizer.normalize(ch.toString(), Normalizer.Form.NFD)
     if (normalized.length < 2) return false
 
     val base = normalized[0]
     val accent = combiningAccentToDeadKey(normalized.substring(1)) ?: return false
-    val accentStroke = keyboardMapper.getStrokeForChar(accent) ?: return false
-    val baseStroke = keyboardMapper.getStrokeForChar(base) ?: return false
+    val accentStroke = mapper.getStrokeForChar(accent) ?: return false
+    val baseStroke = mapper.getStrokeForChar(base) ?: return false
 
     strokes.add(KeyStroke(accentStroke.modifiers, accentStroke.keyCode))
     strokes.add(baseStroke)
@@ -1440,20 +1456,15 @@ class GadgetManager(
     }
   }
 
-  private fun countFallbackChars(ch: Char): Int {
+  private fun countFallbackChars(ch: Char, mapper: KeyboardMapper): Int {
     return when (unicodeFallbackMode) {
       "skip", "warn" -> 0
       "ascii" -> {
-        val strokes = ArrayList<KeyStroke>(2)
-        if (addComposedUnicodeStrokes(ch, strokes)) {
-          return strokes.size
-        }
-
         val ascii = transliterateToAscii(ch)
         val out = if (ascii.isEmpty()) "?" else ascii
         var count = 0
         for (c in out) {
-          if (keyboardMapper.getStrokeForChar(c) != null) {
+          if (mapper.getStrokeForChar(c) != null) {
             count++
           }
         }

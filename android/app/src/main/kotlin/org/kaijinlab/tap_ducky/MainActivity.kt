@@ -109,7 +109,8 @@ class MainActivity : FlutterActivity() {
           val args = call.arguments as? Map<*, *>
           val script = args?.get("script")?.toString() ?: ""
           val multiplier = (args?.get("delayMultiplier") as? Number)?.toDouble() ?: 1.0
-          runAsync(result) { manager.estimateDuckyScriptDurationMs(script, multiplier) }
+          val layoutId = (args?.get("keyboardLayoutId") as? Number)?.toInt()
+          runAsync(result) { manager.estimateDuckyScriptDurationMs(script, multiplier, layoutId) }
         }
         "getTypingSpeedFactor", "getTypingSpeed" -> runAsync(result) { manager.getTypingSpeedFactor() }
         "setTypingSpeedFactor", "setTypingSpeed" -> {

@@ -12,6 +12,7 @@ import '../../data/models/payload.dart';
 import '../../data/services/ducky_script.dart';
 import '../../data/services/ducky_script_validator.dart';
 import '../../data/services/local_drafts_service.dart';
+import '../../state/controllers/advanced_settings_controller.dart';
 import '../../state/controllers/app_settings_controller.dart';
 import '../../state/controllers/payloads_controller.dart';
 import '../../state/providers.dart';
@@ -75,6 +76,22 @@ class _PayloadEditorScreenState extends ConsumerState<PayloadEditorScreen>
     super.initState();
     _tabs = TabController(length: 3, vsync: this)..addListener(_changeSection);
     _scriptCtrl.addListener(_onScriptChanged);
+    ref.listenManual(
+      appSettingsControllerProvider.select((state) {
+        final settings = state.value;
+        return (
+          settings?.delayMultiplier,
+          settings?.typingSpeedFactor,
+          settings?.unicodeFallbackMode,
+          settings?.riskyFastMode,
+        );
+      }),
+      (_, _) => _refreshEstimateForSettings(),
+    );
+    ref.listenManual(
+      advancedSettingsControllerProvider.select((state) => state.value?.keyboardLayoutBackendId),
+      (_, _) => _refreshEstimateForSettings(),
+    );
     if (widget.payloadId != null) {
       ref.listenManual(
         payloadsControllerProvider,
@@ -113,17 +130,25 @@ class _PayloadEditorScreenState extends ConsumerState<PayloadEditorScreen>
     });
     _validationDebounce?.cancel();
     _validationDebounce = Timer(const Duration(milliseconds: 500), () {
-      if (!mounted) return;
-      final mul = _currentDelayMultiplier();
-      setState(() {
-        _validationResult = _validator.validate(
-          _scriptCtrl.text,
-          delayMultiplier: mul,
-        );
-        _showValidation = _scriptCtrl.text.trim().isNotEmpty;
-      });
-      _requestEngineEstimate(_scriptCtrl.text);
+      if (mounted) _validateAndRequestEstimate();
     });
+  }
+
+  void _refreshEstimateForSettings() {
+    if (_scriptCtrl.text.trim().isEmpty) return;
+    _validationDebounce?.cancel();
+    _validateAndRequestEstimate();
+  }
+
+  void _validateAndRequestEstimate() {
+    final script = _scriptCtrl.text;
+    setState(() {
+      _engineEstimateMs = null;
+      _engineIssue = null;
+      _validationResult = _validator.validate(script, delayMultiplier: _currentDelayMultiplier());
+      _showValidation = script.trim().isNotEmpty;
+    });
+    _requestEngineEstimate(script);
   }
 
   Future<void> _showLocalDraft() async {
@@ -184,12 +209,14 @@ class _PayloadEditorScreenState extends ConsumerState<PayloadEditorScreen>
         DuckyScript.hasPlaceholders(script))
       return;
     final mul = _currentDelayMultiplier();
+    final layout = ref.read(advancedSettingsControllerProvider).value?.keyboardLayoutBackendId;
     _estimateDebounce = Timer(const Duration(milliseconds: 600), () async {
       final service = ref.read(platformGadgetServiceProvider);
       try {
         final ms = await service.estimateDuckyScriptDurationMs(
           script: script,
           delayMultiplier: mul,
+          keyboardLayoutId: layout,
         );
         if (!mounted || revision != _estimateRevision) return;
         setState(() => _engineEstimateMs = ms);

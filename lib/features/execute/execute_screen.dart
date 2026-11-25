@@ -265,7 +265,7 @@ class _ExecutionSpeedCardState extends ConsumerState<_ExecutionSpeedCard> {
     super.dispose();
   }
 
-  void _refreshEngineEstimate(String? script, double multiplier, Object key) {
+  void _refreshEngineEstimate(String? script, double multiplier, int? layout, Object key) {
     if (key == _estimateKey) return;
     _estimateKey = key;
     _engineEstimateMs = null;
@@ -278,6 +278,7 @@ class _ExecutionSpeedCardState extends ConsumerState<_ExecutionSpeedCard> {
         final ms = await service.estimateDuckyScriptDurationMs(
           script: script,
           delayMultiplier: multiplier,
+          keyboardLayoutId: layout,
         );
         if (!mounted || token != _estimateToken) return;
         setState(() => _engineEstimateMs = ms);
@@ -307,7 +308,7 @@ class _ExecutionSpeedCardState extends ConsumerState<_ExecutionSpeedCard> {
             : script;
         final validation = candidate == null ? null : widget.validator.validate(candidate, delayMultiplier: currentMultiplier);
         final estimateScript = validation?.hasErrors == false ? candidate : null;
-        _refreshEngineEstimate(estimateScript, currentMultiplier, (
+        _refreshEngineEstimate(estimateScript, currentMultiplier, layout, (
           estimateScript, currentMultiplier, settings.typingSpeedFactor,
           settings.unicodeFallbackMode, settings.riskyFastMode, layout,
         ));
@@ -322,7 +323,7 @@ class _ExecutionSpeedCardState extends ConsumerState<_ExecutionSpeedCard> {
           clipBehavior: Clip.antiAlias,
           child: ExpansionTile(
             leading: Icon(Icons.speed, color: cs.primary),
-            title: const Text('Script speed'),
+            title: const Text('Script pauses'),
             subtitle: Text('$speed$estimate'),
             childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
             expandedCrossAxisAlignment: CrossAxisAlignment.start,
@@ -739,9 +740,12 @@ class _ConsoleTabState extends ConsumerState<_ConsoleTab> {
                             children: [
                               Icon(Icons.code, size: 16, color: cs.onSurfaceVariant),
                               const SizedBox(width: 8),
-                              Text(
-                                'Select a preset...',
-                                style: TextStyle(color: cs.onSurfaceVariant),
+                              Expanded(
+                                child: Text(
+                                  'Select a preset',
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(color: cs.onSurfaceVariant),
+                                ),
                               ),
                             ],
                           ),

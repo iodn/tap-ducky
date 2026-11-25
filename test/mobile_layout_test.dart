@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tap_ducky/app/theme.dart';
 import 'package:tap_ducky/data/db/usb_ids_db.dart';
+import 'package:tap_ducky/data/models/advanced_settings.dart';
 import 'package:tap_ducky/data/models/app_settings.dart';
 import 'package:tap_ducky/data/models/host_os.dart';
 import 'package:tap_ducky/data/models/log_entry.dart';
@@ -16,6 +17,7 @@ import 'package:tap_ducky/features/schedule/schedule_editor_screen.dart';
 import 'package:tap_ducky/features/schedule/schedule_screen.dart';
 import 'package:tap_ducky/features/payloads/payloads_screen.dart';
 import 'package:tap_ducky/features/settings/settings_screen.dart';
+import 'package:tap_ducky/state/controllers/advanced_settings_controller.dart';
 import 'package:tap_ducky/state/controllers/app_settings_controller.dart';
 import 'package:tap_ducky/state/controllers/execution_controller.dart';
 import 'package:tap_ducky/state/controllers/hid_status_controller.dart';
@@ -61,6 +63,10 @@ class _Settings extends AppSettingsController {
   final String lastProfileType;
   String? get savedProfile => state.value?.lastProfileType;
 
+  void updateTiming({double? pauses, double? keys}) {
+    state = AsyncData(state.requireValue.copyWith(delayMultiplier: pauses, typingSpeedFactor: keys));
+  }
+
   @override
   Future<AppSettings> build() async =>
       AppSettings.defaults().copyWith(lastProfileType: lastProfileType);
@@ -70,6 +76,15 @@ class _Settings extends AppSettingsController {
     state = AsyncData(
       state.requireValue.copyWith(lastProfileType: profileType),
     );
+  }
+}
+
+class _Layouts extends AdvancedSettingsController {
+  @override
+  Future<AdvancedSettings> build() async => AdvancedSettings.defaults();
+
+  void select(String id) {
+    state = AsyncData(state.requireValue.copyWith(keyboardLayout: id));
   }
 }
 
@@ -157,6 +172,7 @@ Future<void> _pumpScreen(
   _Settings? settings,
   ExecutionController? execution,
   UsbIdsDb? usbDb,
+  _Layouts? layouts,
 }) async {
   tester.view.devicePixelRatio = 1;
   tester.view.physicalSize = size;
@@ -170,6 +186,7 @@ Future<void> _pumpScreen(
         appSettingsControllerProvider.overrideWith(
           () => settings ?? _Settings(),
         ),
+        advancedSettingsControllerProvider.overrideWith(() => layouts ?? _Layouts()),
         payloadsControllerProvider.overrideWith(() => _Payloads(payloads)),
         schedulerControllerProvider.overrideWith(() => _Schedules(tasks)),
         logsControllerProvider.overrideWith(_Logs.new),
@@ -224,7 +241,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Keyboard reliability'));
     await tester.pumpAndSettle();
-    expect(find.text('USB readiness wait'), findsOneWidget);
+    expect(find.text('Direct USB report wait'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
@@ -715,6 +732,36 @@ void main() {
     expect(find.text('Missing closing parenthesis in expression'), findsOneWidget);
   });
 
+  testWidgets('payload editor refreshes estimates after timing and layout settings change', (tester) async {
+    const channel = MethodChannel('org.kaijinlab.tap_ducky/gadget');
+    final messenger = TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    final estimates = <Map<dynamic, dynamic>>[];
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      if (call.method != 'estimateDuckyScriptDuration') return null;
+      estimates.add(call.arguments as Map<dynamic, dynamic>);
+      return 100;
+    });
+    addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+    final settings = _Settings();
+    final layouts = _Layouts();
+    await _pumpScreen(tester, const PayloadEditorScreen(), size: const Size(420, 900), settings: settings, layouts: layouts);
+    await tester.enterText(find.byKey(const ValueKey('payload-script-editor')), 'STRING hello');
+    await tester.pump(const Duration(milliseconds: 500));
+    await tester.pump(const Duration(milliseconds: 600));
+    expect(estimates.single['keyboardLayoutId'], 0);
+
+    settings.updateTiming(keys: 2);
+    await tester.pump(const Duration(milliseconds: 600));
+    expect(estimates, hasLength(2));
+
+    settings.updateTiming(pauses: 2);
+    layouts.select('fr');
+    await tester.pump(const Duration(milliseconds: 600));
+    expect(estimates, hasLength(3));
+    expect(estimates.last['keyboardLayoutId'], 10);
+    expect(estimates.last['delayMultiplier'], 2);
+  });
+
   testWidgets('schedule cards wrap long labels and metadata', (tester) async {
     await _pumpScreen(
       tester,
@@ -765,7 +812,7 @@ void main() {
     expect(tester.getRect(run).bottom, lessThan(568));
     expect(
       tester.getRect(run).bottom,
-      lessThan(tester.getRect(find.text('Script speed')).top),
+      lessThan(tester.getRect(find.text('Script pauses')).top),
     );
     await tester.scrollUntilVisible(find.text('Command'), 200);
     final send = find.widgetWithIcon(IconButton, Icons.send);

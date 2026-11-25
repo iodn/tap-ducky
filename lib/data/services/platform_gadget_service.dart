@@ -461,10 +461,15 @@ class PlatformGadgetService {
   Future<int> estimateDuckyScriptDurationMs({
     required String script,
     required double delayMultiplier,
+    int? keyboardLayoutId,
   }) async {
     final v = await _methods.invokeMethod<dynamic>(
       'estimateDuckyScriptDuration',
-      {'script': script, 'delayMultiplier': delayMultiplier},
+      {
+        'script': script,
+        'delayMultiplier': delayMultiplier,
+        if (keyboardLayoutId != null) 'keyboardLayoutId': keyboardLayoutId,
+      },
     );
     if (v is num) return v.toInt();
     return int.tryParse(v?.toString() ?? '') ?? 0;
