@@ -194,6 +194,7 @@ class DuckyScriptValidator {
     'DISABLE_BUTTON',
     'BUTTON_DEF',
     'END_BUTTON',
+    'STOP_PAYLOAD',
     'SLEEP_UNTIL',
     'SLEEPUNTIL',
     'RANDOM_LOWERCASE_LETTER',
@@ -866,6 +867,7 @@ class DuckyScriptValidator {
         case 'WAIT_FOR_BUTTON_PRESS':
         case 'ENABLE_BUTTON':
         case 'DISABLE_BUTTON':
+        case 'STOP_PAYLOAD':
           commandCount++;
           if (parts.length != 1) {
             issues.add(ValidationIssue(

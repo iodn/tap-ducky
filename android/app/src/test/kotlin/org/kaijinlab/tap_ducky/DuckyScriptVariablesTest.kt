@@ -9,6 +9,26 @@ import org.junit.Test
 
 class DuckyScriptVariablesTest {
   @Test
+  fun stopPayloadEndsTheWholeRunEvenInsideAFunctionAndTryBlock() {
+    val estimator = DuckyScriptEstimator(DuckyScriptVariables({ null }, { null }), { _, _ -> 0 }, { 0 })
+    val script = """
+      FUNCTION finish()
+        STOP_PAYLOAD
+        DELAY 50
+      END_FUNCTION
+      DELAY 20
+      TRY
+        finish()
+      CATCH
+        DELAY 100
+      END_TRY
+      DELAY 200
+    """.trimIndent()
+    assertEquals(20L, estimator.estimate(script))
+    assertThrows(IllegalArgumentException::class.java) { DuckyScriptParser().parse("STOP_PAYLOAD 1") }
+  }
+
+  @Test
   fun preservesAcceptedCallbacksWhenClosingButtonInput() {
     val variables = DuckyScriptVariables({ null }, { null })
     variables.defineButtonCallback()

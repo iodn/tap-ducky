@@ -57,6 +57,7 @@ enum class CommandType {
   DISABLE_BUTTON,
   BUTTON_DEF,
   END_BUTTON,
+  STOP_PAYLOAD,
   FUNCTION,
   END_FUNCTION,
   RETURN,
@@ -293,6 +294,10 @@ class DuckyScriptParser {
           val type = if (cmd == "BUTTONDEF") CommandType.BUTTON_DEF else CommandType.END_BUTTON
           require(parts.size == 1) { "Line $lineNumber: ${type.name} takes no arguments" }
           commands.add(DuckyCommand(type, emptyList(), lineNumber))
+        }
+        "STOPPAYLOAD" -> {
+          require(parts.size == 1) { "Line $lineNumber: STOP_PAYLOAD takes no arguments" }
+          commands.add(DuckyCommand(CommandType.STOP_PAYLOAD, emptyList(), lineNumber))
         }
 
         "STRING", "STRINGLN" -> {
@@ -742,6 +747,8 @@ private fun endButtonIndex(commands: List<DuckyCommand>, start: Int, endExclusiv
   (start + 1 until endExclusive).firstOrNull { commands[it].type == CommandType.END_BUTTON }
     ?: throw IllegalArgumentException("Line ${commands[start].lineNumber}: missing END_BUTTON in this block")
 
+private class StopPayloadSignal : RuntimeException()
+
 private class TimingController(
   private val delayMultiplier: Double,
   private val onClamp: (String) -> Unit,
@@ -870,6 +877,8 @@ class DuckyScriptExecutor(
       throw IllegalStateException("Execution cancelled")
     } catch (e: ReturnSignal) {
       setVar("$?", e.value)
+    } catch (_: StopPayloadSignal) {
+      setExitCode(0)
     } catch (e: Exception) {
       log.logError("ducky", "Execution failed: ${e.message}")
       manager.releaseHeldInputBestEffort()
@@ -998,6 +1007,8 @@ class DuckyScriptExecutor(
           } catch (e: ButtonPromptFailure) {
             throw e
           } catch (e: ReturnSignal) {
+            throw e
+          } catch (e: StopPayloadSignal) {
             throw e
           } catch (e: Exception) {
             if (catchIndex != null) {
@@ -1530,6 +1541,8 @@ class DuckyScriptExecutor(
         setVar(DuckyScriptVariables.BUTTON_ENABLED, if (cmd.type == CommandType.ENABLE_BUTTON) 1 else 0)
         setExitCode(0)
       }
+
+      CommandType.STOP_PAYLOAD -> throw StopPayloadSignal()
 
       CommandType.SLEEP_UNTIL -> {
         val arg = cmd.args.firstOrNull().orEmpty()
@@ -2090,6 +2103,8 @@ internal class DuckyScriptEstimator(
       executeRange(processed, 0, processed.size)
     } catch (e: ReturnSignal) {
       setVar("$?", e.value)
+    } catch (_: StopPayloadSignal) {
+      setExitCode(0)
     } catch (e: DuckyExpressionSyntaxException) {
       e.lineNumber = currentLine
       throw e
@@ -2180,6 +2195,8 @@ internal class DuckyScriptEstimator(
             val tryEnd = catchIndex ?: endTry
             executeRange(commands, i + 1, tryEnd)
           } catch (e: ReturnSignal) {
+            throw e
+          } catch (e: StopPayloadSignal) {
             throw e
           } catch (e: EstimateLimit) {
             throw e
@@ -2367,6 +2384,8 @@ internal class DuckyScriptEstimator(
         setVar(DuckyScriptVariables.BUTTON_ENABLED, if (cmd.type == CommandType.ENABLE_BUTTON) 1 else 0)
         setExitCode(0)
       }
+
+      CommandType.STOP_PAYLOAD -> throw StopPayloadSignal()
 
       CommandType.DEFAULTDELAY,
       CommandType.DEFAULT_DELAY -> {

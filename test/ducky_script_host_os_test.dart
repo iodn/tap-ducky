@@ -7,13 +7,14 @@ void main() {
   test('recognizes button definitions and checks their delimiters', () {
     final result = validator.validate(r'''
 BUTTON_DEF
-  DELAY 20
+  STOP_PAYLOAD
 END_BUTTON
 IF $_BUTTON_USER_DEFINED THEN
   $_BUTTON_USER_DEFINED = FALSE
 END_IF
 ''');
     expect(result.issues, isEmpty);
+    expect(validator.validate('STOP_PAYLOAD 1').hasErrors, isTrue);
     for (final script in ['BUTTON_DEF', 'END_BUTTON', 'BUTTON_DEF\nBUTTON_DEF\nEND_BUTTON']) {
       expect(validator.validate(script).hasErrors, isTrue, reason: script);
     }
