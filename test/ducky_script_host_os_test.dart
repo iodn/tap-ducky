@@ -4,8 +4,8 @@ import 'package:tap_ducky/data/services/ducky_script_validator.dart';
 void main() {
   final validator = DuckyScriptValidator();
 
-  test('recognizes LED_OFF and supported indicator variables', () {
-    final result = validator.validate('LED_OFF\n' r'$_INJECTING_LEDS_ENABLED = TRUE');
+  test('recognizes LED commands and supported indicator variables', () {
+    final result = validator.validate('LED_G\nLED_R\nLED_OFF\n' r'$_INJECTING_LEDS_ENABLED = TRUE');
     expect(result.issues, isEmpty);
     expect(validator.validate('LED_OFF 1').hasErrors, isTrue);
   });

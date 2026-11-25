@@ -14,7 +14,7 @@ class DuckyScriptVariablesTest {
     val estimator = DuckyScriptEstimator(variables, { _, _ -> 0 }, { 0 })
     val system = DuckyScriptVariables.SYSTEM_LEDS_ENABLED
     val activity = DuckyScriptVariables.INJECTING_LEDS_ENABLED
-    estimator.estimate("LED_OFF")
+    assertEquals(50L, estimator.estimate("LED_G\nDELAY 20\nLED_R\nDELAY 30\nLED_OFF"))
     assertEquals(0, variables.read(system))
     assertEquals(0, variables.read(activity))
     estimator.estimate("$activity = TRUE")

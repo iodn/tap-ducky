@@ -59,6 +59,8 @@ enum class CommandType {
   END_BUTTON,
   STOP_PAYLOAD,
   LED_OFF,
+  LED_R,
+  LED_G,
   FUNCTION,
   END_FUNCTION,
   RETURN,
@@ -300,9 +302,14 @@ class DuckyScriptParser {
           require(parts.size == 1) { "Line $lineNumber: STOP_PAYLOAD takes no arguments" }
           commands.add(DuckyCommand(CommandType.STOP_PAYLOAD, emptyList(), lineNumber))
         }
-        "LEDOFF" -> {
-          require(parts.size == 1) { "Line $lineNumber: LED_OFF takes no arguments" }
-          commands.add(DuckyCommand(CommandType.LED_OFF, emptyList(), lineNumber))
+        "LEDOFF", "LEDR", "LEDG" -> {
+          val type = when (cmd) {
+            "LEDR" -> CommandType.LED_R
+            "LEDG" -> CommandType.LED_G
+            else -> CommandType.LED_OFF
+          }
+          require(parts.size == 1) { "Line $lineNumber: ${type.name} takes no arguments" }
+          commands.add(DuckyCommand(type, emptyList(), lineNumber))
         }
 
         "STRING", "STRINGLN" -> {
@@ -1549,9 +1556,17 @@ class DuckyScriptExecutor(
 
       CommandType.STOP_PAYLOAD -> throw StopPayloadSignal()
 
-      CommandType.LED_OFF -> {
-        setVar(DuckyScriptVariables.SYSTEM_LEDS_ENABLED, 0)
-        setVar(DuckyScriptVariables.INJECTING_LEDS_ENABLED, 0)
+      CommandType.LED_OFF, CommandType.LED_R, CommandType.LED_G -> {
+        if (cmd.type == CommandType.LED_OFF) {
+          setVar(DuckyScriptVariables.SYSTEM_LEDS_ENABLED, 0)
+          setVar(DuckyScriptVariables.INJECTING_LEDS_ENABLED, 0)
+        }
+        val color = when (cmd.type) {
+          CommandType.LED_R -> "red"
+          CommandType.LED_G -> "green"
+          else -> "off"
+        }
+        emitExec(mapOf("type" to "script_indicator", "executionId" to executionId, "color" to color))
         setExitCode(0)
       }
 
@@ -2410,6 +2425,7 @@ internal class DuckyScriptEstimator(
         setVar(DuckyScriptVariables.INJECTING_LEDS_ENABLED, 0)
         setExitCode(0)
       }
+      CommandType.LED_R, CommandType.LED_G -> setExitCode(0)
 
       CommandType.DEFAULTDELAY,
       CommandType.DEFAULT_DELAY -> {

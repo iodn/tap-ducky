@@ -12,6 +12,8 @@ import 'app_settings_controller.dart';
 import 'hid_status_controller.dart';
 import 'logs_controller.dart';
 
+enum ScriptIndicator { off, red, green }
+
 class ExecutionState {
   const ExecutionState({
     required this.isRunning,
@@ -26,6 +28,7 @@ class ExecutionState {
     this.activityStep = 0,
     this.systemIndicatorEnabled = true,
     this.systemIndicatorStep = 0,
+    this.scriptIndicator = ScriptIndicator.off,
     this.payloadId,
     this.payloadName,
     this.startedAt,
@@ -46,6 +49,7 @@ class ExecutionState {
   final int activityStep;
   final bool systemIndicatorEnabled;
   final int systemIndicatorStep;
+  final ScriptIndicator scriptIndicator;
   final String? payloadId;
   final String? payloadName;
   final DateTime? startedAt;
@@ -67,6 +71,7 @@ class ExecutionState {
     int? activityStep,
     bool? systemIndicatorEnabled,
     int? systemIndicatorStep,
+    ScriptIndicator? scriptIndicator,
     String? payloadId,
     String? payloadName,
     DateTime? startedAt,
@@ -87,6 +92,7 @@ class ExecutionState {
       activityStep: activityStep ?? this.activityStep,
       systemIndicatorEnabled: systemIndicatorEnabled ?? this.systemIndicatorEnabled,
       systemIndicatorStep: systemIndicatorStep ?? this.systemIndicatorStep,
+      scriptIndicator: scriptIndicator ?? this.scriptIndicator,
       payloadId: payloadId ?? this.payloadId,
       payloadName: payloadName ?? this.payloadName,
       startedAt: startedAt ?? this.startedAt,
@@ -547,6 +553,18 @@ class ExecutionController extends Notifier<ExecutionState> {
       if (id != executionId) return;
 
       final type = evt['type']?.toString() ?? '';
+      if (type == 'script_indicator') {
+        if (_activeExecutionId == executionId) {
+          final indicator = switch (evt['color']) {
+            'red' => ScriptIndicator.red,
+            'green' => ScriptIndicator.green,
+            'off' => ScriptIndicator.off,
+            _ => null,
+          };
+          if (indicator != null) state = state.copyWith(scriptIndicator: indicator);
+        }
+        return;
+      }
       if (type == 'activity_indicator' || type == 'system_indicator') {
         final enabled = evt['enabled'];
         if (_activeExecutionId == executionId && enabled is bool) {
@@ -718,6 +736,18 @@ class ExecutionController extends Notifier<ExecutionState> {
       if (id != executionId) return;
 
       final type = evt['type']?.toString() ?? '';
+      if (type == 'script_indicator') {
+        if (_activeExecutionId == executionId) {
+          final indicator = switch (evt['color']) {
+            'red' => ScriptIndicator.red,
+            'green' => ScriptIndicator.green,
+            'off' => ScriptIndicator.off,
+            _ => null,
+          };
+          if (indicator != null) state = state.copyWith(scriptIndicator: indicator);
+        }
+        return;
+      }
       if (type == 'activity_indicator' || type == 'system_indicator') {
         final enabled = evt['enabled'];
         if (_activeExecutionId == executionId && enabled is bool) {

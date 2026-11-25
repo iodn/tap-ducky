@@ -73,6 +73,17 @@ class TaskBar extends ConsumerWidget {
                   ok: hid.rootAvailable && hid.hidSupported,
                   pulseKey: pulseKey,
                 ),
+                if (exec.isRunning && exec.scriptIndicator != ScriptIndicator.off) ...[
+                  const SizedBox(width: 6),
+                  Semantics(
+                    label: 'Script indicator: ${exec.scriptIndicator.name}',
+                    child: Icon(
+                      Icons.circle,
+                      size: 10,
+                      color: exec.scriptIndicator == ScriptIndicator.red ? cs.error : Colors.green,
+                    ),
+                  ),
+                ],
                 const SizedBox(width: 10),
                 Expanded(
                   child: Column(
