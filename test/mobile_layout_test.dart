@@ -83,6 +83,13 @@ class _UsbReferenceDb implements UsbIdsDb {
   Future<void> close() async {}
 }
 
+class _RejectingKeyboardSettings extends _Settings {
+  @override
+  Future<void> setTypingSpeedFactor(double v) async {
+    throw StateError('Android rejected the requested timing');
+  }
+}
+
 class _Payloads extends PayloadsController {
   _Payloads(this.items);
   final List<Payload> items;
@@ -235,6 +242,19 @@ void main() {
     await tester.tap(find.byTooltip('Clear search'));
     await tester.pumpAndSettle();
     expect(find.text('USB Adapter'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('execution settings show when Android rejects a change', (tester) async {
+    await _pumpScreen(tester, const SettingsScreen(), size: const Size(390, 740), settings: _RejectingKeyboardSettings());
+    await tester.enterText(find.byType(TextField), 'typing');
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Execution & Typing'));
+    await tester.pumpAndSettle();
+    tester.widgetList<Slider>(find.byType(Slider)).elementAt(1).onChanged!(2);
+    await tester.pumpAndSettle();
+    expect(find.text('Could not apply the change. Try again.'), findsOneWidget);
+    expect(tester.widgetList<Slider>(find.byType(Slider)).elementAt(1).value, 1);
     expect(tester.takeException(), isNull);
   });
 

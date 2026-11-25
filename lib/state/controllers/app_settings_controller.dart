@@ -12,12 +12,14 @@ final appSettingsControllerProvider = AsyncNotifierProvider<AppSettingsControlle
 );
 
 class AppSettingsController extends AsyncNotifier<AppSettings> {
+  Future<void> _executionUpdates = Future.value();
+
   @override
   Future<AppSettings> build() async {
     final repo = await ref.watch(settingsRepositoryProvider.future);
     final loaded = repo.load();
 
-    await _applyExecutionSettings(loaded);
+    await _applyExecutionSettings(loaded, bestEffort: true);
     await _applyDialShortcutBindings(loaded.dialShortcuts);
     return loaded;
   }
@@ -39,8 +41,10 @@ class AppSettingsController extends AsyncNotifier<AppSettings> {
 
   Future<void> setTypingSpeedFactor(double v) async {
     final clamped = v.clamp(0.1, 10.0);
-    await _applyTypingSpeedFactor(clamped);
-    await _save((state.value ?? AppSettings.defaults()).copyWith(typingSpeedFactor: clamped));
+    await _updateExecutionSetting(
+      () => ref.read(platformGadgetServiceProvider).setTypingSpeedFactor(clamped),
+      (settings) => settings.copyWith(typingSpeedFactor: clamped),
+    );
   }
 
   Future<void> setRandomizeTiming(bool v) async {
@@ -49,8 +53,10 @@ class AppSettingsController extends AsyncNotifier<AppSettings> {
   }
 
   Future<void> setKeepScreenOn(bool v) async {
-    await _applyWakelockState(v);
-    await _save((state.value ?? AppSettings.defaults()).copyWith(keepScreenOn: v));
+    await _updateExecutionSetting(
+      () => WakelockPlus.toggle(enable: v),
+      (settings) => settings.copyWith(keepScreenOn: v),
+    );
   }
 
   Future<void> setHiddenExecution(bool v) async {
@@ -75,25 +81,31 @@ class AppSettingsController extends AsyncNotifier<AppSettings> {
 
   Future<void> setHidGraceWindowMs(int ms) async {
     final clamped = ms.clamp(0, 5000);
-    await _applyHidGraceWindow(clamped);
-    await _save((state.value ?? AppSettings.defaults()).copyWith(hidGraceWindowMs: clamped));
+    await _updateExecutionSetting(
+      () => ref.read(platformGadgetServiceProvider).setHidGraceWindowMs(clamped),
+      (settings) => settings.copyWith(hidGraceWindowMs: clamped),
+    );
   }
 
   Future<void> setUnicodeFallbackMode(String mode) async {
     final normalized = mode.trim().toLowerCase();
     final safe = (normalized == 'skip' || normalized == 'warn' || normalized == 'ascii') ? normalized : 'warn';
-    await _applyUnicodeFallbackMode(safe);
-    await _save((state.value ?? AppSettings.defaults()).copyWith(unicodeFallbackMode: safe));
+    await _updateExecutionSetting(
+      () => ref.read(platformGadgetServiceProvider).setUnicodeFallbackMode(safe),
+      (settings) => settings.copyWith(unicodeFallbackMode: safe),
+    );
   }
 
   Future<void> setRiskyFastMode(bool v) async {
-    await _applyRiskyFastMode(v);
-    await _save((state.value ?? AppSettings.defaults()).copyWith(riskyFastMode: v));
+    await _updateExecutionSetting(
+      () => ref.read(platformGadgetServiceProvider).setRiskyFastMode(v),
+      (settings) => settings.copyWith(riskyFastMode: v),
+    );
   }
 
-  Future<void> resetExecutionDefaults() async {
+  Future<void> resetExecutionDefaults() => _queueExecutionUpdate(() async {
     final defaults = AppSettings.defaults();
-    await _applyExecutionSettings(defaults);
+    await _resetExecutionSettings(defaults);
     await _save((state.value ?? defaults).copyWith(
       enableLogging: defaults.enableLogging,
       delayMultiplier: defaults.delayMultiplier,
@@ -103,14 +115,14 @@ class AppSettingsController extends AsyncNotifier<AppSettings> {
       riskyFastMode: defaults.riskyFastMode,
       keepScreenOn: defaults.keepScreenOn,
     ));
-  }
+  });
 
-  Future<void> resetAllToDefaults() async {
+  Future<void> resetAllToDefaults() => _queueExecutionUpdate(() async {
     final defaults = AppSettings.defaults();
-    await _applyExecutionSettings(defaults);
+    await _resetExecutionSettings(defaults);
     await _applyDialShortcutBindings(defaults.dialShortcuts);
     await _save(defaults);
-  }
+  });
 
   Future<void> setDialShortcuts(List<DialShortcutBinding> bindings) async {
     final s = (state.value ?? AppSettings.defaults()).copyWith(dialShortcuts: bindings);
@@ -118,60 +130,50 @@ class AppSettingsController extends AsyncNotifier<AppSettings> {
     await _save(s);
   }
 
-  Future<void> _applyExecutionSettings(AppSettings settings) async {
-    await _applyWakelockState(settings.keepScreenOn);
-    await _applyHidGraceWindow(settings.hidGraceWindowMs);
-    await _applyUnicodeFallbackMode(settings.unicodeFallbackMode);
-    await _applyTypingSpeedFactor(settings.typingSpeedFactor);
-    await _applyRiskyFastMode(settings.riskyFastMode);
+  Future<void> _queueExecutionUpdate(Future<void> Function() update) {
+    final pending = _executionUpdates.then((_) => update());
+    _executionUpdates = pending.then<void>((_) {}, onError: (Object _, StackTrace _) {});
+    return pending;
   }
 
-  Future<void> _applyWakelockState(bool enable) async {
+  Future<void> _updateExecutionSetting(
+    Future<void> Function() apply,
+    AppSettings Function(AppSettings) update,
+  ) => _queueExecutionUpdate(() async {
+    await apply();
+    await _save(update(state.value ?? AppSettings.defaults()));
+  });
+
+  Future<void> _resetExecutionSettings(AppSettings defaults) async {
+    final previous = state.value ?? defaults;
     try {
-      if (enable) {
-        await WakelockPlus.enable();
-        if (kDebugMode) {
-          print('[Wakelock] Enabled');
-        }
-      } else {
-        await WakelockPlus.disable();
-        if (kDebugMode) {
-          print('[Wakelock] Disabled');
-        }
-      }
-    } catch (e) {
-      if (kDebugMode) {
-        print('[Wakelock] Failed to ${enable ? 'enable' : 'disable'}: $e');
-      }
+      await _applyExecutionSettings(defaults);
+    } catch (_) {
+      await _applyExecutionSettings(previous, bestEffort: true);
+      rethrow;
     }
   }
 
-  Future<void> _applyHidGraceWindow(int ms) async {
-    try {
-      final service = ref.read(platformGadgetServiceProvider);
-      await service.setHidGraceWindowMs(ms);
-    } catch (_) {}
-  }
-
-  Future<void> _applyUnicodeFallbackMode(String mode) async {
-    try {
-      final service = ref.read(platformGadgetServiceProvider);
-      await service.setUnicodeFallbackMode(mode);
-    } catch (_) {}
-  }
-
-  Future<void> _applyTypingSpeedFactor(double delayMultiplier) async {
-    try {
-      final service = ref.read(platformGadgetServiceProvider);
-      await service.setTypingSpeedFactor(delayMultiplier);
-    } catch (_) {}
-  }
-
-  Future<void> _applyRiskyFastMode(bool enabled) async {
-    try {
-      final service = ref.read(platformGadgetServiceProvider);
-      await service.setRiskyFastMode(enabled);
-    } catch (_) {}
+  Future<void> _applyExecutionSettings(
+    AppSettings settings, {
+    bool bestEffort = false,
+  }) async {
+    final service = ref.read(platformGadgetServiceProvider);
+    final operations = <Future<void> Function()>[
+      () => WakelockPlus.toggle(enable: settings.keepScreenOn),
+      () => service.setHidGraceWindowMs(settings.hidGraceWindowMs),
+      () => service.setUnicodeFallbackMode(settings.unicodeFallbackMode),
+      () => service.setTypingSpeedFactor(settings.typingSpeedFactor),
+      () => service.setRiskyFastMode(settings.riskyFastMode),
+    ];
+    for (final apply in operations) {
+      try {
+        await apply();
+      } catch (error) {
+        if (!bestEffort) rethrow;
+        if (kDebugMode) debugPrint('Could not sync an execution setting: $error');
+      }
+    }
   }
 
   Future<void> _applyDialShortcutBindings(List<DialShortcutBinding> bindings) async {

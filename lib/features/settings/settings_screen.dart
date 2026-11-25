@@ -82,12 +82,29 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         ],
       ),
     );
-    if (confirmed != true) return;
-    await ref.read(appSettingsControllerProvider.notifier).resetAllToDefaults();
-    if (!context.mounted) return;
+    if (confirmed != true || !context.mounted) return;
+    final updated = await _applySetting(
+      context,
+      ref.read(appSettingsControllerProvider.notifier).resetAllToDefaults,
+    );
+    if (!context.mounted || !updated) return;
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('General preferences reset')),
     );
+  }
+
+  Future<bool> _applySetting(BuildContext context, Future<void> Function() update) async {
+    try {
+      await update();
+      return true;
+    } catch (_) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context)
+          ..hideCurrentSnackBar()
+          ..showSnackBar(const SnackBar(content: Text('Could not apply the change. Try again.')));
+      }
+      return false;
+    }
   }
 
   @override
@@ -639,7 +656,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     max: 10,
                     divisions: 99,
                     format: (value) => '${value.toStringAsFixed(2)}×',
-                    onChanged: controller.setTypingSpeedFactor,
+                    onChanged: (value) => _applySetting(context, () => controller.setTypingSpeedFactor(value)),
                   ),
                 ],
               ),
@@ -659,7 +676,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 ),
                 SwitchListTile(
                   value: settings.keepScreenOn,
-                  onChanged: controller.setKeepScreenOn,
+                  onChanged: (value) => _applySetting(context, () => controller.setKeepScreenOn(value)),
                   title: const Text('Keep screen on'),
                   subtitle: const Text('While TapDucky is open'),
                 ),
@@ -678,26 +695,27 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                       max: 5000,
                       divisions: 50,
                       format: (value) => '${value.round()} ms',
-                      onChanged: (value) => controller.setHidGraceWindowMs(value.round()),
+                      onChanged: (value) => _applySetting(context, () => controller.setHidGraceWindowMs(value.round())),
                     ),
-                    DropdownButtonFormField<String>(
-                      key: ValueKey(settings.unicodeFallbackMode),
-                      initialValue: settings.unicodeFallbackMode,
+                    const Text('Unsupported characters'),
+                    DropdownButton<String>(
+                      value: settings.unicodeFallbackMode,
                       isExpanded: true,
-                      decoration: const InputDecoration(labelText: 'Unsupported characters'),
                       items: const [
                         DropdownMenuItem(value: 'warn', child: Text('Skip and log a warning')),
                         DropdownMenuItem(value: 'skip', child: Text('Skip')),
                         DropdownMenuItem(value: 'ascii', child: Text('Use nearest ASCII character')),
                       ],
                       onChanged: (value) {
-                        if (value != null) controller.setUnicodeFallbackMode(value);
+                        if (value != null) {
+                          _applySetting(context, () => controller.setUnicodeFallbackMode(value));
+                        }
                       },
                     ),
                     SwitchListTile(
                       contentPadding: EdgeInsets.zero,
                       value: settings.riskyFastMode,
-                      onChanged: controller.setRiskyFastMode,
+                      onChanged: (value) => _applySetting(context, () => controller.setRiskyFastMode(value)),
                       title: const Text('Allow shorter key timings'),
                       subtitle: const Text('May cause missed or stuck keys.'),
                     ),
@@ -709,7 +727,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           Align(
             alignment: Alignment.centerRight,
             child: TextButton(
-              onPressed: controller.resetExecutionDefaults,
+              onPressed: () => _applySetting(context, controller.resetExecutionDefaults),
               child: const Text('Reset execution settings'),
             ),
           ),
