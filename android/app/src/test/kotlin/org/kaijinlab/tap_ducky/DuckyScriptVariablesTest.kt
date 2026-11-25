@@ -50,13 +50,30 @@ class DuckyScriptVariablesTest {
 
   @Test
   fun rejectsUnsupportedWritesBeforeRunningAnyCommands() {
-    for (assignment in listOf("\$_JITTER_MAX = 20", "VAR \$_BUTTON_ENABLED = TRUE")) {
+    for (assignment in listOf("\$_JITTER_MAX = 20", "VAR \$_SYSTEM_LEDS_ENABLED = TRUE")) {
       val error = assertThrows(DuckyExpressionSyntaxException::class.java) {
         DuckyScriptParser().parse("STRING sample\n$assignment")
       }
       assertEquals(2, error.lineNumber)
       assertTrue(error.message!!.contains("unavailable in TapDucky"))
     }
+  }
+
+  @Test
+  fun enablesAndDisablesOptionalButtonPressesWithoutSuppressingExplicitWaits() {
+    val variables = DuckyScriptVariables({ null }, { null })
+    val estimator = DuckyScriptEstimator(variables, { _, _ -> 0 }, { 0 })
+    assertEquals(1, variables.read("\$_BUTTON_ENABLED"))
+    estimator.estimate("DISABLE_BUTTON")
+    assertEquals(0, variables.read("\$_BUTTON_ENABLED"))
+    assertFalse(variables.tryRecordButtonPress(100))
+    estimator.estimate("WAIT_FOR_BUTTON_PRESS")
+    assertEquals(1, variables.read("\$_BUTTON_PUSH_RECEIVED"))
+    estimator.estimate("ENABLE_BUTTON")
+    assertEquals(1, variables.read("\$_BUTTON_ENABLED"))
+    assertTrue(variables.tryRecordButtonPress(100))
+    estimator.estimate("\$_BUTTON_ENABLED = FALSE")
+    assertFalse(variables.tryRecordButtonPress(2000))
   }
 
   @Test

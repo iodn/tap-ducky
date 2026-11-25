@@ -13,11 +13,23 @@ void main() {
   });
 
   test('reports unsupported writes once as errors', () {
-    for (final script in [r'$_JITTER_MAX = 20', r'VAR $_BUTTON_ENABLED = TRUE']) {
+    for (final script in [r'$_JITTER_MAX = 20', r'VAR $_SYSTEM_LEDS_ENABLED = TRUE']) {
       final result = validator.validate(script);
       expect(result.issues.single.severity, IssueSeverity.error);
       expect(result.issues.single.message, contains('unavailable in TapDucky'));
     }
+  });
+
+  test('recognizes the writable button flag and toggle commands', () {
+    final result = validator.validate(r'''
+DISABLE_BUTTON
+VAR $enabled = $_BUTTON_ENABLED
+ENABLE_BUTTON
+$_BUTTON_ENABLED = FALSE
+WAIT_FOR_BUTTON_PRESS
+''');
+    expect(result.issues, isEmpty);
+    expect(validator.validate('ENABLE_BUTTON 1').hasErrors, isTrue);
   });
 
   test('accepts Hak5 OS extension imports and symbolic comparisons', () {

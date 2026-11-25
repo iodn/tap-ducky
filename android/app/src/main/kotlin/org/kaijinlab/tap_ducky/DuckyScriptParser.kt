@@ -53,6 +53,8 @@ enum class CommandType {
   SLEEP_UNTIL,
   WAIT_FOR,
   WAIT_FOR_BUTTON_PRESS,
+  ENABLE_BUTTON,
+  DISABLE_BUTTON,
   FUNCTION,
   END_FUNCTION,
   RETURN,
@@ -279,6 +281,11 @@ class DuckyScriptParser {
         "WAITFORBUTTONPRESS" -> {
           require(parts.size == 1) { "Line $lineNumber: WAIT_FOR_BUTTON_PRESS takes no arguments" }
           commands.add(DuckyCommand(CommandType.WAIT_FOR_BUTTON_PRESS, emptyList(), lineNumber))
+        }
+        "ENABLEBUTTON", "DISABLEBUTTON" -> {
+          val type = if (cmd == "ENABLEBUTTON") CommandType.ENABLE_BUTTON else CommandType.DISABLE_BUTTON
+          require(parts.size == 1) { "Line $lineNumber: ${type.name} takes no arguments" }
+          commands.add(DuckyCommand(type, emptyList(), lineNumber))
         }
 
         "STRING", "STRINGLN" -> {
@@ -753,15 +760,24 @@ class DuckyScriptExecutor(
   private var heldMouseButtonsMask = 0
   private var callDepth = 0
   private val internalVariables = DuckyScriptVariables(manager::readScriptUsbVariable, manager::scriptKeyStroke)
-  private var scriptButtonEnabled = false
+  private var scriptButtonRegistered = false
   private val evaluator = ExpressionEvaluator { name ->
-    if (name == "\$_BUTTON_PUSH_RECEIVED" && canShowButtonPrompt && !scriptButtonEnabled &&
+    if (name == "\$_BUTTON_PUSH_RECEIVED" && canShowButtonPrompt && !scriptButtonRegistered &&
       manager.enableScriptButton(executionId, internalVariables)
     ) {
-      scriptButtonEnabled = true
-      emitExec(mapOf("type" to "button_available", "executionId" to executionId))
+      scriptButtonRegistered = true
+      updateScriptButton()
     }
     internalVariables.read(name)
+  }
+
+  private fun updateScriptButton(suspended: Boolean = false) {
+    if (!scriptButtonRegistered) return
+    emitExec(mapOf(
+      "type" to "button_available",
+      "executionId" to executionId,
+      "available" to (!suspended && internalVariables.read(DuckyScriptVariables.BUTTON_ENABLED) == 1),
+    ))
   }
   private val rng = Random.Default
 
@@ -1413,9 +1429,7 @@ class DuckyScriptExecutor(
         }
         val waitMs = 60_000L
         val prompt = manager.beginButtonPrompt(executionId, waitMs, internalVariables)
-        if (scriptButtonEnabled) {
-          emitExec(mapOf("type" to "button_available", "executionId" to executionId, "available" to false))
-        }
+        updateScriptButton(suspended = true)
         try {
           sleepMsCancellable(prompt.cooldownMs, "Button cooldown")
           throwIfCancelled()
@@ -1438,9 +1452,12 @@ class DuckyScriptExecutor(
         } finally {
           manager.endButtonPrompt(prompt.id)
         }
-        if (scriptButtonEnabled) {
-          emitExec(mapOf("type" to "button_available", "executionId" to executionId))
-        }
+        updateScriptButton()
+      }
+
+      CommandType.ENABLE_BUTTON, CommandType.DISABLE_BUTTON -> {
+        setVar(DuckyScriptVariables.BUTTON_ENABLED, if (cmd.type == CommandType.ENABLE_BUTTON) 1 else 0)
+        setExitCode(0)
       }
 
       CommandType.SLEEP_UNTIL -> {
@@ -1758,7 +1775,10 @@ class DuckyScriptExecutor(
 
   private fun setVar(name: String, value: Int) {
     val key = normalizeVarName(name)
-    if (internalVariables.write(key, value)) return
+    if (internalVariables.write(key, value)) {
+      if (key == DuckyScriptVariables.BUTTON_ENABLED) updateScriptButton()
+      return
+    }
     val stored = clampU16(value)
     if (localScopes.isNotEmpty()) {
       for (i in localScopes.size - 1 downTo 0) {
@@ -2259,6 +2279,11 @@ internal class DuckyScriptEstimator(
 
       CommandType.WAIT_FOR_BUTTON_PRESS -> {
         internalVariables.write("\$_BUTTON_PUSH_RECEIVED", 1)
+        setExitCode(0)
+      }
+
+      CommandType.ENABLE_BUTTON, CommandType.DISABLE_BUTTON -> {
+        setVar(DuckyScriptVariables.BUTTON_ENABLED, if (cmd.type == CommandType.ENABLE_BUTTON) 1 else 0)
         setExitCode(0)
       }
 

@@ -190,6 +190,8 @@ class DuckyScriptValidator {
     'WAIT_FOR',
     'WAITFOR',
     'WAIT_FOR_BUTTON_PRESS',
+    'ENABLE_BUTTON',
+    'DISABLE_BUTTON',
     'SLEEP_UNTIL',
     'SLEEPUNTIL',
     'RANDOM_LOWERCASE_LETTER',
@@ -412,6 +414,7 @@ class DuckyScriptValidator {
   };
   static const _writableHak5Variables = {
     ..._unsignedHak5Variables,
+    r'$_BUTTON_ENABLED',
     r'$_BUTTON_PUSH_RECEIVED',
   };
   static const _variableName = r'\$(?:[A-Za-z0-9_]+|\?)';
@@ -436,7 +439,6 @@ class DuckyScriptValidator {
   static final _integerLiteral = RegExp(r'^[+-]?(?:0x[0-9a-f]+|\d+)$', caseSensitive: false);
   static final _defineDeclaration = RegExp(r'^DEFINE\s+(\S+)\s(.*)$', caseSensitive: false);
   static const _unsupportedHak5Variables = {
-    r'$_BUTTON_ENABLED',
     r'$_BUTTON_USER_DEFINED', r'$_SYSTEM_LEDS_ENABLED', r'$_STORAGE_LEDS_ENABLED',
     r'$_LED_CONTINUOUS_SHOW_STORAGE_ACTIVITY', r'$_INJECTING_LEDS_ENABLED',
     r'$_EXFIL_LEDS_ENABLED', r'$_LED_SHOW_CAPS', r'$_LED_SHOW_NUM',
@@ -858,12 +860,14 @@ class DuckyScriptValidator {
           break;
 
         case 'WAIT_FOR_BUTTON_PRESS':
+        case 'ENABLE_BUTTON':
+        case 'DISABLE_BUTTON':
           commandCount++;
           if (parts.length != 1) {
             issues.add(ValidationIssue(
               line: lineNum,
               severity: IssueSeverity.error,
-              message: 'WAIT_FOR_BUTTON_PRESS takes no arguments',
+              message: '$command takes no arguments',
             ));
           }
           commitCommand(keyCount: 0, perCharDelayMs: 0, charCount: 0);

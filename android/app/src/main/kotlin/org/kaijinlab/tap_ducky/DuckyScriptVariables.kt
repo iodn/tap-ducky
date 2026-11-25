@@ -32,6 +32,7 @@ internal class DuckyScriptVariables(
   private var randomMin = 0
   private var randomMax = 9
   private var buttonPressed = false
+  private var buttonEnabled = true
   private var buttonTimeoutMs = 1000
   private var lastButtonPressMs: Long? = null
 
@@ -45,12 +46,13 @@ internal class DuckyScriptVariables(
   } ?: 0L
 
   @Synchronized fun tryRecordButtonPress(elapsedMs: Long): Boolean {
-    if (buttonCooldownRemainingMs(elapsedMs) > 0) return false
+    if (!buttonEnabled || buttonCooldownRemainingMs(elapsedMs) > 0) return false
     recordButtonPress(elapsedMs)
     return true
   }
 
   @Synchronized fun read(name: String): Int? = when (name) {
+    BUTTON_ENABLED -> if (buttonEnabled) 1 else 0
     "\$_BUTTON_PUSH_RECEIVED" -> if (buttonPressed) 1 else 0
     "\$_BUTTON_TIMEOUT" -> buttonTimeoutMs
     "\$_RANDOM_MIN" -> randomMin
@@ -75,6 +77,7 @@ internal class DuckyScriptVariables(
 
   @Synchronized fun write(name: String, value: Int): Boolean {
     when (name) {
+      BUTTON_ENABLED -> buttonEnabled = value != 0
       "\$_BUTTON_PUSH_RECEIVED" -> buttonPressed = value != 0
       "\$_BUTTON_TIMEOUT", "\$_RANDOM_MIN", "\$_RANDOM_MAX" -> {
         if (value !in 0..65535) {
@@ -94,6 +97,7 @@ internal class DuckyScriptVariables(
   }
 
   companion object {
+    const val BUTTON_ENABLED = "\$_BUTTON_ENABLED"
     private const val lower = "abcdefghijklmnopqrstuvwxyz"
     private const val upper = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
     private const val digits = "0123456789"
@@ -111,7 +115,6 @@ internal class DuckyScriptVariables(
     )
     val readOnly = usbVariables + randomKeySets.keys + setOf("\$_RANDOM_INT", "\$_RANDOM_SEED")
     val unavailable = setOf(
-      "\$_BUTTON_ENABLED",
       "\$_BUTTON_USER_DEFINED", "\$_SYSTEM_LEDS_ENABLED", "\$_STORAGE_LEDS_ENABLED",
       "\$_LED_CONTINUOUS_SHOW_STORAGE_ACTIVITY", "\$_INJECTING_LEDS_ENABLED",
       "\$_EXFIL_LEDS_ENABLED", "\$_LED_SHOW_CAPS", "\$_LED_SHOW_NUM", "\$_LED_SHOW_SCROLL",
@@ -121,7 +124,7 @@ internal class DuckyScriptVariables(
       "\$_EXFIL_MODE_ENABLED", "\$_HOST_CONFIGURATION_REQUEST_COUNT",
     )
     val reserved = readOnly + unavailable + setOf(
-      "\$_BUTTON_PUSH_RECEIVED", "\$_BUTTON_TIMEOUT", "\$_RANDOM_MIN", "\$_RANDOM_MAX",
+      BUTTON_ENABLED, "\$_BUTTON_PUSH_RECEIVED", "\$_BUTTON_TIMEOUT", "\$_RANDOM_MIN", "\$_RANDOM_MAX",
     )
   }
 }
