@@ -9,6 +9,7 @@ import '../../state/controllers/advanced_settings_controller.dart';
 import '../../state/controllers/app_settings_controller.dart';
 import '../../state/controllers/payloads_controller.dart';
 import '../../state/providers.dart';
+import '../../widgets/ducky_script_text.dart';
 import '../../widgets/configuration_page.dart';
 import '../../widgets/payload_picker.dart';
 import '../../widgets/confirm_dialog.dart';
@@ -629,6 +630,7 @@ class _BodyState extends ConsumerState<_Body> {
       (_) => const TextConfigurationPage(
         title: 'New preset',
         fieldLabel: 'Command',
+        highlightScript: true,
         actionLabel: 'Add',
         hint: 'STRING hello',
       ),
@@ -781,7 +783,7 @@ class _PresetTile extends ConsumerWidget {
     return ListTile(
       leading: const Icon(Icons.code),
       title: Text('Preset ${index + 1}'),
-      subtitle: Text(preset, maxLines: 2, overflow: TextOverflow.ellipsis),
+      subtitle: DuckyScriptText(preset, maxLines: 2, fontSize: 12),
       trailing: PopupMenuButton<String>(
         onSelected: (v) async {
           switch (v) {
@@ -818,6 +820,7 @@ class _PresetTile extends ConsumerWidget {
       (_) => TextConfigurationPage(
         title: 'Edit preset ${index + 1}',
         fieldLabel: 'Command',
+        highlightScript: true,
         actionLabel: 'Save',
         initialValue: preset,
       ),

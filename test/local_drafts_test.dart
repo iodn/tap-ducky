@@ -323,14 +323,11 @@ void main() {
     await editor(_LocalDrafts('missing'));
     final action = find.text('Draft with AI');
     expect(action, findsNothing);
+    expect(find.text('Set up AI'), findsOneWidget);
 
     final service = _LocalDrafts('ready');
     await editor(service);
-    await tester.scrollUntilVisible(
-      action,
-      180,
-      scrollable: find.byType(Scrollable).first,
-    );
+    expect(action.hitTestable(), findsOneWidget);
     await tester.tap(action);
     await tester.pumpAndSettle();
     await tester.enterText(
@@ -348,10 +345,7 @@ void main() {
         .widgetList<TextFormField>(find.byType(TextFormField))
         .map((field) => field.controller?.text);
     expect(fieldValues(), contains(_urlScript));
-    tester
-        .state<ScrollableState>(find.byType(Scrollable).first)
-        .position
-        .jumpTo(0);
+    await tester.tap(find.text('Details'));
     await tester.pumpAndSettle();
     expect(fieldValues(), containsAll(['Google', 'Opens Google.', 'browser']));
   });

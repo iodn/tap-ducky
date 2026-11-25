@@ -2,6 +2,7 @@ import 'package:material_ui/material_ui.dart';
 import 'package:flutter/services.dart';
 
 import '../../data/services/local_drafts_service.dart';
+import '../../widgets/ducky_script_text.dart';
 import '../../widgets/configuration_page.dart';
 
 class LocalDraftDialog extends StatefulWidget {
@@ -109,10 +110,7 @@ class _LocalDraftDialogState extends State<LocalDraftDialog> {
               Text('Tags: ${draft.tags.join(', ')}'),
             ],
             const SizedBox(height: 12),
-            SelectableText(
-              draft.script,
-              style: const TextStyle(fontFamily: 'monospace'),
-            ),
+            DuckyScriptText(draft.script, selectable: true),
             if (widget.replacing) ...[
               const SizedBox(height: 12),
               const Text(

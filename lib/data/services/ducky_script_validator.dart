@@ -77,6 +77,9 @@ class ValidationResult {
 }
 
 class DuckyScriptValidator {
+  static bool isSupportedCommand(String word) =>
+      _supportedCommands.contains(word.toUpperCase());
+
   static const _supportedCommands = {
     'REM',
     'REM_BLOCK',

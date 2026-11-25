@@ -15,7 +15,8 @@ import '../../state/controllers/payloads_controller.dart';
 import '../../state/providers.dart';
 import '../../widgets/confirm_dialog.dart';
 import '../../widgets/configuration_page.dart';
-import '../../widgets/section_header.dart';
+import '../../widgets/ducky_script_text.dart';
+import '../settings/widgets/local_draft_settings.dart';
 import 'local_draft_dialog.dart';
 
 const _uuid = Uuid();
@@ -26,14 +27,23 @@ class PayloadEditorScreen extends ConsumerStatefulWidget {
   final String? payloadId;
 
   @override
-  ConsumerState<PayloadEditorScreen> createState() => _PayloadEditorScreenState();
+  ConsumerState<PayloadEditorScreen> createState() =>
+      _PayloadEditorScreenState();
 }
 
-class _PayloadEditorScreenState extends ConsumerState<PayloadEditorScreen> {
-  final _formKey = GlobalKey<FormState>();
+class _PayloadEditorScreenState extends ConsumerState<PayloadEditorScreen>
+    with SingleTickerProviderStateMixin {
+  late final TabController _tabs;
+  final _scriptFocus = FocusNode();
+  final _scriptScroll = ScrollController();
+  final _nameFocus = FocusNode();
+  int _section = 0;
+  String? _nameError;
+  String? _scriptError;
+  bool _saving = false;
   final _nameCtrl = TextEditingController();
   final _descCtrl = TextEditingController();
-  final _scriptCtrl = TextEditingController();
+  final _scriptCtrl = DuckyScriptEditingController();
   final _tagsCtrl = TextEditingController();
 
   final List<PayloadParameter> _params = [];
@@ -60,6 +70,7 @@ class _PayloadEditorScreenState extends ConsumerState<PayloadEditorScreen> {
   @override
   void initState() {
     super.initState();
+    _tabs = TabController(length: 3, vsync: this)..addListener(_changeSection);
     _scriptCtrl.addListener(_onScriptChanged);
     if (widget.payloadId != null) {
       ref.listenManual(
@@ -75,6 +86,10 @@ class _PayloadEditorScreenState extends ConsumerState<PayloadEditorScreen> {
     _validationDebounce?.cancel();
     _estimateDebounce?.cancel();
     _scriptCtrl.removeListener(_onScriptChanged);
+    _tabs.dispose();
+    _scriptFocus.dispose();
+    _scriptScroll.dispose();
+    _nameFocus.dispose();
     _nameCtrl.dispose();
     _descCtrl.dispose();
     _scriptCtrl.dispose();
@@ -87,13 +102,20 @@ class _PayloadEditorScreenState extends ConsumerState<PayloadEditorScreen> {
     _observedScript = _scriptCtrl.text;
     _estimateRevision++;
     _estimateDebounce?.cancel();
-    setState(() => _engineEstimateMs = null);
+    setState(() {
+      _hasChanges = true;
+      _scriptError = null;
+      _engineEstimateMs = null;
+    });
     _validationDebounce?.cancel();
     _validationDebounce = Timer(const Duration(milliseconds: 500), () {
       if (!mounted) return;
       final mul = _currentDelayMultiplier();
       setState(() {
-        _validationResult = _validator.validate(_scriptCtrl.text, delayMultiplier: mul);
+        _validationResult = _validator.validate(
+          _scriptCtrl.text,
+          delayMultiplier: mul,
+        );
         _showValidation = _scriptCtrl.text.trim().isNotEmpty;
       });
       _requestEngineEstimate(_scriptCtrl.text);
@@ -105,7 +127,12 @@ class _PayloadEditorScreenState extends ConsumerState<PayloadEditorScreen> {
       context,
       (_) => LocalDraftDialog(
         service: ref.read(localDraftsServiceProvider),
-        replacing: [_nameCtrl, _descCtrl, _tagsCtrl, _scriptCtrl].any((controller) => controller.text.isNotEmpty),
+        replacing: [
+          _nameCtrl,
+          _descCtrl,
+          _tagsCtrl,
+          _scriptCtrl,
+        ].any((controller) => controller.text.isNotEmpty),
       ),
     );
     if (!mounted || draft == null) return;
@@ -114,13 +141,17 @@ class _PayloadEditorScreenState extends ConsumerState<PayloadEditorScreen> {
       _descCtrl.text = draft.description;
       _tagsCtrl.text = draft.tags.join(', ');
       _scriptCtrl.text = draft.script;
+      _nameError = null;
+      _scriptError = null;
       _hasChanges = true;
     });
   }
 
   void _loadPayload(List<Payload>? items) {
     if (_editReady || items == null) return;
-    final found = items.where((payload) => payload.id == widget.payloadId).firstOrNull;
+    final found = items
+        .where((payload) => payload.id == widget.payloadId)
+        .firstOrNull;
     if (found == null) return;
 
     setState(() {
@@ -144,8 +175,10 @@ class _PayloadEditorScreenState extends ConsumerState<PayloadEditorScreen> {
   void _requestEngineEstimate(String script) {
     final revision = ++_estimateRevision;
     _estimateDebounce?.cancel();
-    if (script.trim().isEmpty || _validationResult.hasErrors ||
-        RegExp(r'\$\{[\w-]+\}').hasMatch(script)) return;
+    if (script.trim().isEmpty ||
+        _validationResult.hasErrors ||
+        RegExp(r'\$\{[\w-]+\}').hasMatch(script))
+      return;
     final mul = _currentDelayMultiplier();
     _estimateDebounce = Timer(const Duration(milliseconds: 600), () async {
       final service = ref.read(platformGadgetServiceProvider);
@@ -175,8 +208,6 @@ class _PayloadEditorScreenState extends ConsumerState<PayloadEditorScreen> {
   @override
   Widget build(BuildContext context) {
     final isNew = widget.payloadId == null;
-    final cs = Theme.of(context).colorScheme;
-
     if (!isNew && !_editReady) {
       final payloads = ref.watch(payloadsControllerProvider);
       return Scaffold(
@@ -184,7 +215,11 @@ class _PayloadEditorScreenState extends ConsumerState<PayloadEditorScreen> {
         body: Center(
           child: payloads.isLoading
               ? const CircularProgressIndicator()
-              : Text(payloads.hasError ? 'Could not load payload' : 'Payload unavailable'),
+              : Text(
+                  payloads.hasError
+                      ? 'Could not load payload'
+                      : 'Payload unavailable',
+                ),
         ),
       );
     }
@@ -201,264 +236,277 @@ class _PayloadEditorScreenState extends ConsumerState<PayloadEditorScreen> {
           dangerous: true,
         );
         if (ok && context.mounted) {
-          context.pop();
+          Navigator.of(context).pop();
         }
       },
       child: Scaffold(
         appBar: AppBar(
           title: Text(isNew ? 'New Payload' : 'Edit Payload'),
+          leading: CloseButton(
+            onPressed: () => Navigator.of(context).maybePop(),
+          ),
           actions: [
-            if (_showValidation && (_validationResult.hasErrors || _validationResult.hasWarnings))
-              Padding(
-                padding: const EdgeInsets.only(right: 8),
-                child: IconButton(
-                  icon: Badge(
-                    label: Text('${_validationResult.errorCount + _validationResult.warningCount}'),
-                    backgroundColor: _validationResult.hasErrors ? cs.error : cs.tertiary,
-                    child: Icon(
-                      _validationResult.hasErrors ? Icons.error : Icons.warning,
-                      color: _validationResult.hasErrors ? cs.error : cs.tertiary,
-                    ),
+            if (!isNew)
+              PopupMenuButton<String>(
+                tooltip: 'Payload actions',
+                onSelected: (action) async {
+                  switch (action) {
+                    case 'duplicate':
+                      await _duplicate(context);
+                    case 'export':
+                      await _export();
+                    case 'delete':
+                      await _delete(context);
+                  }
+                },
+                itemBuilder: (_) => [
+                  const PopupMenuItem(
+                    value: 'duplicate',
+                    child: Text('Duplicate'),
                   ),
-                  onPressed: () => _showValidationDialog(context),
-                  tooltip: 'Show validation issues',
-                ),
+                  const PopupMenuItem(value: 'export', child: Text('Export')),
+                  if (!_isBuiltin)
+                    const PopupMenuItem(value: 'delete', child: Text('Delete')),
+                ],
               ),
-            if (!isNew && !_isBuiltin)
-              IconButton(
-                icon: const Icon(Icons.delete),
-                tooltip: 'Delete',
-                onPressed: () => _delete(context),
+            if (!_isBuiltin)
+              TextButton(
+                onPressed: _saving ? null : _save,
+                child: const Text('Save'),
               ),
-            IconButton(
-              icon: const Icon(Icons.check),
-              tooltip: 'Save',
-              onPressed: _validationResult.hasErrors ? null : _save,
-            ),
           ],
-        ),
-        body: Form(
-          key: _formKey,
-          onChanged: () => setState(() => _hasChanges = true),
-          child: ListView(
-            padding: const EdgeInsets.symmetric(vertical: 12),
-            children: [
-              if (_isBuiltin)
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-                  child: Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: cs.tertiaryContainer,
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Row(
-                      children: [
-                        Icon(Icons.lock, color: cs.onTertiaryContainer),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Text(
-                            'This is a built-in payload. You can duplicate it to create a custom version.',
-                            style: TextStyle(color: cs.onTertiaryContainer),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
+          bottom: TabBar(
+            controller: _tabs,
+            labelPadding: const EdgeInsets.symmetric(horizontal: 6),
+            tabs: [
+              for (final label in const ['Script', 'Details', 'Parameters'])
+                Tab(
+                  child: FittedBox(fit: BoxFit.scaleDown, child: Text(label)),
                 ),
-              const SectionHeader(title: 'Basic Info'),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: Card(
-                  child: Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: Column(
-                      children: [
-                        TextFormField(
-                          controller: _nameCtrl,
-                          decoration: const InputDecoration(
-                            labelText: 'Name',
-                            hintText: 'e.g., Windows Run Dialog',
-                            prefixIcon: Icon(Icons.title),
-                          ),
-                          validator: (v) => (v?.trim().isEmpty ?? true) ? 'Name is required' : null,
-                          enabled: !_isBuiltin,
-                        ),
-                        const SizedBox(height: 16),
-                        TextFormField(
-                          controller: _descCtrl,
-                          decoration: const InputDecoration(
-                            labelText: 'Description',
-                            hintText: 'What does this payload do?',
-                            prefixIcon: Icon(Icons.description),
-                          ),
-                          maxLines: 2,
-                          enabled: !_isBuiltin,
-                        ),
-                        const SizedBox(height: 16),
-                        TextFormField(
-                          controller: _tagsCtrl,
-                          decoration: const InputDecoration(
-                            labelText: 'Tags',
-                            hintText: 'windows, recon, exfil (comma-separated)',
-                            prefixIcon: Icon(Icons.label),
-                          ),
-                          enabled: !_isBuiltin,
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 16),
-              SectionHeader(
-                title: 'Script',
-                trailing: !_isBuiltin && ref.watch(localModelStatusProvider).value?.state == 'ready'
-                    ? TextButton(onPressed: _showLocalDraft, child: const Text('Draft with AI'))
-                    : null,
-              ),
-              if (_showValidation)
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  child: _ValidationSummaryCard(
-                    result: _validationResult,
-                    engineEstimateMs: _engineEstimateMs,
-                    showEstimate: _validationDebounce?.isActive != true,
-                    formatDuration: _formatDuration,
-                    onTap: () => _showValidationDialog(context),
-                  ),
-                ),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: Card(
-                  child: Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          children: [
-                            Icon(Icons.code, size: 20, color: cs.primary),
-                            const SizedBox(width: 8),
-                            const Expanded(
-                              child: Text('DuckyScript', style: TextStyle(fontWeight: FontWeight.w600)),
-                            ),
-                            TextButton.icon(
-                              onPressed: () => _showSyntaxHelp(context),
-                              icon: const Icon(Icons.help_outline, size: 18),
-                              label: const Text('Syntax'),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 12),
-                        TextFormField(
-                          controller: _scriptCtrl,
-                          decoration: InputDecoration(
-                            hintText: 'DELAY 500\nSTRING Hello World\nENTER',
-                            border: const OutlineInputBorder(),
-                            filled: true,
-                            fillColor: cs.surfaceContainerHighest,
-                          ),
-                          maxLines: 15,
-                          style: const TextStyle(fontFamily: 'monospace', fontSize: 13),
-                          validator: (v) => (v?.trim().isEmpty ?? true) ? 'Script is required' : null,
-                          enabled: !_isBuiltin,
-                        ),
-                        const SizedBox(height: 8),
-                        Text(
-                          'Use {{PARAM_NAME}} for dynamic values',
-                          style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 16),
-              SectionHeader(
-                title: 'Parameters (${_params.length})',
-                trailing: _isBuiltin
-                    ? null
-                    : TextButton.icon(
-                        onPressed: _changeParameter,
-                        icon: const Icon(Icons.add),
-                        label: const Text('Add'),
-                      ),
-              ),
-              if (_params.isEmpty)
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  child: Card(
-                    child: ListTile(
-                      leading: const Icon(Icons.info_outline),
-                      title: const Text('No parameters'),
-                      subtitle: const Text(
-                        'Add parameters to make this payload reusable with different values.',
-                      ),
-                    ),
-                  ),
-                )
-              else
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  child: Card(
-                    child: Column(
-                      children: [
-                        for (int i = 0; i < _params.length; i++) ...[
-                          _ParameterTile(
-                            param: _params[i],
-                            onEdit: _isBuiltin ? null : () => _changeParameter(i),
-                            onDelete: _isBuiltin ? null : () => _deleteParameter(i),
-                          ),
-                          if (i != _params.length - 1) const Divider(height: 1),
-                        ],
-                      ],
-                    ),
-                  ),
-                ),
-              const SizedBox(height: 16),
-              const SectionHeader(title: 'Quick Actions'),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: Card(
-                  child: Column(
-                    children: [
-                      ListTile(
-                        leading: const Icon(Icons.content_copy),
-                        title: const Text('Duplicate'),
-                        onTap: () => _duplicate(context),
-                      ),
-                      const Divider(height: 1),
-                      ListTile(
-                        leading: const Icon(Icons.ios_share),
-                        title: const Text('Export'),
-                        subtitle: const Text('Share as JSON'),
-                        onTap: _export,
-                      ),
-                      if (!isNew && !_isBuiltin) ...[
-                        const Divider(height: 1),
-                        ListTile(
-                          leading: Icon(Icons.delete, color: cs.error),
-                          title: Text('Delete', style: TextStyle(color: cs.error)),
-                          onTap: () => _delete(context),
-                        ),
-                      ],
-                    ],
-                  ),
-                ),
-              ),
-              const SizedBox(height: 80),
             ],
           ),
         ),
-        floatingActionButton: FloatingActionButton.extended(
-          onPressed: _validationResult.hasErrors ? null : _save,
-          icon: const Icon(Icons.check),
-          label: const Text('Save'),
-          backgroundColor: _validationResult.hasErrors ? cs.surfaceContainerHighest : null,
-          foregroundColor: _validationResult.hasErrors ? cs.onSurfaceVariant : null,
+        body: SafeArea(
+          top: false,
+          child: switch (_section) {
+            0 => _scriptSection(context),
+            1 => _detailsSection(),
+            _ => _parametersSection(),
+          },
         ),
       ),
+    );
+  }
+
+  void _changeSection() {
+    if (_section == _tabs.index) return;
+    FocusManager.instance.primaryFocus?.unfocus();
+    setState(() => _section = _tabs.index);
+  }
+
+  void _focusSection(int index, FocusNode focus) {
+    _tabs.animateTo(index);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && _section == index) focus.requestFocus();
+    });
+  }
+
+  Widget _scriptSection(BuildContext context) {
+    final model = ref.watch(localModelStatusProvider).value;
+    final theme = Theme.of(context);
+    final issueCount = _validationResult.issues.length;
+    return LayoutBuilder(
+      builder: (context, constraints) => Padding(
+        padding: EdgeInsets.fromLTRB(
+          12,
+          4,
+          12,
+          constraints.maxHeight < 100 ? 4 : 12,
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            if (constraints.maxHeight >= 100)
+              Row(
+                children: [
+                  Expanded(
+                    child: _isBuiltin
+                        ? const Text('Built-in script · Read only')
+                        : model == null || model.state == 'unsupported'
+                        ? const SizedBox.shrink()
+                        : Align(
+                            alignment: AlignmentDirectional.centerStart,
+                            child: TextButton.icon(
+                              icon: const Icon(Icons.auto_awesome_outlined),
+                              label: Text(
+                                model.state == 'ready'
+                                    ? 'Draft with AI'
+                                    : 'Set up AI',
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              onPressed: model.state == 'ready'
+                                  ? _showLocalDraft
+                                  : _showModelSetup,
+                            ),
+                          ),
+                  ),
+                  IconButton(
+                    tooltip: 'Syntax',
+                    onPressed: () => _showSyntaxHelp(context),
+                    icon: const Icon(Icons.help_outline),
+                  ),
+                  if (_showValidation)
+                    IconButton(
+                      tooltip: issueCount == 0
+                          ? 'Script validation and estimate'
+                          : 'Show validation issues',
+                      onPressed: () => _showValidationDialog(context),
+                      icon: Badge(
+                        isLabelVisible: issueCount > 0,
+                        label: Text('$issueCount'),
+                        child: Icon(
+                          issueCount == 0
+                              ? Icons.fact_check_outlined
+                              : Icons.report_problem_outlined,
+                          color: _validationResult.hasErrors
+                              ? theme.colorScheme.error
+                              : null,
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            const SizedBox(height: 4),
+            Expanded(
+              child: TextFormField(
+                key: const ValueKey('payload-script-editor'),
+                controller: _scriptCtrl,
+                focusNode: _scriptFocus,
+                scrollController: _scriptScroll,
+                expands: true,
+                maxLines: null,
+                textAlignVertical: TextAlignVertical.top,
+                keyboardType: TextInputType.multiline,
+                textInputAction: TextInputAction.newline,
+                autocorrect: false,
+                enableSuggestions: false,
+                smartDashesType: SmartDashesType.disabled,
+                smartQuotesType: SmartQuotesType.disabled,
+                readOnly: _isBuiltin,
+                style: const TextStyle(
+                  fontFamily: 'monospace',
+                  fontSize: 14,
+                  height: 1.45,
+                ),
+                decoration: InputDecoration(
+                  labelText: 'DuckyScript',
+                  alignLabelWithHint: true,
+                  hintText:
+                      'REM Write your script here\nSTRING Hello world\nENTER',
+                  errorText: _scriptError,
+                  border: const OutlineInputBorder(),
+                  filled: true,
+                  fillColor: theme.colorScheme.surfaceContainerLow,
+                  contentPadding: const EdgeInsets.all(12),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showModelSetup() => showConfigurationPage<void>(
+    context,
+    (_) => Scaffold(
+      appBar: AppBar(
+        leading: const CloseButton(),
+        title: const Text('Set up AI drafting'),
+      ),
+      body: const SafeArea(
+        top: false,
+        child: SingleChildScrollView(child: LocalDraftSettings()),
+      ),
+    ),
+  );
+
+  Widget _detailsSection() {
+    return ListView(
+      key: const PageStorageKey('payload-details'),
+      padding: const EdgeInsets.all(16),
+      children: [
+        TextFormField(
+          controller: _nameCtrl,
+          focusNode: _nameFocus,
+          readOnly: _isBuiltin,
+          textInputAction: TextInputAction.next,
+          onChanged: (_) => setState(() {
+            _nameError = null;
+            _hasChanges = true;
+          }),
+          decoration: InputDecoration(
+            labelText: 'Name',
+            errorText: _nameError,
+            border: const OutlineInputBorder(),
+          ),
+        ),
+        const SizedBox(height: 16),
+        TextFormField(
+          controller: _descCtrl,
+          readOnly: _isBuiltin,
+          onChanged: (_) => _hasChanges = true,
+          minLines: 2,
+          maxLines: 4,
+          decoration: const InputDecoration(
+            labelText: 'Description',
+            border: OutlineInputBorder(),
+          ),
+        ),
+        const SizedBox(height: 16),
+        TextFormField(
+          controller: _tagsCtrl,
+          readOnly: _isBuiltin,
+          onChanged: (_) => _hasChanges = true,
+          decoration: const InputDecoration(
+            labelText: 'Tags',
+            hintText: 'Separate tags with commas',
+            border: OutlineInputBorder(),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _parametersSection() {
+    return ListView(
+      key: const PageStorageKey('payload-parameters'),
+      padding: const EdgeInsets.all(16),
+      children: [
+        if (!_isBuiltin)
+          Align(
+            alignment: AlignmentDirectional.centerStart,
+            child: FilledButton.tonalIcon(
+              onPressed: _changeParameter,
+              icon: const Icon(Icons.add),
+              label: const Text('Add'),
+            ),
+          ),
+        const Padding(
+          padding: EdgeInsets.symmetric(vertical: 12),
+          child: Text('Use {{KEY}} in the script to insert a parameter.'),
+        ),
+        if (_params.isEmpty) const Text('No parameters'),
+        for (var i = 0; i < _params.length; i++) ...[
+          _ParameterTile(
+            param: _params[i],
+            onEdit: _isBuiltin ? null : () => _changeParameter(i),
+            onDelete: _isBuiltin ? null : () => _deleteParameter(i),
+          ),
+          if (i != _params.length - 1) const Divider(height: 1),
+        ],
+      ],
     );
   }
 
@@ -503,14 +551,31 @@ class _PayloadEditorScreenState extends ConsumerState<PayloadEditorScreen> {
   }
 
   Future<void> _save() async {
-    if (!_formKey.currentState!.validate()) return;
-    if (_validationResult.hasErrors) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Cannot save: script has validation errors'),
-          backgroundColor: Colors.red,
-        ),
-      );
+    if (_saving || _isBuiltin) return;
+    final script = _scriptCtrl.text;
+    final name = _nameCtrl.text.trim();
+    _validationDebounce?.cancel();
+    final result = _validator.validate(
+      script,
+      delayMultiplier: _currentDelayMultiplier(),
+    );
+    setState(() {
+      _validationResult = result;
+      _showValidation = script.trim().isNotEmpty;
+      _scriptError = !_showValidation ? 'Enter a script' : null;
+      _nameError = name.isEmpty ? 'Enter a name' : null;
+    });
+    if (_scriptError != null) {
+      _focusSection(0, _scriptFocus);
+      return;
+    }
+    if (result.hasErrors) {
+      _tabs.animateTo(0);
+      _showValidationDialog(context);
+      return;
+    }
+    if (_nameError != null) {
+      _focusSection(1, _nameFocus);
       return;
     }
 
@@ -522,25 +587,40 @@ class _PayloadEditorScreenState extends ConsumerState<PayloadEditorScreen> {
 
     final payload = Payload(
       id: widget.payloadId ?? _uuid.v4(),
-      name: _nameCtrl.text.trim(),
+      name: name,
       description: _descCtrl.text.trim(),
-      script: _scriptCtrl.text,
+      script: script,
       tags: tags,
-      parameters: _params,
+      parameters: List.of(_params),
       isBuiltin: _isBuiltin,
     );
 
-    if (widget.payloadId == null) {
-      await ref.read(payloadsControllerProvider.notifier).create(payload);
-    } else {
-      await ref.read(payloadsControllerProvider.notifier).updatePayload(payload);
-    }
-
-    if (mounted) {
+    setState(() => _saving = true);
+    try {
+      if (widget.payloadId == null) {
+        await ref.read(payloadsControllerProvider.notifier).create(payload);
+      } else {
+        await ref
+            .read(payloadsControllerProvider.notifier)
+            .updatePayload(payload);
+      }
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(widget.payloadId == null ? 'Payload created' : 'Payload updated')),
+        SnackBar(
+          content: Text(
+            widget.payloadId == null ? 'Payload created' : 'Payload updated',
+          ),
+        ),
       );
       context.go(const PayloadsRoute().location);
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Could not save the payload')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _saving = false);
     }
   }
 
@@ -554,7 +634,9 @@ class _PayloadEditorScreenState extends ConsumerState<PayloadEditorScreen> {
     );
     if (!ok) return;
 
-    await ref.read(payloadsControllerProvider.notifier).delete(widget.payloadId!);
+    await ref
+        .read(payloadsControllerProvider.notifier)
+        .delete(widget.payloadId!);
 
     if (mounted) {
       context.go(const PayloadsRoute().location);
@@ -568,9 +650,9 @@ class _PayloadEditorScreenState extends ConsumerState<PayloadEditorScreen> {
     await ref.read(payloadsControllerProvider.notifier).duplicate(id);
 
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Payload duplicated')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Payload duplicated')));
       context.go(const PayloadsRoute().location);
     }
   }
@@ -648,184 +730,9 @@ class _PayloadEditorScreenState extends ConsumerState<PayloadEditorScreen> {
           ),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Close')),
-        ],
-      ),
-    );
-  }
-}
-
-/* Validation Summary Card Widget */
-class _ValidationSummaryCard extends StatelessWidget {
-  const _ValidationSummaryCard({
-    required this.result,
-    required this.engineEstimateMs,
-    required this.showEstimate,
-    required this.formatDuration,
-    required this.onTap,
-  });
-
-  final ValidationResult result;
-  final int? engineEstimateMs;
-  final bool showEstimate;
-  final String Function(int) formatDuration;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-
-    Color bgColor;
-    Color fgColor;
-    IconData icon;
-    String title;
-
-    if (result.hasErrors) {
-      bgColor = cs.errorContainer;
-      fgColor = cs.onErrorContainer;
-      icon = Icons.error;
-      title = 'Script has errors';
-    } else if (result.hasWarnings) {
-      bgColor = cs.tertiaryContainer;
-      fgColor = cs.onTertiaryContainer;
-      icon = Icons.warning;
-      title = 'Script has warnings';
-    } else {
-      bgColor = cs.primaryContainer;
-      fgColor = cs.onPrimaryContainer;
-      icon = Icons.check_circle;
-      title = 'Script is valid';
-    }
-
-    return Card(
-      color: bgColor,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(12),
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Icon(icon, color: fgColor, size: 20),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Text(
-                      title,
-                      style: TextStyle(
-                        fontWeight: FontWeight.w700,
-                        fontSize: 15,
-                        color: fgColor,
-                      ),
-                    ),
-                  ),
-                  if (result.hasErrors || result.hasWarnings)
-                    Icon(Icons.chevron_right, color: fgColor, size: 20),
-                ],
-              ),
-              const SizedBox(height: 12),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  _StatChip(
-                    icon: Icons.code,
-                    label: '${result.commandCount} commands',
-                    color: fgColor,
-                  ),
-                  if (showEstimate && !result.hasErrors)
-                    _StatChip(
-                      icon: Icons.timer,
-                      label: engineEstimateMs != null
-                          ? '~${formatDuration(engineEstimateMs!)}'
-                          : 'Roughly ${result.estimatedDurationFormatted}',
-                      color: fgColor,
-                    ),
-                ],
-              ),
-              if (showEstimate && !result.hasErrors) ...[
-                const SizedBox(height: 4),
-                Text(
-                  'Excludes host and scheduled waits.',
-                  style: TextStyle(fontSize: 12, color: fgColor),
-                ),
-              ],
-              if (result.hasErrors || result.hasWarnings) ...[
-                const SizedBox(height: 12),
-                Row(
-                  children: [
-                    if (result.errorCount > 0) ...[
-                      Icon(Icons.error, size: 16, color: cs.error),
-                      const SizedBox(width: 4),
-                      Text(
-                        '${result.errorCount} error${result.errorCount != 1 ? 's' : ''}',
-                        style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                          color: cs.error,
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                    ],
-                    if (result.warningCount > 0) ...[
-                      Icon(Icons.warning, size: 16, color: cs.tertiary),
-                      const SizedBox(width: 4),
-                      Text(
-                        '${result.warningCount} warning${result.warningCount != 1 ? 's' : ''}',
-                        style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                          color: cs.tertiary,
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
-              ],
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _StatChip extends StatelessWidget {
-  const _StatChip({
-    required this.icon,
-    required this.label,
-    required this.color,
-  });
-
-  final IconData icon;
-  final String label;
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      decoration: BoxDecoration(
-        color: color.withOpacity(0.2),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: color.withOpacity(0.3)),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 14, color: color),
-          const SizedBox(width: 4),
-          Flexible(
-            child: Text(
-              label,
-              style: TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-                color: color,
-              ),
-            ),
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Close'),
           ),
         ],
       ),
@@ -833,7 +740,6 @@ class _StatChip extends StatelessWidget {
   }
 }
 
-/* Validation Dialog Widget */
 class _ValidationDialog extends StatelessWidget {
   const _ValidationDialog({
     required this.result,
@@ -863,7 +769,8 @@ class _ValidationDialog extends StatelessWidget {
           padding: const EdgeInsets.all(16),
           itemCount: result.issues.length + 1,
           itemBuilder: (context, index) {
-            if (index > 0) return _IssueListTile(issue: result.issues[index - 1]);
+            if (index > 0)
+              return _IssueListTile(issue: result.issues[index - 1]);
             return Card(
               color: cs.surfaceContainerHighest,
               child: Padding(
@@ -876,8 +783,14 @@ class _ValidationDialog extends StatelessWidget {
                       Text(estimate),
                       const Text('Excludes host and scheduled waits.'),
                     ],
-                    Text('Total delays: ${(result.totalDelayMs / 1000).toStringAsFixed(1)}s'),
-                    Text(result.issues.isEmpty ? 'No issues found' : 'Issues (${result.issues.length})'),
+                    Text(
+                      'Total delays: ${(result.totalDelayMs / 1000).toStringAsFixed(1)}s',
+                    ),
+                    Text(
+                      result.issues.isEmpty
+                          ? 'No issues found'
+                          : 'Issues (${result.issues.length})',
+                    ),
                   ],
                 ),
               ),
@@ -961,13 +874,7 @@ class _SyntaxItem extends StatelessWidget {
       padding: const EdgeInsets.only(bottom: 8),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            cmd,
-            style: const TextStyle(fontFamily: 'monospace', fontWeight: FontWeight.w600),
-          ),
-          Text(desc),
-        ],
+        children: [DuckyScriptText(cmd), Text(desc)],
       ),
     );
   }
@@ -989,7 +896,9 @@ class _ParameterTile extends StatelessWidget {
     return ListTile(
       leading: const Icon(Icons.settings_input_component),
       title: Text(param.label),
-      subtitle: Text('{{${param.key}}} • ${param.type}${param.required ? " • required" : ""}'),
+      subtitle: Text(
+        '{{${param.key}}} • ${param.type}${param.required ? " • required" : ""}',
+      ),
       trailing: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -1026,8 +935,12 @@ class _ParameterEditorState extends State<_ParameterEditor> {
 
   late final _keyCtrl = TextEditingController(text: widget.initial?.key);
   late final _labelCtrl = TextEditingController(text: widget.initial?.label);
-  late final _defaultCtrl = TextEditingController(text: widget.initial?.defaultValue);
-  late final _descCtrl = TextEditingController(text: widget.initial?.description);
+  late final _defaultCtrl = TextEditingController(
+    text: widget.initial?.defaultValue,
+  );
+  late final _descCtrl = TextEditingController(
+    text: widget.initial?.description,
+  );
   late String _type = widget.initial?.type ?? 'text';
   late bool _required = widget.initial?.required ?? false;
 
@@ -1057,10 +970,17 @@ class _ParameterEditorState extends State<_ParameterEditor> {
 
   @override
   Widget build(BuildContext context) {
-    final types = <String, String>{'text': 'Text', 'number': 'Number', 'url': 'URL'};
+    final types = <String, String>{
+      'text': 'Text',
+      'number': 'Number',
+      'url': 'URL',
+    };
     final initialType = widget.initial?.type;
     if (initialType != null) {
-      types.putIfAbsent(initialType, () => initialType.isEmpty ? 'Unspecified' : initialType);
+      types.putIfAbsent(
+        initialType,
+        () => initialType.isEmpty ? 'Unspecified' : initialType,
+      );
     }
 
     return ConfigurationPage(
@@ -1087,7 +1007,8 @@ class _ParameterEditorState extends State<_ParameterEditor> {
               validator: (value) {
                 final key = value?.trim() ?? '';
                 if (key.isEmpty) return 'Enter a key';
-                if (widget.reservedKeys.contains(key) && key != widget.initial?.key) {
+                if (widget.reservedKeys.contains(key) &&
+                    key != widget.initial?.key) {
                   return 'This key is already in use';
                 }
                 return null;
@@ -1103,7 +1024,8 @@ class _ParameterEditorState extends State<_ParameterEditor> {
                 helperMaxLines: 2,
                 border: OutlineInputBorder(),
               ),
-              validator: (value) => (value?.trim().isEmpty ?? true) ? 'Enter a label' : null,
+              validator: (value) =>
+                  (value?.trim().isEmpty ?? true) ? 'Enter a label' : null,
             ),
             const SizedBox(height: 16),
             DropdownButtonFormField<String>(
@@ -1113,13 +1035,20 @@ class _ParameterEditorState extends State<_ParameterEditor> {
                 for (final entry in types.entries)
                   DropdownMenuItem(
                     value: entry.key,
-                    child: Text(entry.value, maxLines: 1, overflow: TextOverflow.ellipsis),
+                    child: Text(
+                      entry.value,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
                   ),
               ],
               onChanged: (value) {
                 if (value != null) setState(() => _type = value);
               },
-              decoration: const InputDecoration(labelText: 'Type', border: OutlineInputBorder()),
+              decoration: const InputDecoration(
+                labelText: 'Type',
+                border: OutlineInputBorder(),
+              ),
             ),
             const SizedBox(height: 16),
             SwitchListTile(

@@ -5,7 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../data/models/payload.dart';
-import '../../../data/services/digispark_converter.dart';
+import '../../../widgets/ducky_script_text.dart';
 import '../../../data/services/github_store/models.dart';
 import '../../../data/services/github_store/url_parser.dart';
 import '../../../state/controllers/payloads_controller.dart';
@@ -758,23 +758,21 @@ class _FilePreviewScreen extends ConsumerStatefulWidget {
 
 class _FilePreviewScreenState extends ConsumerState<_FilePreviewScreen> {
   bool _wrap = true;
+  (RepoRef, String)? _previewKey;
+  Future<FilePreview>? _preview;
 
-  Widget _codeView(BuildContext context, String text, bool wrap) {
-    final mono = const TextStyle(fontFamily: 'monospace');
-
-    if (wrap) {
-      return SingleChildScrollView(
-        child: SelectableText(text, style: mono),
-      );
-    }
+  Widget _codeView(BuildContext context, String text, {bool duckyScript = true}) {
+    final code = duckyScript
+        ? DuckyScriptText(text, selectable: true)
+        : SelectableText(text, style: const TextStyle(fontFamily: 'monospace'));
+    final body = SingleChildScrollView(child: code);
+    if (_wrap) return body;
 
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
       child: ConstrainedBox(
-        constraints: BoxConstraints(minWidth: MediaQuery.of(context).size.width),
-        child: SingleChildScrollView(
-          child: SelectableText(text, style: mono),
-        ),
+        constraints: BoxConstraints(minWidth: MediaQuery.sizeOf(context).width),
+        child: body,
       ),
     );
   }
@@ -790,10 +788,14 @@ class _FilePreviewScreenState extends ConsumerState<_FilePreviewScreen> {
       );
     }
 
-    final svc = ref.read(githubStoreServiceProvider);
+    final key = (repo, widget.itemPath);
+    if (_previewKey != key) {
+      _previewKey = key;
+      _preview = ref.read(githubStoreServiceProvider).fetchFilePreview(repo, widget.itemPath);
+    }
 
     return FutureBuilder<FilePreview>(
-      future: svc.fetchFilePreview(repo, widget.itemPath),
+      future: _preview,
       builder: (context, snap) {
         final theme = Theme.of(context);
 
@@ -819,8 +821,15 @@ class _FilePreviewScreenState extends ConsumerState<_FilePreviewScreen> {
         }
 
         final preview = snap.data!;
-        final hasOriginal = preview.originalText != null;
-        final tabCount = hasOriginal ? 2 : 1;
+        final isPayloadJson = preview.detectedFormat == DetectedFormat.payloadJson;
+        final script = isPayloadJson
+            ? (jsonDecode(preview.text) as Map<String, dynamic>)['script'] as String
+            : preview.text;
+        final original = isPayloadJson ? preview.text : preview.originalText;
+        final tabCount = original == null ? 1 : 2;
+        final path = preview.path.toLowerCase();
+        final isDucky = preview.detectedFormat != DetectedFormat.unknown ||
+            path.endsWith('.duck') || path.endsWith('.ducky') || path.endsWith('.txt');
 
         return DefaultTabController(
           length: tabCount,
@@ -833,31 +842,30 @@ class _FilePreviewScreenState extends ConsumerState<_FilePreviewScreen> {
                   onPressed: () => setState(() => _wrap = !_wrap),
                   icon: Icon(_wrap ? Icons.wrap_text : Icons.swap_horiz),
                 ),
-                if (preview.wasConverted)
+                if (original != null)
                   PopupMenuButton<bool>(
                     tooltip: 'Copy script',
-                    onSelected: (original) async {
+                    onSelected: (copyOriginal) async {
                       await Clipboard.setData(ClipboardData(
-                        text: original ? preview.originalText! : preview.text,
+                        text: copyOriginal ? original : script,
                       ));
                       if (context.mounted) {
                         ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(content: Text(original ? 'Original copied' : 'Converted copied')),
+                          SnackBar(content: Text(copyOriginal ? 'Original copied' : 'Script copied')),
                         );
                       }
                     },
                     itemBuilder: (_) => [
-                      const PopupMenuItem(value: false, child: Text('Copy converted')),
-                      if (hasOriginal)
-                        const PopupMenuItem(value: true, child: Text('Copy original')),
+                      const PopupMenuItem(value: false, child: Text('Copy script')),
+                      PopupMenuItem(value: true, child: Text(isPayloadJson ? 'Copy JSON' : 'Copy original')),
                     ],
                   ),
               ],
-              bottom: hasOriginal
-                  ? const TabBar(
+              bottom: original != null
+                  ? TabBar(
                       tabs: [
-                        Tab(text: 'Converted'),
-                        Tab(text: 'Original'),
+                        Tab(text: isPayloadJson ? 'Script' : 'Converted'),
+                        Tab(text: isPayloadJson ? 'JSON' : 'Original'),
                       ],
                     )
                   : null,
@@ -889,14 +897,14 @@ class _FilePreviewScreenState extends ConsumerState<_FilePreviewScreen> {
                   child: Container(
                     padding: const EdgeInsets.all(12),
                     color: theme.colorScheme.surfaceVariant.withOpacity(0.4),
-                    child: hasOriginal
+                    child: original != null
                         ? TabBarView(
                             children: [
-                              _codeView(context, preview.text, _wrap),
-                              _codeView(context, preview.originalText!, _wrap),
+                              _codeView(context, script),
+                              _codeView(context, original, duckyScript: false),
                             ],
                           )
-                        : _codeView(context, preview.text, _wrap),
+                        : _codeView(context, script, duckyScript: isDucky),
                   ),
                 ),
 

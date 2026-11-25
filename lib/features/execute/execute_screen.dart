@@ -15,6 +15,7 @@ import '../../state/controllers/logs_controller.dart';
 import '../../state/controllers/payloads_controller.dart';
 import '../../state/controllers/selection_controller.dart';
 import '../../state/providers.dart';
+import '../../widgets/ducky_script_text.dart';
 import '../../widgets/configuration_page.dart';
 import '../../widgets/payload_parameter_field.dart';
 import '../../widgets/payload_picker.dart';
@@ -28,7 +29,7 @@ class ExecuteScreen extends ConsumerStatefulWidget {
 }
 
 class _ExecuteScreenState extends ConsumerState<ExecuteScreen> with SingleTickerProviderStateMixin {
-  final _rawCtrl = TextEditingController();
+  final _rawCtrl = DuckyScriptEditingController();
   final _parameterControllers = <String, Map<String, TextEditingController>>{};
   late TabController _tabController;
   final _validator = DuckyScriptValidator();
@@ -758,13 +759,10 @@ class _ConsoleTabState extends ConsumerState<_ConsoleTab> {
                                       Icon(Icons.code, size: 16, color: cs.primary),
                                       const SizedBox(width: 8),
                                       Expanded(
-                                        child: Text(
+                                        child: DuckyScriptText(
                                           _truncatePreset(settings.commandPresets[i], 40),
-                                          overflow: TextOverflow.ellipsis,
-                                          style: const TextStyle(
-                                            fontFamily: 'monospace',
-                                            fontSize: 12,
-                                          ),
+                                          maxLines: 1,
+                                          fontSize: 12,
                                         ),
                                       ),
                                     ],
@@ -790,6 +788,7 @@ class _ConsoleTabState extends ConsumerState<_ConsoleTab> {
           ),
           TextField(
             controller: widget.controller,
+            style: const TextStyle(fontFamily: 'monospace'),
             decoration: InputDecoration(
               labelText: 'Command',
               hintText: 'STRING hello | ENTER | DELAY 200',
@@ -850,6 +849,7 @@ class _ConsoleTabState extends ConsumerState<_ConsoleTab> {
         fieldLabel: 'Command',
         actionLabel: 'Save',
         initialValue: currentText,
+        highlightScript: true,
       ),
     );
     if (!context.mounted || result == null || result.trim().isEmpty) return;

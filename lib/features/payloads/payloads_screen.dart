@@ -11,6 +11,7 @@ import '../../data/models/payload.dart';
 import '../../state/controllers/execution_controller.dart';
 import '../../state/controllers/hid_status_controller.dart';
 import '../../state/controllers/payloads_controller.dart';
+import '../../widgets/ducky_script_text.dart';
 import '../../widgets/configuration_page.dart';
 import '../../widgets/confirm_dialog.dart';
 
@@ -676,18 +677,14 @@ class _PayloadCardState extends State<_PayloadCard> {
                       ],
                     ),
                     const SizedBox(height: 8),
-                    Text(
-                      widget.payload.script.trim().isEmpty
-                          ? '(empty script)'
-                          : widget.payload.script.split('\n').take(10).join('\n'),
-                      style: TextStyle(
-                        fontFamily: 'monospace',
-                        fontSize: 11,
-                        color: cs.onSurfaceVariant,
+                    if (widget.payload.script.trim().isEmpty)
+                      const Text('Empty script')
+                    else
+                      DuckyScriptText(
+                        widget.payload.script.split('\n').take(10).join('\n'),
+                        maxLines: 10,
+                        fontSize: 12,
                       ),
-                      maxLines: 10,
-                      overflow: TextOverflow.ellipsis,
-                    ),
                   ],
                 ),
               ),

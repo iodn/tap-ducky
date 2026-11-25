@@ -18,7 +18,9 @@ import '../features/settings/settings_screen.dart';
 import '../widgets/app_shell.dart';
 
 final appRouterProvider = Provider<GoRouter>((ref) {
+  final rootNavigator = GlobalKey<NavigatorState>();
   return GoRouter(
+    navigatorKey: rootNavigator,
     initialLocation: const DashboardRoute().location,
     routes: [
       ShellRoute(
@@ -49,17 +51,21 @@ final appRouterProvider = Provider<GoRouter>((ref) {
               GoRoute(
                 path: 'new',
                 name: PayloadEditorRoute.newName,
-                pageBuilder: (context, state) => const MaterialPage(
+                parentNavigatorKey: rootNavigator,
+                pageBuilder: (context, state) => MaterialPage(
+                  key: state.pageKey,
                   fullscreenDialog: true,
-                  child: PayloadEditorScreen(),
+                  child: const PayloadEditorScreen(),
                 ),
               ),
               GoRoute(
                 path: ':id/edit',
                 name: PayloadEditorRoute.editName,
+                parentNavigatorKey: rootNavigator,
                 pageBuilder: (context, state) {
                   final id = state.pathParameters['id']!;
                   return MaterialPage(
+                    key: state.pageKey,
                     fullscreenDialog: true,
                     child: PayloadEditorScreen(payloadId: id),
                   );

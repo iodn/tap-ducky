@@ -1,5 +1,7 @@
 import 'package:material_ui/material_ui.dart';
 
+import 'ducky_script_text.dart';
+
 Future<T?> showConfigurationPage<T>(
   BuildContext context,
   WidgetBuilder builder,
@@ -65,6 +67,7 @@ class TextConfigurationPage extends StatefulWidget {
     this.initialValue = '',
     this.hint,
     this.multiline = true,
+    this.highlightScript = false,
   });
 
   final String title;
@@ -73,13 +76,16 @@ class TextConfigurationPage extends StatefulWidget {
   final String initialValue;
   final String? hint;
   final bool multiline;
+  final bool highlightScript;
 
   @override
   State<TextConfigurationPage> createState() => _TextConfigurationPageState();
 }
 
 class _TextConfigurationPageState extends State<TextConfigurationPage> {
-  late final _controller = TextEditingController(text: widget.initialValue);
+  late final _controller = widget.highlightScript
+      ? DuckyScriptEditingController(text: widget.initialValue)
+      : TextEditingController(text: widget.initialValue);
 
   @override
   void dispose() {

@@ -17,6 +17,7 @@ import 'package:tap_ducky/state/controllers/hid_status_controller.dart';
 import 'package:tap_ducky/state/controllers/logs_controller.dart';
 import 'package:tap_ducky/state/controllers/payloads_controller.dart';
 import 'package:tap_ducky/state/controllers/scheduler_controller.dart';
+import 'package:tap_ducky/widgets/ducky_script_text.dart';
 import 'package:tap_ducky/widgets/task_bar.dart';
 import 'package:tap_ducky/widgets/arm_profile_sheet.dart';
 
@@ -345,6 +346,7 @@ void main() {
     await tester.ensureVisible(find.byTooltip('Expand preview'));
     await tester.tap(find.byTooltip('Expand preview'));
     await tester.pumpAndSettle();
+    expect(find.byType(DuckyScriptText), findsOneWidget);
     final menu = find.byType(PopupMenuButton<VoidCallback>);
     await tester.scrollUntilVisible(menu, 160, scrollable: list);
     await Scrollable.ensureVisible(tester.element(menu), alignment: 0.5);
@@ -365,12 +367,9 @@ void main() {
         const PayloadEditorScreen(),
         size: const Size(320, 568),
       );
-      final add = find.widgetWithText(TextButton, 'Add');
-      await tester.scrollUntilVisible(
-        add,
-        240,
-        scrollable: find.byType(Scrollable).first,
-      );
+      await tester.tap(find.text('Parameters'));
+      await tester.pumpAndSettle();
+      final add = find.text('Add');
       await tester.tap(add);
       await tester.pumpAndSettle();
       expect(find.text('Add parameter'), findsOneWidget);
@@ -403,6 +402,8 @@ void main() {
         160,
         scrollable: find.byType(Scrollable).first,
       );
+      await tester.ensureVisible(edit);
+      await tester.pumpAndSettle();
       await tester.tap(edit);
       await tester.pumpAndSettle();
       expect(find.text('Edit parameter'), findsOneWidget);
@@ -424,6 +425,8 @@ void main() {
       payloads: [_longPayload],
     );
 
+    await tester.tap(find.text('Details'));
+    await tester.pumpAndSettle();
     expect(
       find.byWidgetPredicate(
         (widget) =>
@@ -431,11 +434,9 @@ void main() {
       ),
       findsOneWidget,
     );
+    await tester.tap(find.text('Parameters'));
+    await tester.pumpAndSettle();
     final edit = find.byTooltip('Edit parameter');
-    for (var attempt = 0; attempt < 12 && edit.evaluate().isEmpty; attempt++) {
-      await tester.dragFrom(const Offset(8, 500), const Offset(0, -360));
-      await tester.pumpAndSettle();
-    }
     await tester.ensureVisible(edit);
     await tester.pumpAndSettle();
     await tester.tap(edit);
@@ -448,6 +449,37 @@ void main() {
     expect(type.initialValue, 'string');
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets(
+    'new payload starts in the code editor and keeps edits across tabs',
+    (tester) async {
+      await _pumpScreen(
+        tester,
+        const PayloadEditorScreen(),
+        size: const Size(320, 568),
+      );
+      final editor = find.byKey(const ValueKey('payload-script-editor'));
+      expect(editor.hitTestable(), findsOneWidget);
+      expect(find.byTooltip('Syntax').hitTestable(), findsOneWidget);
+      expect(find.text('Name'), findsNothing);
+
+      await tester.enterText(editor, 'STRING hello');
+      await tester.pump(const Duration(milliseconds: 650));
+      tester.view.viewInsets = const FakeViewPadding(bottom: 225);
+      addTearDown(tester.view.resetViewInsets);
+      await tester.pumpAndSettle();
+      expect(find.text('Save').hitTestable(), findsOneWidget);
+      await tester.tap(find.text('Save'));
+      await tester.pumpAndSettle();
+      expect(find.text('Enter a name'), findsOneWidget);
+      await tester.tap(find.text('Script'));
+      await tester.pumpAndSettle();
+      final field = tester.widget<TextFormField>(editor);
+      expect(field.controller!.text, 'STRING hello');
+      expect(field.controller, isA<DuckyScriptEditingController>());
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets('schedule cards wrap long labels and metadata', (tester) async {
     await _pumpScreen(
