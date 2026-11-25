@@ -676,21 +676,21 @@ class _TriggerExplanation extends StatelessWidget {
       case 'app_cold_start':
         title = 'App Start (Cold Start)';
         explanation =
-            'Runs once when TapDucky starts from a cold start. It does not run when returning from background.';
+            'Runs when TapDucky starts from a closed state.';
         icon = Icons.power_settings_new;
         color = cs.primary;
         break;
       case 'app_foreground':
         title = 'App Open (Foreground)';
         explanation =
-            'Runs when TapDucky comes to the foreground (switching back to the app). It can run multiple times.';
+            'Runs each time TapDucky comes to the foreground.';
         icon = Icons.open_in_new;
         color = cs.primary;
         break;
       case 'device_connected':
         title = 'Session Armed Trigger';
         explanation =
-            'Runs when the HID session is armed (USB gadget binds to UDC). This fires when you tap "Arm Session".';
+            'Runs when a USB HID session is armed.';
         icon = Icons.usb;
         color = cs.primary;
         break;

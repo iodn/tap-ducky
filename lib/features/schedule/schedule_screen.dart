@@ -20,13 +20,6 @@ class ScheduleScreen extends ConsumerWidget {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Schedule'),
-        actions: [
-          IconButton(
-            tooltip: 'New schedule',
-            onPressed: () => context.go('${const ScheduleRoute().location}/new'),
-            icon: const Icon(Icons.add),
-          ),
-        ],
       ),
       body: tasksAsync.when(
         loading: () => const Center(child: CircularProgressIndicator()),
@@ -48,8 +41,8 @@ class ScheduleScreen extends ConsumerWidget {
         data: (tasks) {
           if (tasks.isEmpty) {
             return EmptyState(
-              title: 'No schedules configured',
-              subtitle: 'Create a schedule to automatically run a payload on a timer or trigger.',
+              title: 'No schedules yet',
+              subtitle: 'Run a payload at a set time or on a trigger.',
               icon: Icons.schedule,
               action: FilledButton.icon(
                 onPressed: () => context.go('${const ScheduleRoute().location}/new'),
@@ -112,11 +105,13 @@ class ScheduleScreen extends ConsumerWidget {
           );
         },
       ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => context.go('${const ScheduleRoute().location}/new'),
-        icon: const Icon(Icons.add),
-        label: const Text('New Schedule'),
-      ),
+      floatingActionButton: tasksAsync.value?.isNotEmpty == true
+          ? FloatingActionButton.extended(
+              onPressed: () => context.go('${const ScheduleRoute().location}/new'),
+              icon: const Icon(Icons.add),
+              label: const Text('New schedule'),
+            )
+          : null,
     );
   }
 }

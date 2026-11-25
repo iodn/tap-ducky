@@ -175,7 +175,7 @@ class _PayloadsScreenState extends ConsumerState<PayloadsScreen> {
                   icon: const Icon(Icons.search),
                 ),
                 IconButton(
-                  tooltip: 'GitHub Store',
+                  tooltip: 'Payload store',
                   onPressed: () => context.go(const PayloadsStoreRoute().location),
                   icon: const Icon(Icons.cloud_download),
                 ),
@@ -185,8 +185,6 @@ class _PayloadsScreenState extends ConsumerState<PayloadsScreen> {
                       await _exportAll(context, async.value ?? []);
                     } else if (v == 'import') {
                       await _importFromClipboard(context);
-                    } else if (v == 'store') {
-                      if (context.mounted) context.go(const PayloadsStoreRoute().location);
                     } else if (v == 'manage_store') {
                       if (context.mounted) context.go(const PayloadsManageSourcesRoute().location);
                     } else if (v == 'select') {
@@ -196,7 +194,6 @@ class _PayloadsScreenState extends ConsumerState<PayloadsScreen> {
                   itemBuilder: (_) => const [
                     PopupMenuItem(value: 'export_all', child: Text('Export all')),
                     PopupMenuItem(value: 'import', child: Text('Import from clipboard')),
-                    PopupMenuItem(value: 'store', child: Text('Open GitHub Store')),
                     PopupMenuItem(value: 'manage_store', child: Text('Manage Sources')),
                     PopupMenuDivider(),
                     PopupMenuItem(value: 'select', child: Text('Select multiple')),

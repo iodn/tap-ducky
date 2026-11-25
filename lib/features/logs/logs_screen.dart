@@ -58,16 +58,14 @@ class _LogsScreenState extends ConsumerState<LogsScreen> {
             padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
             child: Row(
               children: [
-                const Text('Level:'),
-                const SizedBox(width: 10),
                 DropdownButton<String>(
                   value: _level,
                   items: const [
-                    DropdownMenuItem(value: 'all', child: Text('All')),
-                    DropdownMenuItem(value: 'info', child: Text('info')),
-                    DropdownMenuItem(value: 'debug', child: Text('debug')),
-                    DropdownMenuItem(value: 'warn', child: Text('warn')),
-                    DropdownMenuItem(value: 'error', child: Text('error')),
+                    DropdownMenuItem(value: 'all', child: Text('All levels')),
+                    DropdownMenuItem(value: 'info', child: Text('Info')),
+                    DropdownMenuItem(value: 'debug', child: Text('Debug')),
+                    DropdownMenuItem(value: 'warn', child: Text('Warnings')),
+                    DropdownMenuItem(value: 'error', child: Text('Errors')),
                   ],
                   onChanged: (v) => setState(() => _level = v ?? 'all'),
                 ),
@@ -94,10 +92,18 @@ class _LogsScreenState extends ConsumerState<LogsScreen> {
             separatorBuilder: (_, __) => const Divider(height: 1),
             itemBuilder: (context, i) {
               final e = filtered[i];
+              final local = e.timestamp.toLocal();
+              final formats = MaterialLocalizations.of(context);
+              final date = formats.formatCompactDate(local);
+              final time = formats.formatTimeOfDay(
+                TimeOfDay.fromDateTime(local),
+                alwaysUse24HourFormat: MediaQuery.alwaysUse24HourFormatOf(context),
+              );
+              final payloadName = e.payloadName;
               return ListTile(
                 leading: Icon(_iconFor(e.level, e.success)),
                 title: Text(e.message, maxLines: 2, overflow: TextOverflow.ellipsis),
-                subtitle: Text('${e.timestamp.toLocal()} • ${e.payloadName ?? 'n/a'}'),
+                subtitle: Text(payloadName == null ? '$date · $time' : '$date · $time · $payloadName'),
                 onTap: () => context.push('${const LogsRoute().location}/${e.id}'),
               );
             },

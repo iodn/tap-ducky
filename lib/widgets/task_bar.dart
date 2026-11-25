@@ -2,6 +2,7 @@ import 'package:material_ui/material_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../app/router.dart';
+import 'arm_profile_sheet.dart';
 import '../state/controllers/execution_controller.dart';
 import '../state/controllers/hid_status_controller.dart';
 
@@ -31,13 +32,15 @@ class TaskBar extends ConsumerWidget {
     final title = exec.isRunning
         ? 'Executing: ${exec.payloadName ?? 'payload'}'
         : (exec.success == null
-              ? 'Ready'
+              ? 'Execution'
               : (exec.success == true
                     ? 'Last run: success'
                     : 'Last run: error'));
 
     final subtitle = exec.isRunning
-        ? '${(exec.progress * 100).clamp(0, 100).toStringAsFixed(0)}% • ${exec.status}'
+        ? '${(exec.progress * 100).clamp(0, 100).toStringAsFixed(0)}% · ${exec.status}'
+        : exec.success == null
+        ? null
         : exec.status;
 
     return Material(
@@ -57,110 +60,79 @@ class TaskBar extends ConsumerWidget {
                 _StatusDot(ok: hid.rootAvailable && hid.hidSupported),
                 const SizedBox(width: 10),
                 Expanded(
-                  child: expanded
-                      ? Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Text(
-                              title,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                fontWeight: FontWeight.w600,
-                                fontSize: 13,
-                                height: 1.2,
-                              ),
-                            ),
-                            const SizedBox(height: 1),
-                            Text(
-                              subtitle,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(fontSize: 11, height: 1.2),
-                            ),
-                            const SizedBox(height: 8),
-                            SingleChildScrollView(
-                              scrollDirection: Axis.horizontal,
-                              child: Row(
-                                children: [
-                                  _chip(
-                                    context,
-                                    icon: Icons.list_alt,
-                                    label: 'Logs',
-                                    onTap: () => context.push(
-                                      const LogsRoute().location,
-                                    ),
-                                  ),
-                                  const SizedBox(width: 8),
-                                  _chip(
-                                    context,
-                                    icon: Icons.phone_android,
-                                    label: 'Device',
-                                    onTap: () => context.push(
-                                      const DeviceRoute().location,
-                                    ),
-                                  ),
-                                  const SizedBox(width: 8),
-                                  _chip(
-                                    context,
-                                    icon: hid.sessionArmed
-                                        ? Icons.lock_open
-                                        : Icons.lock_outline,
-                                    label: hid.sessionArmed
-                                        ? 'Armed'
-                                        : 'Disarmed',
-                                    onTap: () => ref
-                                        .read(
-                                          hidStatusControllerProvider.notifier,
-                                        )
-                                        .toggleSessionArmed(),
-                                  ),
-                                  if (exec.isRunning) ...[
-                                    const SizedBox(width: 8),
-                                    _chip(
-                                      context,
-                                      icon: Icons.stop,
-                                      label: 'Stop',
-                                      onTap: () => ref
-                                          .read(
-                                            executionControllerProvider
-                                                .notifier,
-                                          )
-                                          .stop(),
-                                      dangerous: true,
-                                    ),
-                                  ],
-                                ],
-                              ),
-                            ),
-                          ],
-                        )
-                      : Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Text(
-                              title,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                fontWeight: FontWeight.w600,
-                                fontSize: 13,
-                                height: 1.2,
-                              ),
-                            ),
-                            const SizedBox(height: 1),
-                            Text(
-                              subtitle,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(fontSize: 11, height: 1.2),
-                            ),
-                          ],
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w600,
+                          fontSize: 13,
+                          height: 1.2,
                         ),
+                      ),
+                      if (subtitle != null) ...[
+                        const SizedBox(height: 2),
+                        Text(
+                          subtitle,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(fontSize: 11, height: 1.2),
+                        ),
+                      ],
+                      if (expanded) ...[
+                        const SizedBox(height: 8),
+                        SingleChildScrollView(
+                          scrollDirection: Axis.horizontal,
+                          child: Row(
+                            children: [
+                              _chip(
+                                context,
+                                icon: Icons.list_alt,
+                                label: 'Logs',
+                                onTap: () =>
+                                    context.push(const LogsRoute().location),
+                              ),
+                              const SizedBox(width: 8),
+                              _chip(
+                                context,
+                                icon: Icons.phone_android,
+                                label: 'Device',
+                                onTap: () =>
+                                    context.push(const DeviceRoute().location),
+                              ),
+                              const SizedBox(width: 8),
+                              _chip(
+                                context,
+                                icon: hid.sessionArmed
+                                    ? Icons.lock_open
+                                    : Icons.lock_outline,
+                                label: hid.sessionArmed ? 'Disarm' : 'Arm',
+                                onTap: () => toggleUsbSession(context, ref),
+                              ),
+                              if (exec.isRunning) ...[
+                                const SizedBox(width: 8),
+                                _chip(
+                                  context,
+                                  icon: Icons.stop,
+                                  label: 'Stop',
+                                  onTap: () => ref
+                                      .read(
+                                        executionControllerProvider.notifier,
+                                      )
+                                      .stop(),
+                                  dangerous: true,
+                                ),
+                              ],
+                            ],
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
                 ),
                 const SizedBox(width: 10),
                 Icon(
@@ -188,7 +160,7 @@ class TaskBar extends ConsumerWidget {
       onTap: onTap,
       borderRadius: BorderRadius.circular(999),
       child: Container(
-        constraints: const BoxConstraints(minHeight: 44),
+        constraints: const BoxConstraints(minHeight: 48),
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
         decoration: BoxDecoration(
           color: dangerous ? cs.errorContainer : cs.surface,

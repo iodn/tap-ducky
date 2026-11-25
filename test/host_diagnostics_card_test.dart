@@ -31,6 +31,7 @@ class _TestHidController extends HidStatusController {
   HidStatus build() => HidStatus(
         rootAvailable: true,
         hidSupported: true,
+        pcConnected: connected,
         deviceConnected: connected,
         sessionArmed: true,
       );
@@ -70,8 +71,8 @@ void main() {
   testWidgets('shows host connection separately from host OS', (tester) async {
     await _pumpCard(tester);
 
-    expect(find.text('Host connected'), findsOneWidget);
-    expect(find.text('Connected'), findsOneWidget);
+    expect(find.text('USB connection'), findsOneWidget);
+    expect(find.text('Connected · HID ready'), findsOneWidget);
     expect(find.text('Host OS'), findsOneWidget);
     expect(find.text('Unknown'), findsOneWidget);
     expect(
@@ -86,10 +87,6 @@ void main() {
 
     expect(find.text('Disconnected'), findsOneWidget);
     expect(find.text('Unknown'), findsOneWidget);
-    expect(
-      find.textContaining('No USB host connection observed'),
-      findsOneWidget,
-    );
   });
 
   testWidgets('manual selection is labelled as manual', (tester) async {

@@ -41,7 +41,7 @@ class DeviceScreen extends ConsumerWidget {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Device Information'),
+        title: const Text('Device'),
         actions: [
           IconButton(
             tooltip: 'Refresh diagnostics',
@@ -63,47 +63,35 @@ class DeviceScreen extends ConsumerWidget {
             child: ListView(
               padding: const EdgeInsets.all(16),
               children: [
-                // System Status Hero Card
-                _SystemStatusHeroCard(hid: hid, snapshot: snap),
-                const SizedBox(height: 16),
-
-                // HID Readiness
                 _SectionTitle(
                   icon: Icons.security,
-                  title: 'HID Readiness',
-                  subtitle: 'USB gadget system status',
+                  title: 'USB readiness',
                 ),
                 const SizedBox(height: 12),
                 _HidReadinessCard(hid: hid),
                 const SizedBox(height: 24),
 
-                // Host connection and OS diagnostics (kept separate)
                 _SectionTitle(
                   icon: Icons.computer,
                   title: 'Host',
-                  subtitle: 'Connection and OS diagnostics',
                 ),
                 const SizedBox(height: 12),
                 const HostDiagnosticsCard(),
                 const SizedBox(height: 24),
 
-                // UDC State (if available)
                 if (hid.udcState != null) ...[
                   _SectionTitle(
                     icon: Icons.usb,
-                    title: 'USB Device Controller',
-                    subtitle: 'Real-time connection state',
+                    title: 'USB controller',
                   ),
                   const SizedBox(height: 12),
                   _UdcStateCard(hid: hid),
                   const SizedBox(height: 24),
                 ],
 
-                // Device Information
                 _SectionTitle(
                   icon: Icons.phone_android,
-                  title: 'Device Information',
-                  subtitle: 'Hardware & software details',
+                  title: 'Device details',
                 ),
                 const SizedBox(height: 12),
                 _DeviceInfoCard(
@@ -112,11 +100,9 @@ class DeviceScreen extends ConsumerWidget {
                 ),
                 const SizedBox(height: 24),
 
-                // Backend Diagnostics
                 _SectionTitle(
                   icon: Icons.bug_report,
-                  title: 'Backend Diagnostics',
-                  subtitle: 'Kernel & system configuration',
+                  title: 'Kernel diagnostics',
                 ),
                 const SizedBox(height: 12),
                 diagnosticsAsync.when(
@@ -131,11 +117,9 @@ class DeviceScreen extends ConsumerWidget {
                 ),
                 const SizedBox(height: 24),
 
-                // Compatibility Notes
                 _SectionTitle(
                   icon: Icons.info_outline,
-                  title: 'Compatibility Notes',
-                  subtitle: 'Requirements & recommendations',
+                  title: 'Compatibility',
                 ),
                 const SizedBox(height: 12),
                 _CompatibilityCard(isPhysical: snap.isPhysicalDevice),
@@ -143,149 +127,6 @@ class DeviceScreen extends ConsumerWidget {
             ),
           );
         },
-      ),
-    );
-  }
-}
-
-class _SystemStatusHeroCard extends StatelessWidget {
-  final HidStatus hid;
-  final DeviceSnapshot snapshot;
-
-  const _SystemStatusHeroCard({
-    required this.hid,
-    required this.snapshot,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    final isReady = hid.rootAvailable && hid.hidSupported;
-
-    return Card(
-      elevation: 2,
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          children: [
-            Row(
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: isReady
-                        ? cs.success.withOpacity(0.1)
-                        : cs.error.withOpacity(0.1),
-                    shape: BoxShape.circle,
-                  ),
-                  child: Icon(
-                    isReady ? Icons.check_circle : Icons.error_outline,
-                    size: 40,
-                    color: isReady ? cs.success : cs.error,
-                  ),
-                ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        isReady ? 'System Ready' : 'System Not Ready',
-                        style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                              fontWeight: FontWeight.w900,
-                            ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        isReady
-                            ? 'All requirements met for HID operations'
-                            : 'Missing required components',
-                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                              color: cs.onSurfaceVariant,
-                            ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 16),
-            Row(
-              children: [
-                Expanded(
-                  child: _QuickStat(
-                    icon: Icons.phone_android,
-                    label: 'Device',
-                    value: snapshot.model,
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: _QuickStat(
-                    icon: Icons.android,
-                    label: 'Android',
-                    value: 'API ${snapshot.sdkInt}',
-                  ),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _QuickStat extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final String value;
-
-  const _QuickStat({
-    required this.icon,
-    required this.label,
-    required this.value,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: cs.surfaceContainerHighest,
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Row(
-        children: [
-          Icon(icon, size: 20, color: cs.primary),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  label,
-                  style: TextStyle(
-                    fontSize: 11,
-                    color: cs.onSurfaceVariant,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  value,
-                  style: const TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w700,
-                  ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ],
-            ),
-          ),
-        ],
       ),
     );
   }
@@ -303,44 +144,30 @@ class _HidReadinessCard extends StatelessWidget {
     return Card(
       child: Column(
         children: [
-          _StatusRow(
-            icon: Icons.security,
-            label: 'Root Access',
-            status: hid.rootAvailable ? 'Available' : 'Unavailable',
-            isOk: hid.rootAvailable,
-            description: hid.rootAvailable
-                ? 'Superuser permissions granted'
-                : 'Root access required for USB gadget control',
+          ListTile(
+            leading: const Icon(Icons.security),
+            title: const Text('Root access'),
+            subtitle: Text(hid.rootAvailable ? 'Granted' : 'Required'),
           ),
           const Divider(height: 1),
-          _StatusRow(
-            icon: Icons.usb,
-            label: 'USB Gadget Support',
-            status: hid.hidSupported ? 'Supported' : 'Unsupported',
-            isOk: hid.hidSupported,
-            description: hid.hidSupported
-                ? 'Kernel supports ConfigFS USB gadgets'
-                : 'Kernel missing USB gadget/ConfigFS support',
+          ListTile(
+            leading: const Icon(Icons.usb),
+            title: const Text('USB gadget support'),
+            subtitle: Text(hid.hidSupported ? 'Supported' : 'Unavailable'),
           ),
           const Divider(height: 1),
-          _StatusRow(
-            icon: hid.sessionArmed ? Icons.lock_open : Icons.lock_outline,
-            label: 'Session State',
-            status: hid.sessionArmed ? 'Armed' : 'Disarmed',
-            isOk: hid.sessionArmed,
-            description: !hid.sessionArmed
-                ? 'Activate session to enable HID operations'
-                : (hid.gadgetBound ? 'USB HID is prepared' : 'USB HID setup is pending'),
-          ),
-          const Divider(height: 1),
-          _StatusRow(
-            icon: hid.pcConnected ? Icons.usb : Icons.usb_off,
-            label: 'Target Connection',
-            status: hid.pcConnected ? 'Connected' : 'Disconnected',
-            isOk: hid.pcConnected,
-            description: hid.pcConnected
-                ? (hid.deviceConnected ? 'PC connected and HID is ready' : 'PC connected')
-                : 'Connect USB cable to target device',
+          ListTile(
+            leading: Icon(hid.sessionArmed ? Icons.lock_open : Icons.lock_outline),
+            title: const Text('Session'),
+            subtitle: Text(
+              hid.usbRestoring
+                  ? (hid.message ?? 'Restoring USB…')
+                  : !hid.sessionArmed
+                      ? 'Disarmed'
+                      : hid.gadgetBound
+                          ? 'Armed'
+                          : (hid.message ?? 'HID setup pending'),
+            ),
           ),
           if (hid.udcList.isNotEmpty) ...[
             const Divider(height: 1),
@@ -393,95 +220,6 @@ class _HidReadinessCard extends StatelessWidget {
               ),
             ),
           ],
-        ],
-      ),
-    );
-  }
-}
-
-class _StatusRow extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final String status;
-  final bool isOk;
-  final String description;
-
-  const _StatusRow({
-    required this.icon,
-    required this.label,
-    required this.status,
-    required this.isOk,
-    required this.description,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    final statusColor = isOk ? cs.success : cs.error;
-
-    return Padding(
-      padding: const EdgeInsets.all(16),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(
-              color: statusColor.withOpacity(0.1),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Icon(icon, size: 20, color: statusColor),
-          ),
-          const SizedBox(width: 16),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text(
-                      label,
-                      style: const TextStyle(
-                        fontWeight: FontWeight.w700,
-                        fontSize: 14,
-                      ),
-                    ),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 10,
-                        vertical: 4,
-                      ),
-                      decoration: BoxDecoration(
-                        color: statusColor.withOpacity(0.15),
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(
-                          color: statusColor.withOpacity(0.3),
-                        ),
-                      ),
-                      child: Text(
-                        status,
-                        style: TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.w700,
-                          color: statusColor,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  description,
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: cs.onSurfaceVariant,
-                    height: 1.4,
-                  ),
-                ),
-              ],
-            ),
-          ),
         ],
       ),
     );
@@ -1316,12 +1054,10 @@ class _RequirementBullet extends StatelessWidget {
 class _SectionTitle extends StatelessWidget {
   final IconData icon;
   final String title;
-  final String subtitle;
 
   const _SectionTitle({
     required this.icon,
     required this.title,
-    required this.subtitle,
   });
 
   @override
@@ -1340,26 +1076,7 @@ class _SectionTitle extends StatelessWidget {
         ),
         const SizedBox(width: 12),
         Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                title,
-                style: const TextStyle(
-                  fontWeight: FontWeight.w900,
-                  fontSize: 16,
-                ),
-              ),
-              const SizedBox(height: 2),
-              Text(
-                subtitle,
-                style: TextStyle(
-                  fontSize: 12,
-                  color: cs.onSurfaceVariant,
-                ),
-              ),
-            ],
-          ),
+          child: Text(title, style: Theme.of(context).textTheme.titleMedium),
         ),
       ],
     );

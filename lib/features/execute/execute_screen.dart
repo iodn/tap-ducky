@@ -159,67 +159,56 @@ class _ExecuteScreenState extends ConsumerState<ExecuteScreen> with SingleTicker
 
           final payload = selected ?? payloads.first;
 
-          return Column(
+          return ListView(
+            padding: const EdgeInsets.all(16),
             children: [
-              _StatusBanner(hid: hid, exec: exec),
-              Expanded(
-                child: ListView(
-                  padding: const EdgeInsets.all(16),
-                  children: [
-                    _PayloadSelectionCard(
-                      payloads: payloads,
-                      selectedPayload: payload,
-                      onChanged: (id) => ref.read(selectedPayloadIdProvider.notifier).state = id,
-                      onEdit: () => context.go('${const PayloadsRoute().location}/${payload.id}/edit'),
-                    ),
-                    const SizedBox(height: 16),
-                    if (payload.parameters.isNotEmpty) ...[
-                      _ParametersCard(payload: payload, controllers: _paramCtrls),
+              _PayloadSelectionCard(
+                payloads: payloads,
+                selectedPayload: payload,
+                onChanged: (id) => ref.read(selectedPayloadIdProvider.notifier).state = id,
+                onEdit: () => context.go('${const PayloadsRoute().location}/${payload.id}/edit'),
+              ),
+              const SizedBox(height: 16),
+              if (payload.parameters.isNotEmpty) ...[
+                _ParametersCard(payload: payload, controllers: _paramCtrls),
+                const SizedBox(height: 16),
+              ],
+              ListenableBuilder(
+                listenable: Listenable.merge(_paramCtrls.values),
+                builder: (context, _) {
+                  final params = _collectParams(payload);
+                  final missing = payload.parameters.any(
+                    (p) => p.required && (params[p.key]?.trim().isEmpty ?? true),
+                  );
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      _ExecutionControlCard(
+                        exec: exec,
+                        hid: hid,
+                        missingParameters: missing,
+                        onRun: () => ref.read(executionControllerProvider.notifier).runPayload(payload, params),
+                        onStop: () => ref.read(executionControllerProvider.notifier).stop(),
+                      ),
                       const SizedBox(height: 16),
+                      _ExecutionSpeedCard(
+                        script: missing ? null : DuckyScript.resolvePlaceholders(payload.script, params),
+                        validator: _validator,
+                      ),
                     ],
-                    _PreExecutionChecklist(
-                      hid: hid,
-                      payload: payload,
-                      paramControllers: _paramCtrls,
-                    ),
-                    const SizedBox(height: 16),
-                    ListenableBuilder(
-                      listenable: Listenable.merge(_paramCtrls.values.toList()),
-                      builder: (context, _) {
-                        final params = _collectParams(payload);
-                        final missing = payload.parameters.any(
-                          (p) => p.required && (params[p.key]?.trim().isEmpty ?? true),
-                        );
-                        return _ExecutionSpeedCard(
-                          script: missing ? null : DuckyScript.resolvePlaceholders(payload.script, params),
-                          validator: _validator,
-                        );
-                      },
-                    ),
-                    const SizedBox(height: 16),
-                    _ExecutionControlCard(
-                      exec: exec,
-                      hid: hid,
-                      onRun: () async {
-                        final params = _collectParams(payload);
-                        await ref.read(executionControllerProvider.notifier).runPayload(payload, params);
-                      },
-                      onStop: () => ref.read(executionControllerProvider.notifier).stop(),
-                      onPanicStop: () => ref.read(executionControllerProvider.notifier).panicStop(),
-                    ),
-                    const SizedBox(height: 16),
-                    _ConsoleTabs(
-                      tabController: _tabController,
-                      rawController: _rawCtrl,
-                      exec: exec,
-                      onSendCommand: (cmd) async {
-                        await ref.read(executionControllerProvider.notifier).sendRawCommand(cmd);
-                        _rawCtrl.clear();
-                        setState(() {});
-                      },
-                    ),
-                  ],
-                ),
+                  );
+                },
+              ),
+              const SizedBox(height: 16),
+              _ConsoleTabs(
+                tabController: _tabController,
+                rawController: _rawCtrl,
+                exec: exec,
+                onSendCommand: (cmd) async {
+                  await ref.read(executionControllerProvider.notifier).sendRawCommand(cmd);
+                  _rawCtrl.clear();
+                  setState(() {});
+                },
               ),
             ],
           );
@@ -330,187 +319,73 @@ class _ExecutionSpeedCardState extends ConsumerState<_ExecutionSpeedCard> {
         ));
         final estimateMs = _engineEstimateMs ?? (estimateScript == null ? null : validation?.estimatedDurationMs);
 
+        final speed = '${currentMultiplier.toStringAsFixed(2)}×';
+        final estimate = estimateMs == null
+            ? ''
+            : ' · ~${_formatDuration(estimateMs)}';
+
         return Card(
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Icon(Icons.speed, color: cs.primary, size: 20),
-                    const SizedBox(width: 8),
-                    const Expanded(
-                      child: Text(
-                        'Script delay multiplier',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 16),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
-                    _SpeedPresetChip(
-                      label: 'Ultra',
-                      multiplier: 0.1,
-                      icon: Icons.bolt,
-                      currentMultiplier: currentMultiplier,
-                      onTap: () => ref.read(appSettingsControllerProvider.notifier).setDelayMultiplier(0.1),
-                      tooltip: 'Short pauses may not give the host app enough time to respond.',
-                    ),
-                    _SpeedPresetChip(
-                      label: 'Fast',
-                      multiplier: 0.5,
-                      icon: Icons.fast_forward,
-                      currentMultiplier: currentMultiplier,
-                      onTap: () => ref.read(appSettingsControllerProvider.notifier).setDelayMultiplier(0.5),
-                    ),
-                    _SpeedPresetChip(
-                      label: 'Normal',
-                      multiplier: 1.0,
-                      icon: Icons.play_arrow,
-                      currentMultiplier: currentMultiplier,
-                      onTap: () => ref.read(appSettingsControllerProvider.notifier).setDelayMultiplier(1.0),
-                    ),
-                    _SpeedPresetChip(
-                      label: 'Slow',
-                      multiplier: 2.0,
-                      icon: Icons.speed,
-                      currentMultiplier: currentMultiplier,
-                      onTap: () => ref.read(appSettingsControllerProvider.notifier).setDelayMultiplier(2.0),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 20),
-                Row(
-                  children: [
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            'Pause multiplier',
-                            style: TextStyle(
-                              fontSize: 13,
-                              fontWeight: FontWeight.w600,
-                              color: cs.onSurfaceVariant,
-                            ),
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            '${currentMultiplier.toStringAsFixed(2)}×',
-                            style: TextStyle(
-                              fontSize: 24,
-                              fontWeight: FontWeight.w700,
-                              color: cs.primary,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    Text(
-                      _getSpeedLabel(currentMultiplier),
-                      style: TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,
-                        color: cs.onSurfaceVariant,
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                Slider(
-                  value: currentMultiplier.clamp(0.1, 4.0),
-                  min: 0.1,
-                  max: 4.0,
-                  divisions: 39,
-                  label: '${currentMultiplier.toStringAsFixed(2)}×',
-                  onChanged: (v) {
-                    ref.read(appSettingsControllerProvider.notifier).setDelayMultiplier(v);
-                  },
-                ),
-                Text(
-                  '0.5× halves script pauses. USB key timing is separate in Settings.',
-                  style: TextStyle(fontSize: 11, color: cs.onSurfaceVariant),
-                ),
-                const SizedBox(height: 12),
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: cs.surfaceContainerHighest,
-                    borderRadius: BorderRadius.circular(8),
+          clipBehavior: Clip.antiAlias,
+          child: ExpansionTile(
+            leading: Icon(Icons.speed, color: cs.primary),
+            title: const Text('Script speed'),
+            subtitle: Text('$speed$estimate'),
+            childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+            expandedCrossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  _SpeedPresetChip(
+                    label: 'Ultra',
+                    multiplier: 0.1,
+                    icon: Icons.bolt,
+                    currentMultiplier: currentMultiplier,
+                    onTap: () => ref.read(appSettingsControllerProvider.notifier).setDelayMultiplier(0.1),
+                    tooltip: 'Short pauses may not give the host app enough time to respond.',
                   ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Icon(Icons.timer, size: 16, color: cs.onSurfaceVariant),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: Text(
-                              _engineEstimateMs == null ? 'Rough script estimate' : 'Estimated script time',
-                              style: TextStyle(
-                                fontSize: 12,
-                                fontWeight: FontWeight.w600,
-                                color: cs.onSurfaceVariant,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        estimateMs == null ? 'Unavailable until the script and inputs are valid.' : '~${_formatDuration(estimateMs)}',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w700,
-                          color: cs.primary,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        'Excludes host and scheduled waits. USB and host response may vary.',
-                        style: TextStyle(
-                          fontSize: 11,
-                          color: cs.onSurfaceVariant,
-                        ),
-                      ),
-                    ],
+                  _SpeedPresetChip(
+                    label: 'Fast',
+                    multiplier: 0.5,
+                    icon: Icons.fast_forward,
+                    currentMultiplier: currentMultiplier,
+                    onTap: () => ref.read(appSettingsControllerProvider.notifier).setDelayMultiplier(0.5),
                   ),
-                ),
-                const SizedBox(height: 12),
-                Container(
-                  padding: const EdgeInsets.all(10),
-                  decoration: BoxDecoration(
-                    color: cs.tertiaryContainer.withOpacity(0.3),
-                    borderRadius: BorderRadius.circular(6),
-                    border: Border.all(color: cs.primary.withOpacity(0.3)),
+                  _SpeedPresetChip(
+                    label: 'Normal',
+                    multiplier: 1.0,
+                    icon: Icons.play_arrow,
+                    currentMultiplier: currentMultiplier,
+                    onTap: () => ref.read(appSettingsControllerProvider.notifier).setDelayMultiplier(1.0),
                   ),
-                  child: Row(
-                    children: [
-                      Icon(Icons.info_outline, size: 14, color: cs.primary),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          'If the host app needs more time between actions, lengthen script pauses. If keys are missed, increase key timing in Settings.',
-                          style: TextStyle(
-                            fontSize: 11,
-                            color: cs.onSurfaceVariant,
-                          ),
-                        ),
-                      ),
-                    ],
+                  _SpeedPresetChip(
+                    label: 'Slow',
+                    multiplier: 2.0,
+                    icon: Icons.speed,
+                    currentMultiplier: currentMultiplier,
+                    onTap: () => ref.read(appSettingsControllerProvider.notifier).setDelayMultiplier(2.0),
                   ),
-                ),
-              ],
-            ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Slider(
+                value: currentMultiplier.clamp(0.1, 4.0),
+                min: 0.1,
+                max: 4.0,
+                divisions: 39,
+                label: speed,
+                semanticFormatterCallback: (value) => '${value.toStringAsFixed(2)}× script delay',
+                onChanged: (value) =>
+                    ref.read(appSettingsControllerProvider.notifier).setDelayMultiplier(value),
+              ),
+              Text(
+                estimateMs == null
+                    ? '0.5× halves script pauses. Key timing is in Settings.'
+                    : 'Estimate excludes host and scheduled waits. Key timing is in Settings.',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+            ],
           ),
         );
       },
@@ -524,14 +399,6 @@ class _ExecutionSpeedCardState extends ConsumerState<_ExecutionSpeedCard> {
     final minutes = seconds ~/ 60;
     final remainingSeconds = (seconds % 60).round();
     return '${minutes}m ${remainingSeconds}s';
-  }
-
-  String _getSpeedLabel(double multiplier) {
-    if (multiplier >= 3.0) return 'Very Slow';
-    if (multiplier >= 1.5) return 'Slow';
-    if (multiplier >= 0.9 && multiplier <= 1.1) return 'Normal';
-    if (multiplier >= 0.5) return 'Fast';
-    return 'Very Fast';
   }
 }
 
@@ -588,395 +455,6 @@ class _SpeedPresetChip extends StatelessWidget {
   }
 }
 
-class _PreExecutionChecklist extends StatefulWidget {
-  const _PreExecutionChecklist({
-    required this.hid,
-    required this.payload,
-    required this.paramControllers,
-  });
-
-  final HidStatus hid;
-  final Payload payload;
-  final Map<String, TextEditingController> paramControllers;
-
-  @override
-  State<_PreExecutionChecklist> createState() => _PreExecutionChecklistState();
-}
-
-class _PreExecutionChecklistState extends State<_PreExecutionChecklist> {
-  bool _expanded = false;
-
-  @override
-  void didUpdateWidget(_PreExecutionChecklist oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (_hasCriticalFailures() && !_expanded) {
-      setState(() => _expanded = true);
-    }
-  }
-
-  bool _hasCriticalFailures() {
-    return !widget.hid.rootAvailable ||
-        !widget.hid.hidSupported ||
-        !widget.hid.sessionArmed ||
-        !widget.hid.gadgetBound ||
-        _hasInvalidRequiredParams();
-  }
-
-  bool _hasInvalidRequiredParams() {
-    for (final param in widget.payload.parameters) {
-      if (param.required) {
-        final value = widget.paramControllers[param.key]?.text ?? '';
-        if (value.trim().isEmpty) return true;
-      }
-    }
-    return false;
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    final hasCriticalFailures = _hasCriticalFailures();
-
-    final checks = [
-      _CheckItem(
-        label: 'Root access',
-        passed: widget.hid.rootAvailable,
-        critical: true,
-        message: widget.hid.rootAvailable
-            ? 'Root shell available'
-            : 'Root access required for USB gadget control',
-      ),
-      _CheckItem(
-        label: 'USB HID support',
-        passed: widget.hid.hidSupported,
-        critical: true,
-        message: widget.hid.hidSupported
-            ? 'USB gadget/configfs detected'
-            : 'Device does not support USB gadget mode',
-      ),
-      _CheckItem(
-        label: 'HID session armed',
-        passed: widget.hid.sessionArmed,
-        critical: true,
-        message: widget.hid.sessionArmed
-            ? 'USB gadget is active'
-            : 'Arm session from Dashboard to activate USB gadget',
-      ),
-      _CheckItem(
-        label: 'Target device connected',
-        passed: widget.hid.deviceConnected,
-        critical: false,
-        message: widget.hid.deviceConnected
-            ? 'USB cable connected to target'
-            : 'Connect USB cable to target device (optional for testing)',
-      ),
-      _CheckItem(
-        label: 'Payload selected',
-        passed: true,
-        critical: true,
-        message: 'Payload: ${widget.payload.name}',
-      ),
-      if (widget.payload.parameters.isNotEmpty)
-        _CheckItem(
-          label: 'Required parameters',
-          passed: !_hasInvalidRequiredParams(),
-          critical: true,
-          message: _hasInvalidRequiredParams()
-              ? 'Fill in all required parameters above'
-              : 'All required parameters provided',
-        ),
-    ];
-
-    final passedCount = checks.where((c) => c.passed).length;
-    final totalCount = checks.length;
-    final allPassed = passedCount == totalCount;
-
-    return Card(
-      color: hasCriticalFailures
-          ? cs.errorContainer.withOpacity(0.3)
-          : allPassed
-              ? cs.primaryContainer.withOpacity(0.3)
-              : cs.surfaceContainerHighest,
-      child: Column(
-        children: [
-          InkWell(
-            onTap: () => setState(() => _expanded = !_expanded),
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Row(
-                children: [
-                  Container(
-                    padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(
-                      color: hasCriticalFailures
-                          ? cs.errorContainer
-                          : allPassed
-                              ? cs.primaryContainer
-                              : cs.tertiaryContainer,
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Icon(
-                      hasCriticalFailures
-                          ? Icons.error
-                          : allPassed
-                              ? Icons.check_circle
-                              : Icons.warning_amber,
-                      color: hasCriticalFailures
-                          ? cs.onErrorContainer
-                          : allPassed
-                              ? cs.onPrimaryContainer
-                              : cs.onTertiaryContainer,
-                      size: 20,
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Pre-Execution Checklist',
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w700,
-                            color: hasCriticalFailures ? cs.error : null,
-                          ),
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          '$passedCount of $totalCount checks passed',
-                          style: TextStyle(
-                            fontSize: 13,
-                            color: cs.onSurfaceVariant,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  Icon(
-                    _expanded ? Icons.expand_less : Icons.expand_more,
-                    color: cs.onSurfaceVariant,
-                  ),
-                ],
-              ),
-            ),
-          ),
-          if (_expanded) ...[
-            const Divider(height: 1),
-            Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  for (int i = 0; i < checks.length; i++) ...[
-                    if (i > 0) const SizedBox(height: 12),
-                    _CheckRow(check: checks[i]),
-                  ],
-                  if (hasCriticalFailures) ...[
-                    const SizedBox(height: 16),
-                    Container(
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: cs.errorContainer.withOpacity(0.5),
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(color: cs.error.withOpacity(0.3)),
-                      ),
-                      child: Row(
-                        children: [
-                          Icon(Icons.block, size: 18, color: cs.error),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: Text(
-                              'Fix critical issues above before executing',
-                              style: TextStyle(
-                                fontSize: 13,
-                                fontWeight: FontWeight.w600,
-                                color: cs.onErrorContainer,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ],
-              ),
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-}
-
-class _CheckItem {
-  const _CheckItem({
-    required this.label,
-    required this.passed,
-    required this.critical,
-    required this.message,
-  });
-
-  final String label;
-  final bool passed;
-  final bool critical;
-  final String message;
-}
-
-class _CheckRow extends StatelessWidget {
-  const _CheckRow({required this.check});
-
-  final _CheckItem check;
-
-  @override
-  Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-
-    IconData icon;
-    Color color;
-
-    if (check.passed) {
-      icon = Icons.check_circle;
-      color = cs.primary;
-    } else if (check.critical) {
-      icon = Icons.cancel;
-      color = cs.error;
-    } else {
-      icon = Icons.warning_amber;
-      color = cs.tertiary;
-    }
-
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Icon(icon, size: 20, color: color),
-        const SizedBox(width: 12),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      check.label,
-                      style: TextStyle(
-                        fontWeight: FontWeight.w600,
-                        fontSize: 14,
-                        color: check.passed
-                            ? null
-                            : (check.critical ? cs.error : cs.tertiary),
-                      ),
-                    ),
-                  ),
-                  if (check.critical && !check.passed)
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                      decoration: BoxDecoration(
-                        color: cs.error,
-                        borderRadius: BorderRadius.circular(4),
-                      ),
-                      child: Text(
-                        'REQUIRED',
-                        style: TextStyle(
-                          fontSize: 10,
-                          fontWeight: FontWeight.w700,
-                          color: cs.onError,
-                        ),
-                      ),
-                    ),
-                ],
-              ),
-              const SizedBox(height: 4),
-              Text(
-                check.message,
-                style: TextStyle(
-                  fontSize: 12,
-                  color: cs.onSurfaceVariant,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class _StatusBanner extends StatelessWidget {
-  const _StatusBanner({required this.hid, required this.exec});
-
-  final HidStatus hid;
-  final ExecutionState exec;
-
-  @override
-  Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-
-    IconData icon;
-    Color color;
-    String message;
-
-    if (!hid.rootAvailable || !hid.hidSupported) {
-      icon = Icons.error_outline;
-      color = cs.error;
-      message = 'Root/HID unavailable';
-    } else if (!hid.sessionArmed) {
-      icon = Icons.lock_outline;
-      color = cs.tertiary;
-      message = 'Session disarmed';
-    } else if (!hid.gadgetBound) {
-      icon = Icons.usb_off;
-      color = cs.tertiary;
-      message = hid.message ?? 'USB HID setup is pending';
-    } else if (!hid.deviceConnected) {
-      icon = Icons.usb_off;
-      color = cs.tertiary;
-      message = 'No device connected';
-    } else if (exec.isRunning) {
-      icon = Icons.play_circle;
-      color = cs.primary;
-      message = 'Executing...';
-    } else {
-      icon = Icons.check_circle;
-      color = cs.primary;
-      message = 'Ready to execute';
-    }
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      decoration: BoxDecoration(
-        color: color.withOpacity(0.1),
-        border: Border(bottom: BorderSide(color: color.withOpacity(0.3))),
-      ),
-      child: Row(
-        children: [
-          Icon(icon, color: color, size: 20),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Text(
-              message,
-              style: TextStyle(
-                fontWeight: FontWeight.w600,
-                color: color,
-              ),
-            ),
-          ),
-          if (exec.isRunning)
-            Text(
-              '~${(exec.progress * 100).toStringAsFixed(0)}%',
-              semanticsLabel: 'Approximate command progress: ${(exec.progress * 100).round()} percent',
-              style: TextStyle(
-                fontWeight: FontWeight.w700,
-                color: color,
-              ),
-            ),
-        ],
-      ),
-    );
-  }
-}
-
 class _PayloadSelectionCard extends StatelessWidget {
   const _PayloadSelectionCard({
     required this.payloads,
@@ -992,98 +470,37 @@ class _PayloadSelectionCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-
     return Card(
       child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+        padding: const EdgeInsets.all(12),
+        child: Row(
           children: [
-            Row(
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                    color: cs.primaryContainer,
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Icon(Icons.inventory_2, color: cs.onPrimaryContainer, size: 20),
+            Expanded(
+              child: DropdownButtonFormField<String>(
+                key: ValueKey(selectedPayload.id),
+                initialValue: selectedPayload.id,
+                isExpanded: true,
+                decoration: const InputDecoration(
+                  labelText: 'Payload',
+                  border: OutlineInputBorder(),
+                  contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
                 ),
-                const SizedBox(width: 12),
-                const Expanded(
-                  child: Text(
-                    'Selected Payload',
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                      letterSpacing: 0.5,
-                    ),
-                  ),
-                ),
-              ],
+                items: payloads
+                    .map((payload) => DropdownMenuItem<String>(
+                          value: payload.id,
+                          child: Text(payload.name, overflow: TextOverflow.ellipsis),
+                        ))
+                    .toList(),
+                onChanged: (id) {
+                  if (id != null) onChanged(id);
+                },
+              ),
             ),
-            const SizedBox(height: 16),
-            DropdownButtonFormField<String>(
-              value: selectedPayload.id,
-              isExpanded: true,
-              decoration: const InputDecoration(
-                labelText: 'Payload',
-                border: OutlineInputBorder(),
-                contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              ),
-              items: payloads
-                  .map((p) => DropdownMenuItem<String>(
-                        value: p.id,
-                        child: Text(p.name, overflow: TextOverflow.ellipsis),
-                      ))
-                  .toList(),
-              onChanged: (v) {
-                if (v != null) onChanged(v);
-              },
-            ),
-            if (selectedPayload.description.isNotEmpty) ...[
-              const SizedBox(height: 12),
-              Text(
-                selectedPayload.description,
-                style: TextStyle(
-                  fontSize: 13,
-                  color: cs.onSurfaceVariant,
-                ),
-              ),
-            ],
-            if (selectedPayload.tags.isNotEmpty) ...[
-              const SizedBox(height: 12),
-              Wrap(
-                spacing: 6,
-                runSpacing: 6,
-                children: selectedPayload.tags.map((tag) {
-                  return Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: cs.secondaryContainer,
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Text(
-                      tag,
-                      style: TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w500,
-                        color: cs.onSecondaryContainer,
-                      ),
-                    ),
-                  );
-                }).toList(),
-              ),
-            ],
-            const SizedBox(height: 16),
-            SizedBox(
-              width: double.infinity,
-              child: OutlinedButton.icon(
-                onPressed: onEdit,
-                icon: const Icon(Icons.edit, size: 18),
-                label: const Text('Edit Payload'),
-              ),
+            const SizedBox(width: 8),
+            IconButton(
+              tooltip: 'Edit payload',
+              icon: const Icon(Icons.edit_outlined),
+              onPressed: onEdit,
             ),
           ],
         ),
@@ -1169,139 +586,74 @@ class _ExecutionControlCard extends StatelessWidget {
     required this.hid,
     required this.onRun,
     required this.onStop,
-    required this.onPanicStop,
+    required this.missingParameters,
   });
 
   final ExecutionState exec;
   final HidStatus hid;
   final VoidCallback onRun;
   final VoidCallback onStop;
-  final VoidCallback onPanicStop;
+  final bool missingParameters;
 
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    final canRun = hid.rootAvailable && hid.hidSupported && hid.sessionArmed &&
-        hid.gadgetBound && !exec.isRunning;
+    final blockReason = _blockReason();
+    final status = exec.isRunning
+        ? exec.status
+        : blockReason ??
+            (missingParameters
+                ? 'Fill in required parameters'
+                : hid.deviceConnected
+                    ? null
+                    : 'Waiting for USB host');
 
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Row(
-              children: [
-                Icon(
-                  exec.isRunning ? Icons.play_circle : Icons.rocket_launch,
-                  color: cs.primary,
-                  size: 20,
-                ),
-                const SizedBox(width: 8),
-                const Expanded(
-                  child: Text(
-                    'Execution',
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 16),
             if (exec.isRunning) ...[
-              LinearProgressIndicator(value: exec.progress),
+              LinearProgressIndicator(
+                value: exec.progress,
+                semanticsLabel: 'Approximate command progress',
+              ),
               const SizedBox(height: 12),
-              Text(
-                exec.status,
-                style: const TextStyle(fontSize: 13),
-              ),
-              const SizedBox(height: 16),
             ],
-            if (!canRun && !exec.isRunning) ...[
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: cs.errorContainer.withOpacity(0.3),
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: cs.error.withOpacity(0.3)),
-                ),
-                child: Row(
-                  children: [
-                    Icon(Icons.info_outline, size: 18, color: cs.error),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Text(
-                        _getBlockReason(hid),
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: cs.onErrorContainer,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 16),
+            if (status != null) ...[
+              Text(status, style: Theme.of(context).textTheme.bodyMedium),
+              const SizedBox(height: 12),
             ],
-            Row(
-              children: [
-                Expanded(
-                  child: FilledButton.icon(
-                    onPressed: canRun ? onRun : null,
-                    icon: const Icon(Icons.play_arrow),
-                    label: const Text('Run Payload'),
-                    style: FilledButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(vertical: 14),
-                      disabledBackgroundColor: cs.surfaceContainerHighest,
-                      disabledForegroundColor: cs.onSurfaceVariant,
-                    ),
-                  ),
+            if (exec.isRunning)
+              FilledButton.icon(
+                onPressed: onStop,
+                icon: const Icon(Icons.stop),
+                label: const Text('Stop'),
+                style: FilledButton.styleFrom(
+                  backgroundColor: cs.error,
+                  foregroundColor: cs.onError,
                 ),
-                if (exec.isRunning) ...[
-                  const SizedBox(width: 12),
-                  FilledButton.icon(
-                    onPressed: onStop,
-                    icon: const Icon(Icons.stop),
-                    label: const Text('Stop'),
-                    style: FilledButton.styleFrom(
-                      backgroundColor: cs.error,
-                      foregroundColor: cs.onError,
-                      padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 20),
-                    ),
-                  ),
-                ],
-              ],
-            ),
-            if (exec.isRunning && exec.panicAvailable) ...[
-              const SizedBox(height: 10),
-              SizedBox(
-                width: double.infinity,
-                child: OutlinedButton.icon(
-                  onPressed: onPanicStop,
-                  icon: const Icon(Icons.warning_amber_rounded),
-                  label: const Text('Panic Stop'),
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: cs.error,
-                    side: BorderSide(color: cs.error),
-                    padding: const EdgeInsets.symmetric(vertical: 12),
-                  ),
-                ),
+              )
+            else
+              FilledButton.icon(
+                onPressed: blockReason == null ? onRun : null,
+                icon: const Icon(Icons.play_arrow),
+                label: const Text('Run Payload'),
               ),
-            ],
           ],
         ),
       ),
     );
   }
 
-  String _getBlockReason(HidStatus hid) {
-    if (!hid.rootAvailable) return 'Root access not available';
-    if (!hid.hidSupported) return 'USB HID not supported';
-    if (!hid.sessionArmed) return 'Session is disarmed. Arm it from Dashboard first.';
-    if (!hid.gadgetBound) return hid.message ?? 'USB HID setup is pending';
-    return 'Cannot execute';
+  String? _blockReason() {
+    if (!hid.rootAvailable) return 'Root access required';
+    if (!hid.hidSupported) return 'USB gadget support required';
+    if (hid.usbRestoring) return hid.message ?? 'Restoring USB…';
+    if (!hid.sessionArmed) return 'Arm a session from Dashboard';
+    if (!hid.gadgetBound) return hid.message ?? 'Preparing USB HID…';
+    return null;
   }
 }
 

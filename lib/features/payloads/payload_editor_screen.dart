@@ -410,7 +410,6 @@ class _PayloadEditorScreenState extends ConsumerState<PayloadEditorScreen> {
                       ListTile(
                         leading: const Icon(Icons.content_copy),
                         title: const Text('Duplicate'),
-                        subtitle: const Text('Create a copy of this payload'),
                         onTap: () => _duplicate(context),
                       ),
                       const Divider(height: 1),
@@ -425,7 +424,6 @@ class _PayloadEditorScreenState extends ConsumerState<PayloadEditorScreen> {
                         ListTile(
                           leading: Icon(Icons.delete, color: cs.error),
                           title: Text('Delete', style: TextStyle(color: cs.error)),
-                          subtitle: const Text('Remove this payload permanently'),
                           onTap: () => _delete(context),
                         ),
                       ],

@@ -27,20 +27,13 @@ class HostDiagnosticsCard extends ConsumerWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           ListTile(
-            leading: Icon(
-              hid.deviceConnected ? Icons.usb : Icons.usb_off,
-              color: cs.primary,
-            ),
-            title: const Text(
-              'Host connected',
-              style: TextStyle(fontWeight: FontWeight.w700),
-            ),
+            leading: Icon(hid.pcConnected ? Icons.usb : Icons.usb_off, color: cs.primary),
+            title: const Text('USB connection'),
             subtitle: Text(
-              hid.deviceConnected
-                  ? 'USB host enumeration observed'
-                  : 'No USB host connection observed',
+              hid.pcConnected
+                  ? (hid.deviceConnected ? 'Connected · HID ready' : 'Connected')
+                  : 'Disconnected',
             ),
-            trailing: _ConnectionChip(connected: hid.deviceConnected),
           ),
           const Divider(height: 1),
           ListTile(
@@ -87,7 +80,7 @@ class HostDiagnosticsCard extends ConsumerWidget {
                               value: os,
                               child: Text(
                                 os == HostOs.unknown
-                                    ? 'Unknown (no manual label)'
+                                    ? 'No manual label'
                                     : os.displayName,
                               ),
                             ),
@@ -115,9 +108,7 @@ class HostDiagnosticsCard extends ConsumerWidget {
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
-                        'Automatic identification is unavailable: the USB gadget stack '
-                        'reports connection state but no host OS identity. Host OS is '
-                        'diagnostic only and never selects, starts, or changes a script.',
+                        'Automatic identification is unavailable over USB. The OS label is for diagnostics.',
                         style: TextStyle(
                           fontSize: 12,
                           color: cs.onSurfaceVariant,
@@ -131,35 +122,6 @@ class HostDiagnosticsCard extends ConsumerWidget {
             ),
           ),
         ],
-      ),
-    );
-  }
-}
-
-class _ConnectionChip extends StatelessWidget {
-  const _ConnectionChip({required this.connected});
-
-  final bool connected;
-
-  @override
-  Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    final color = connected ? cs.primary : cs.error;
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.15),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: color.withValues(alpha: 0.3)),
-      ),
-      child: Text(
-        connected ? 'Connected' : 'Disconnected',
-        style: TextStyle(
-          fontSize: 11,
-          fontWeight: FontWeight.w700,
-          color: color,
-        ),
       ),
     );
   }

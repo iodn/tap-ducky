@@ -11,6 +11,7 @@ import '../../data/services/local_drafts_service.dart';
 import '../../state/controllers/app_settings_controller.dart';
 import '../../state/controllers/dynamic_color_controller.dart';
 import '../../state/controllers/hid_status_controller.dart';
+import '../../widgets/arm_profile_sheet.dart';
 import 'about_screen.dart';
 import 'widgets/donation_sheet.dart';
 import 'widgets/section_card.dart';
@@ -235,7 +236,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final usb = _SettingsDestination(
       icon: Icons.usb,
       title: 'USB & HID',
-      subtitle: hid.sessionArmed ? 'Session armed' : 'Session disarmed',
+      subtitle: hid.usbRestoring
+          ? 'Restoring USB…'
+          : hid.sessionArmed
+              ? 'Session armed'
+              : 'Session disarmed',
       keywords: const [
         'usb',
         'hid',
@@ -353,11 +358,28 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   Widget _usbPage(BuildContext context, WidgetRef ref) {
     final hid = ref.watch(hidStatusControllerProvider);
     return ListView(
-      padding: const EdgeInsets.only(top: 8, bottom: 24),
+      padding: const EdgeInsets.all(16),
       children: [
-        _buildHidControlSection(context, ref, hid),
-        const SizedBox(height: 8),
-        _buildAdvancedLinkSection(context),
+        Card(
+          child: Column(
+            children: [
+              ListTile(
+                leading: Icon(hid.sessionArmed ? Icons.lock_open : Icons.lock_outline),
+                title: Text(hid.sessionArmed ? 'Disarm session' : 'Arm session'),
+                subtitle: hid.usbRestoring ? Text(hid.message ?? 'Restoring USB…') : null,
+                enabled: hid.rootAvailable && hid.hidSupported && !hid.usbRestoring,
+                onTap: () => toggleUsbSession(context, ref),
+              ),
+              const Divider(height: 1),
+              ListTile(
+                leading: const Icon(Icons.phone_android),
+                title: const Text('Device diagnostics'),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () => context.push(const DeviceRoute().location),
+              ),
+            ],
+          ),
+        ),
       ],
     );
   }
@@ -384,7 +406,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       padding: const EdgeInsets.symmetric(horizontal: 16),
       child: SectionCard(
         title: 'Support Development',
-        subtitle: 'Keep this app fast, free, and maintained',
         leading: Icon(Icons.volunteer_activism_rounded, color: cs.primary),
         child: Padding(
           padding: const EdgeInsets.all(14),
@@ -477,7 +498,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       padding: const EdgeInsets.symmetric(horizontal: 16),
       child: SectionCard(
         title: 'Appearance',
-        subtitle: 'Customize your visual experience',
         leading: Icon(Icons.palette_outlined, color: cs.primary),
         child: Padding(
           padding: const EdgeInsets.all(12),
@@ -616,7 +636,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       padding: const EdgeInsets.symmetric(horizontal: 16),
       child: SectionCard(
         title: 'Execution',
-        subtitle: 'Control payload behavior and timing',
         leading: Icon(Icons.play_arrow, color: cs.primary),
         child: Padding(
           padding: const EdgeInsets.all(14),
@@ -809,7 +828,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                           .read(appSettingsControllerProvider.notifier)
                           .setEnableLogging(v),
                       title: const Text('Enable logging'),
-                      subtitle: const Text('Record execution events and outcomes'),
                     ),
                     const SizedBox(height: 6),
                     Row(
@@ -940,7 +958,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       padding: const EdgeInsets.symmetric(horizontal: 16),
       child: SectionCard(
         title: 'Hidden execution',
-        subtitle: 'Run payloads while TapDucky is not in the foreground',
         leading: Icon(Icons.visibility_off, color: cs.primary),
         child: Padding(
           padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
@@ -984,88 +1001,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     );
   }
 
-  Widget _buildAdvancedLinkSection(BuildContext context) {
-    final theme = Theme.of(context);
-    final cs = theme.colorScheme;
-
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16),
-      child: SectionCard(
-        title: 'Advanced',
-        subtitle: 'USB gadget, presets, and hotkeys',
-        leading: Icon(Icons.tune, color: cs.primary),
-        child: ListTile(
-          leading: const Icon(Icons.tune),
-          title: const Text('Advanced settings'),
-          subtitle: const Text('Command presets, hotkeys, default VID/PID'),
-          trailing: const Icon(Icons.chevron_right),
-          onTap: () => context.push(const AdvancedSettingsRoute().location),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildHidControlSection(
-      BuildContext context, WidgetRef ref, dynamic hid) {
-    final theme = Theme.of(context);
-    final cs = theme.colorScheme;
-
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16),
-      child: SectionCard(
-        title: 'HID Control',
-        subtitle: 'USB gadget session status',
-        leading: Icon(Icons.usb, color: cs.primary),
-        child: Column(
-          children: [
-            ListTile(
-              leading: const Icon(Icons.security),
-              title: const Text('Root available'),
-              subtitle: Text(hid.rootAvailable ? 'Available' : 'Unavailable'),
-              trailing: Icon(
-                hid.rootAvailable ? Icons.check_circle : Icons.error_outline,
-                color: hid.rootAvailable ? cs.primary : cs.error,
-              ),
-            ),
-            const Divider(height: 1),
-            ListTile(
-              leading: const Icon(Icons.usb),
-              title: const Text('HID supported'),
-              subtitle: Text(hid.hidSupported ? 'Supported' : 'Unsupported'),
-              trailing: Icon(
-                hid.hidSupported ? Icons.check_circle : Icons.error_outline,
-                color: hid.hidSupported ? cs.primary : cs.error,
-              ),
-            ),
-            const Divider(height: 1),
-            ListTile(
-              leading:
-                  Icon(hid.sessionArmed ? Icons.lock_open : Icons.lock_outline),
-              title: const Text('HID session'),
-              subtitle: Text(hid.sessionArmed ? 'Armed' : 'Disarmed'),
-              trailing: Switch(
-                value: hid.sessionArmed,
-                onChanged: (hid.rootAvailable && hid.hidSupported)
-                    ? (v) => ref
-                        .read(hidStatusControllerProvider.notifier)
-                        .toggleSessionArmed()
-                    : null,
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-              child: Text(
-                'HID session control activates/deactivates the USB gadget. '
-                'Check Device screen for detailed diagnostics.',
-                style: TextStyle(color: cs.onSurfaceVariant),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
   Widget _buildAboutSection(BuildContext context) {
     final theme = Theme.of(context);
     final cs = theme.colorScheme;
@@ -1074,7 +1009,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       padding: const EdgeInsets.symmetric(horizontal: 16),
       child: SectionCard(
         title: 'About',
-        subtitle: 'App information and legal',
         leading: Icon(Icons.info_outline, color: cs.primary),
         child: Column(
           children: [
