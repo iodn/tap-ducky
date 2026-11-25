@@ -629,23 +629,47 @@ class DuckyScriptParser {
       else -> stringBlockType?.let { "END_${it.name}" }
     }
     require(missingEnd == null) { "Line $blockStart: missing $missingEnd" }
+    validateButtonBlocks(commands)
+    validateExpressions(commands)
+    return commands
+  }
+
+  private fun validateButtonBlocks(commands: List<DuckyCommand>) {
+    val scopes = ArrayDeque<CommandType>()
     var buttonStart: Int? = null
+    var buttonScopeDepth = 0
     for (command in commands) {
       when (command.type) {
+        CommandType.IF, CommandType.WHILE, CommandType.TRY, CommandType.FUNCTION -> scopes.addLast(command.type)
         CommandType.BUTTON_DEF -> {
           require(buttonStart == null) { "Line ${command.lineNumber}: nested BUTTON_DEF" }
           buttonStart = command.lineNumber
+          buttonScopeDepth = scopes.size
         }
         CommandType.END_BUTTON -> {
           require(buttonStart != null) { "Line ${command.lineNumber}: END_BUTTON without BUTTON_DEF" }
+          require(scopes.size == buttonScopeDepth) { "Line ${command.lineNumber}: END_BUTTON crosses a block boundary" }
           buttonStart = null
+        }
+        CommandType.ELSE_IF, CommandType.ELSE, CommandType.CATCH,
+        CommandType.END_IF, CommandType.END_WHILE, CommandType.END_TRY, CommandType.END_FUNCTION -> {
+          val scope = when (command.type) {
+            CommandType.ELSE_IF, CommandType.ELSE, CommandType.END_IF -> CommandType.IF
+            CommandType.END_WHILE -> CommandType.WHILE
+            CommandType.CATCH, CommandType.END_TRY -> CommandType.TRY
+            else -> CommandType.FUNCTION
+          }
+          if (buttonStart != null) {
+            require(scopes.size > buttonScopeDepth && scopes.lastOrNull() == scope) {
+              "Line ${command.lineNumber}: BUTTON_DEF crosses a block boundary"
+            }
+          }
+          if (command.type.name.startsWith("END_") && scopes.lastOrNull() == scope) scopes.removeLast()
         }
         else -> Unit
       }
     }
     require(buttonStart == null) { "Line $buttonStart: missing END_BUTTON" }
-    validateExpressions(commands)
-    return commands
   }
 
   private fun validateExpressions(commands: List<DuckyCommand>) {

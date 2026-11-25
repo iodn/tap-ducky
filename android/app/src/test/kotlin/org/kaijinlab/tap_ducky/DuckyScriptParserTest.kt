@@ -6,6 +6,22 @@ import org.junit.Test
 
 class DuckyScriptParserTest {
   @Test
+  fun rejectsButtonDefinitionsThatCrossBranchesOrFunctionBoundaries() {
+    val parser = DuckyScriptParser()
+    val invalid = listOf(
+      "IF TRUE THEN\nBUTTON_DEF\nELSE\nEND_BUTTON\nEND_IF",
+      "TRY\nBUTTON_DEF\nCATCH\nEND_BUTTON\nEND_TRY",
+      "FUNCTION test()\nBUTTON_DEF\nEND_FUNCTION\nEND_BUTTON",
+      "BUTTON_DEF\nWHILE TRUE\nEND_BUTTON\nEND_WHILE",
+    )
+    for (script in invalid) {
+      val error = assertThrows(IllegalArgumentException::class.java) { parser.parse(script) }
+      assertEquals(true, error.message?.contains("Line 3:") == true)
+    }
+    assertEquals(6, parser.parse("IF TRUE THEN\nBUTTON_DEF\nIF TRUE THEN\nEND_IF\nEND_BUTTON\nEND_IF").size)
+  }
+
+  @Test
   fun expandsDefinesUsingHak5LabelBoundaries() {
     val commands = DuckyScriptParser().parse(
       """

@@ -40,6 +40,10 @@ END_IF
     for (final script in ['BUTTON_DEF', 'END_BUTTON', 'BUTTON_DEF\nBUTTON_DEF\nEND_BUTTON']) {
       expect(validator.validate(script).hasErrors, isTrue, reason: script);
     }
+    final crossing = validator.validate('TRY\nBUTTON_DEF\nCATCH\nEND_BUTTON\nEND_TRY');
+    expect(crossing.issues.single.line, 3);
+    expect(crossing.issues.single.message, contains('crosses a block boundary'));
+    expect(validator.validate('BUTTON_DEF\nIF TRUE THEN\nEND_IF\nEND_BUTTON').issues, isEmpty);
   });
 
   test('accepts constants and variables in default delay expressions', () {

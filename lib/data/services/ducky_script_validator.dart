@@ -481,6 +481,7 @@ class DuckyScriptValidator {
     bool inStringLnBlock = false;
     int? extensionStart;
     int? buttonStart;
+    (int, int, int, int)? buttonScope;
     final warnedVariables = <String>{};
     final defines = <String, String>{};
     RegExp? definePattern;
@@ -652,6 +653,30 @@ class DuckyScriptValidator {
       if (parts.isEmpty) continue;
 
       final command = parts[0].toUpperCase();
+      final scope = (ifDepth, whileDepth, tryHasCatch.length, functionParameters.length);
+      final activeButtonScope = buttonScope;
+      if (activeButtonScope != null) {
+        final crossesBoundary = switch (command) {
+          'ELSE' || 'ELSE_IF' || 'END_IF' || 'ENDIF' => scope.$1 <= activeButtonScope.$1,
+          'END_WHILE' || 'ENDWHILE' => scope.$2 <= activeButtonScope.$2,
+          'CATCH' || 'END_TRY' || 'ENDTRY' => scope.$3 <= activeButtonScope.$3,
+          'END_FUNCTION' || 'ENDFUNCTION' => scope.$4 <= activeButtonScope.$4,
+          'END_BUTTON' => scope != activeButtonScope,
+          _ => false,
+        };
+        if (crossesBoundary) {
+          issues.add(ValidationIssue(
+            line: lineNum,
+            severity: IssueSeverity.error,
+            message: 'BUTTON_DEF crosses a block boundary',
+          ));
+          buttonScope = null;
+          if (command == 'END_BUTTON') {
+            buttonStart = null;
+            continue;
+          }
+        }
+      }
       final expanded = expandDefines(trimmed).trimRight();
       final assignMatch = _assignmentPattern.firstMatch(expanded);
       final declaration = command == 'VAR' ? _varDeclarationPattern.firstMatch(expanded) : null;
@@ -904,6 +929,7 @@ class DuckyScriptValidator {
             ));
           } else {
             buttonStart = command == 'BUTTON_DEF' ? lineNum : null;
+            buttonScope = command == 'BUTTON_DEF' ? scope : null;
           }
           break;
 
