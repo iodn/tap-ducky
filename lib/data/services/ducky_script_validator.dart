@@ -152,6 +152,7 @@ class DuckyScriptValidator {
     'GUI',
     'OPTION',
     'INJECT_MOD',
+    'INJECT_VAR',
     'CAPSLOCK',
     'NUMLOCK',
     'SCROLLLOCK',
@@ -188,6 +189,7 @@ class DuckyScriptValidator {
     'ENDTRY',
     'WAIT_FOR',
     'WAITFOR',
+    'WAIT_FOR_BUTTON_PRESS',
     'SLEEP_UNTIL',
     'SLEEPUNTIL',
     'RANDOM_LOWERCASE_LETTER',
@@ -398,19 +400,43 @@ class DuckyScriptValidator {
   static const int _commandOverheadMs = 3;
   static const int _maxScriptRepeats = 20000;
   static const _hostOsVariable = r'$_OS';
+  static const _readOnlyHak5Variables = {
+    _hostOsVariable, r'$_CURRENT_VID', r'$_CURRENT_PID', r'$_CURRENT_ATTACKMODE',
+    r'$_RANDOM_INT', r'$_RANDOM_SEED', r'$_RANDOM_LOWER_LETTER_KEYCODE',
+    r'$_RANDOM_UPPER_LETTER_KEYCODE', r'$_RANDOM_LETTER_KEYCODE',
+    r'$_RANDOM_NUMBER_KEYCODE', r'$_RANDOM_SPECIAL_KEYCODE', r'$_RANDOM_CHAR_KEYCODE',
+  };
   static const _hostOsExtensions = {'OS_DETECTION', 'OS_DETECT'};
-  static final _hak5VariablePattern = RegExp(r'\$_[A-Z][A-Z_0-9]*\b');
+  static const _unsignedHak5Variables = {
+    r'$_RANDOM_MIN', r'$_RANDOM_MAX', r'$_BUTTON_TIMEOUT',
+  };
+  static const _writableHak5Variables = {
+    ..._unsignedHak5Variables,
+    r'$_BUTTON_PUSH_RECEIVED',
+  };
+  static const _variableName = r'\$(?:[A-Za-z0-9_]+|\?)';
+  static final _variablePattern = RegExp(_variableName);
+  static final _assignmentPattern = RegExp('^($_variableName)\\s*=\\s*(.*)\$');
+  static final _varDeclarationPattern = RegExp(
+    '^VAR\\s+($_variableName)(?:\\s*=\\s*(.*)|\\s+(.+))?\$',
+    caseSensitive: false,
+  );
+  static final _functionCallPattern = RegExp(r'^([A-Za-z_]\w*)\s*\((.*)\)\s*$');
+  static final _delayValueToken = RegExp(
+    '$_variableName|'
+    r'0x[0-9a-f]+|\d+|'
+    r'\b(?:TRUE|FALSE|UNKNOWN|WINDOWS|MACOS|LINUX|CHROMEOS|ANDROID|IOS)\b',
+    caseSensitive: false,
+  );
+  static final _delayExpressionOperators = RegExp(r'^[\s()+*/%^<>=!&|\-]*$');
+  static final _integerLiteral = RegExp(r'^[+-]?(?:0x[0-9a-f]+|\d+)$', caseSensitive: false);
+  static final _defineDeclaration = RegExp(r'^DEFINE\s+(\S+)\s(.*)$', caseSensitive: false);
   static const _unsupportedHak5Variables = {
-    r'$_BUTTON_ENABLED', r'$_BUTTON_PUSH_RECEIVED', r'$_BUTTON_TIMEOUT',
+    r'$_BUTTON_ENABLED',
     r'$_BUTTON_USER_DEFINED', r'$_SYSTEM_LEDS_ENABLED', r'$_STORAGE_LEDS_ENABLED',
     r'$_LED_CONTINUOUS_SHOW_STORAGE_ACTIVITY', r'$_INJECTING_LEDS_ENABLED',
     r'$_EXFIL_LEDS_ENABLED', r'$_LED_SHOW_CAPS', r'$_LED_SHOW_NUM',
-    r'$_LED_SHOW_SCROLL', r'$_CURRENT_VID', r'$_CURRENT_PID',
-    r'$_CURRENT_ATTACKMODE', r'$_RANDOM_INT', r'$_RANDOM_MIN', r'$_RANDOM_MAX',
-    r'$_RANDOM_SEED', r'$_RANDOM_LOWER_LETTER_KEYCODE',
-    r'$_RANDOM_UPPER_LETTER_KEYCODE', r'$_RANDOM_LETTER_KEYCODE',
-    r'$_RANDOM_NUMBER_KEYCODE', r'$_RANDOM_SPECIAL_KEYCODE',
-    r'$_RANDOM_CHAR_KEYCODE', r'$_JITTER_ENABLED', r'$_JITTER_MAX',
+    r'$_LED_SHOW_SCROLL', r'$_JITTER_ENABLED', r'$_JITTER_MAX',
     r'$_CAPSLOCK_ON', r'$_NUMLOCK_ON', r'$_SCROLLLOCK_ON',
     r'$_SAVED_CAPSLOCK_ON', r'$_SAVED_NUMLOCK_ON', r'$_SAVED_SCROLLLOCK_ON',
     r'$_RECEIVED_HOST_LOCK_LED_REPLY', r'$_STORAGE_ACTIVITY_TIMEOUT',
@@ -440,12 +466,16 @@ class DuckyScriptValidator {
     bool inStringLnBlock = false;
     int? extensionStart;
     final warnedVariables = <String>{};
+    final defines = <String, String>{};
+    RegExp? definePattern;
+    final scriptVariables = <String>{r'$?', ..._readOnlyHak5Variables, ..._writableHak5Variables};
+    final referencedVariables = <String, int>{};
+    final functionParameters = <Set<String>>[];
 
     final Set<String> declaredFunctions = {};
     int ifDepth = 0;
     int whileDepth = 0;
     final tryHasCatch = <bool>[];
-    int functionDepth = 0;
 
     int lastCommandTotalMs = 0;
 
@@ -510,14 +540,50 @@ class DuckyScriptValidator {
     }
 
     final stringBlockLines = <String>[];
-    void checkWritableVariable(String name, int line) {
-      if (name != _hostOsVariable) return;
-      issues.add(ValidationIssue(
-        line: line,
-        severity: IssueSeverity.error,
-        message: '$_hostOsVariable is read-only',
-      ));
+    String expandDefines(String expression) {
+      if (defines.isEmpty) return expression;
+      final pattern = definePattern ??= RegExp(
+        (defines.keys.toList()..sort((a, b) => b.length.compareTo(a.length)))
+            .map((label) {
+              final literal = RegExp.escape(label);
+              return label.startsWith('#') ? literal : '(?<!\\S)$literal(?!\\S)';
+            })
+            .join('|'),
+      );
+      return expression.replaceAllMapped(pattern, (match) => defines[match[0]]!);
     }
+
+    void checkVariableWrite(String name, int line, String? expression) {
+      if (expression?.trim().isEmpty == true) {
+        issues.add(ValidationIssue(
+          line: line,
+          severity: IssueSeverity.error,
+          message: "Expected a value after '='",
+        ));
+        return;
+      }
+      if (_readOnlyHak5Variables.contains(name)) {
+        issues.add(ValidationIssue(
+          line: line,
+          severity: IssueSeverity.error,
+          message: '$name is read-only',
+        ));
+      } else if (_unsignedHak5Variables.contains(name) && expression != null) {
+        final literal = expression.trim();
+        if (!_integerLiteral.hasMatch(literal)) return;
+        final value = int.tryParse(literal);
+        if (value == null || value < 0 || value > 65535) {
+          issues.add(ValidationIssue(
+            line: line,
+            severity: IssueSeverity.error,
+            message: '$name requires a value from 0 to 65535, got ${value ?? literal}',
+          ));
+        }
+      }
+    }
+
+    bool isFunctionParameter(String name) =>
+        functionParameters.any((parameters) => parameters.contains(name));
 
     for (int i = 0; i < rawLines.length; i++) {
       final lineNum = i + 1;
@@ -552,9 +618,8 @@ class DuckyScriptValidator {
           inStringBlock = false;
           inStringLnBlock = false;
         } else {
-          stringBlockLines.add(
-            upper == '\\$end' ? rawLine.replaceFirst('\\', '') : rawLine,
-          );
+          final text = upper == '\\$end' ? rawLine.replaceFirst('\\', '') : rawLine;
+          stringBlockLines.add(expandDefines(text));
         }
         continue;
       }
@@ -565,20 +630,28 @@ class DuckyScriptValidator {
       if (parts.isEmpty) continue;
 
       final command = parts[0].toUpperCase();
+      final expanded = expandDefines(trimmed).trimRight();
+      final assignMatch = _assignmentPattern.firstMatch(expanded);
+      final declaration = command == 'VAR' ? _varDeclarationPattern.firstMatch(expanded) : null;
+      final functionCall = _supportedCommands.contains(command)
+          ? null
+          : _functionCallPattern.firstMatch(trimmed);
 
-      if (const {'IF', 'ELSE', 'ELSE_IF', 'WHILE', 'VAR', 'RETURN', 'DELAY'}
+      if (const {'IF', 'ELSE', 'ELSE_IF', 'WHILE', 'RETURN', 'DELAY', 'INJECT_VAR'}
               .contains(command) ||
-          command.startsWith(r'$') ||
-          RegExp(r'^[A-Za-z_]\w*\s*\(').hasMatch(trimmed)) {
-        for (final match in _hak5VariablePattern.allMatches(trimmed)) {
+          declaration != null || assignMatch != null || functionCall != null) {
+        for (final match in _variablePattern.allMatches(expanded)) {
           final variable = match.group(0)!;
-          if (_unsupportedHak5Variables.contains(variable) &&
-              warnedVariables.add(variable)) {
-            issues.add(ValidationIssue(
-              line: lineNum,
-              severity: IssueSeverity.warning,
-              message: '$variable is a Hak5 variable unavailable in TapDucky',
-            ));
+          if (_unsupportedHak5Variables.contains(variable)) {
+            if (warnedVariables.add(variable)) {
+              issues.add(ValidationIssue(
+                line: lineNum,
+                severity: IssueSeverity.warning,
+                message: '$variable is a Hak5 variable unavailable in TapDucky',
+              ));
+            }
+          } else if (!isFunctionParameter(variable)) {
+            referencedVariables.putIfAbsent(variable, () => lineNum);
           }
         }
       }
@@ -594,6 +667,19 @@ class DuckyScriptValidator {
       }
 
       switch (command) {
+        case 'INJECT_VAR':
+          commandCount++;
+          if (parts.length == 1) {
+            issues.add(ValidationIssue(
+              line: lineNum,
+              severity: IssueSeverity.error,
+              message: 'INJECT_VAR requires a scancode variable',
+            ));
+          } else {
+            commitCommand(keyCount: 1, perCharDelayMs: 0, charCount: 0);
+          }
+          break;
+
         case 'EXTENSION':
           final name = parts.skip(1).join(' ').toUpperCase();
           if (!_hostOsExtensions.contains(name)) {
@@ -628,7 +714,7 @@ class DuckyScriptValidator {
             inStringBlock = command == 'STRING';
             inStringLnBlock = command == 'STRINGLN';
           } else {
-            final text = rawLine.trimLeft().substring(command.length + 1);
+            final text = expandDefines(rawLine.trimLeft().substring(command.length + 1));
             typeText(text, perCharDelay: 0, addEnter: command == 'STRINGLN');
           }
           break;
@@ -636,7 +722,9 @@ class DuckyScriptValidator {
         case 'STRING_DELAY':
         case 'STRINGDELAY':
           commandCount++;
-          if (parts.length < 2) {
+          final operand = expandDefines(rawLine.trimLeft().substring(command.length)).trimLeft();
+          final delayToken = operand.split(RegExp(r'\s+')).first;
+          if (delayToken.isEmpty) {
             issues.add(ValidationIssue(
               line: lineNum,
               severity: IssueSeverity.error,
@@ -645,7 +733,7 @@ class DuckyScriptValidator {
             ));
             break;
           }
-          final delayArg = int.tryParse(parts[1]);
+          final delayArg = int.tryParse(delayToken);
           if (delayArg == null) {
             issues.add(ValidationIssue(
               line: lineNum,
@@ -655,9 +743,8 @@ class DuckyScriptValidator {
             ));
             break;
           }
-          final operand = rawLine.trimLeft().substring(command.length).trimLeft();
-          final text = operand.length > parts[1].length
-              ? operand.substring(parts[1].length + 1)
+          final text = operand.length > delayToken.length
+              ? operand.substring(delayToken.length + 1)
               : '';
           typeText(text, perCharDelay: max(0, delayArg), addEnter: false);
           break;
@@ -687,13 +774,15 @@ class DuckyScriptValidator {
             ));
             break;
           }
-          final delayValue = int.tryParse(parts[1]);
+          final expression = expandDefines(trimmed.substring(command.length).trim());
+          final delayValue = int.tryParse(expression);
           if (delayValue == null) {
-            if (!parts[1].startsWith('\$')) {
+            final operators = expression.replaceAll(_delayValueToken, '');
+            if (operators == expression || !_delayExpressionOperators.hasMatch(operators)) {
               issues.add(ValidationIssue(
                 line: lineNum,
                 severity: IssueSeverity.error,
-                message: 'DELAY value must be a number or variable',
+                message: 'DELAY requires a time expression',
                 suggestion: 'Example: DELAY 500 or DELAY \$MY_DELAY',
               ));
             }
@@ -755,37 +844,46 @@ class DuckyScriptValidator {
           commitCommand(keyCount: 0, perCharDelayMs: 0, charCount: 0);
           break;
 
+        case 'WAIT_FOR_BUTTON_PRESS':
+          commandCount++;
+          if (parts.length != 1) {
+            issues.add(ValidationIssue(
+              line: lineNum,
+              severity: IssueSeverity.error,
+              message: 'WAIT_FOR_BUTTON_PRESS takes no arguments',
+            ));
+          }
+          commitCommand(keyCount: 0, perCharDelayMs: 0, charCount: 0);
+          break;
+
         case 'DEFINE':
-          if (parts.length < 2) {
+          final declaration = _defineDeclaration.firstMatch(rawLine.trimLeft());
+          if (declaration == null || declaration[2]!.trim().isEmpty) {
             issues.add(ValidationIssue(
               line: lineNum,
               severity: IssueSeverity.error,
               message: 'DEFINE requires a name and value',
               suggestion: 'Example: DEFINE APP notepad',
             ));
+          } else {
+            defines[declaration[1]!] = declaration[2]!;
+            definePattern = null;
           }
           break;
 
         case 'VAR':
           commandCount++;
-          if (parts.length < 2) {
+          if (declaration == null) {
             issues.add(ValidationIssue(
               line: lineNum,
               severity: IssueSeverity.error,
-              message: 'VAR requires a variable name',
+              message: 'VAR requires a valid variable name',
               suggestion: 'Example: VAR \$counter = 0',
             ));
           } else {
-            final varName = parts[1].split('=').first;
-            checkWritableVariable(varName, lineNum);
-            if (!varName.startsWith('\$')) {
-              issues.add(ValidationIssue(
-                line: lineNum,
-                severity: IssueSeverity.error,
-                message: 'Variable name must start with \$',
-                suggestion: 'Example: VAR \$counter = 0',
-              ));
-            }
+            final varName = declaration[1]!;
+            checkVariableWrite(varName, lineNum, declaration[2] ?? declaration[3]);
+            if (!isFunctionParameter(varName)) scriptVariables.add(varName);
           }
           commitCommand(keyCount: 0, perCharDelayMs: 0, charCount: 0);
           break;
@@ -803,34 +901,43 @@ class DuckyScriptValidator {
                 .firstMatch(trimmed);
             final funcName = m?.group(1) ?? parts[1].replaceAll(RegExp(r'[()]'), '');
             final args = RegExp(r'\(([^()]*)\)\s*$').firstMatch(trimmed)?.group(1);
+            final parameters = <String>{};
             for (final param in args?.split(',') ?? const <String>[]) {
               final name = param.trim();
-              checkWritableVariable(
-                name.startsWith(r'$') ? name : '\$$name',
-                lineNum,
-              );
+              if (name.isEmpty) continue;
+              final variable = name.startsWith(r'$') ? name : '\$$name';
+              parameters.add(variable);
+              if (_readOnlyHak5Variables.contains(variable) ||
+                  _unsupportedHak5Variables.contains(variable) ||
+                  _writableHak5Variables.contains(variable)) {
+                issues.add(ValidationIssue(
+                  line: lineNum,
+                  severity: IssueSeverity.error,
+                  message: 'Reserved variable $variable cannot be a function parameter',
+                ));
+              }
             }
+            functionParameters.add(parameters);
             declaredFunctions.add(funcName.toLowerCase());
-            functionDepth++;
           }
           break;
 
         case 'END_FUNCTION':
         case 'ENDFUNCTION':
-          if (functionDepth <= 0) {
+          if (functionParameters.isEmpty) {
             issues.add(ValidationIssue(
               line: lineNum,
               severity: IssueSeverity.error,
               message: 'END_FUNCTION without matching FUNCTION',
             ));
           } else {
-            functionDepth--;
+            functionParameters.removeLast();
           }
           break;
 
         case 'RETURN':
           commandCount++;
-          if (functionDepth <= 0) {
+          if (functionParameters.isEmpty) {
             issues.add(ValidationIssue(
               line: lineNum,
               severity: IssueSeverity.warning,
@@ -964,8 +1071,7 @@ class DuckyScriptValidator {
           break;
 
         default:
-          final funcCallMatch =
-              RegExp(r'^([A-Za-z_][A-Za-z0-9_]*)\s*\((.*)\)\s*$').firstMatch(trimmed);
+          final funcCallMatch = functionCall ?? _functionCallPattern.firstMatch(trimmed);
           if (funcCallMatch != null) {
             commandCount++;
             final funcName = funcCallMatch.group(1)!.toLowerCase();
@@ -989,11 +1095,11 @@ class DuckyScriptValidator {
             break;
           }
 
-          final assignMatch =
-              RegExp(r'^(\$[A-Za-z_][A-Za-z0-9_]*|\$\?)\s*=\s*(.+)$').firstMatch(trimmed);
           if (assignMatch != null) {
             commandCount++;
-            checkWritableVariable(assignMatch.group(1)!, lineNum);
+            final varName = assignMatch.group(1)!;
+            checkVariableWrite(varName, lineNum, assignMatch.group(2));
+            if (!isFunctionParameter(varName)) scriptVariables.add(varName);
             commitCommand(keyCount: 0, perCharDelayMs: 0, charCount: 0);
             break;
           }
@@ -1041,6 +1147,16 @@ class DuckyScriptValidator {
       }
     }
 
+    for (final reference in referencedVariables.entries) {
+      if (scriptVariables.contains(reference.key)) continue;
+      issues.add(ValidationIssue(
+        line: reference.value,
+        severity: IssueSeverity.warning,
+        message: '${reference.key} has no assignment in this script',
+        suggestion: 'Check the spelling or initialize it with VAR',
+      ));
+    }
+
     if (ifDepth > 0) {
       issues.add(ValidationIssue(
         line: 0,
@@ -1057,11 +1173,11 @@ class DuckyScriptValidator {
         suggestion: 'Add END_WHILE for each WHILE',
       ));
     }
-    if (functionDepth > 0) {
+    if (functionParameters.isNotEmpty) {
       issues.add(ValidationIssue(
         line: 0,
         severity: IssueSeverity.error,
-        message: '$functionDepth unclosed FUNCTION(s)',
+        message: '${functionParameters.length} unclosed FUNCTION(s)',
         suggestion: 'Add END_FUNCTION for each FUNCTION',
       ));
     }

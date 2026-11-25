@@ -20,6 +20,7 @@ class ExecutionState {
     required this.executionId,
     this.stopRequested = false,
     this.panicAvailable = false,
+    this.buttonPromptId,
     this.payloadId,
     this.payloadName,
     this.startedAt,
@@ -34,6 +35,7 @@ class ExecutionState {
   final String executionId;
   final bool stopRequested;
   final bool panicAvailable;
+  final String? buttonPromptId;
   final String? payloadId;
   final String? payloadName;
   final DateTime? startedAt;
@@ -48,6 +50,8 @@ class ExecutionState {
     String? executionId,
     bool? stopRequested,
     bool? panicAvailable,
+    String? buttonPromptId,
+    bool clearButtonPrompt = false,
     String? payloadId,
     String? payloadName,
     DateTime? startedAt,
@@ -62,6 +66,7 @@ class ExecutionState {
       executionId: executionId ?? this.executionId,
       stopRequested: stopRequested ?? this.stopRequested,
       panicAvailable: panicAvailable ?? this.panicAvailable,
+      buttonPromptId: clearButtonPrompt ? null : buttonPromptId ?? this.buttonPromptId,
       payloadId: payloadId ?? this.payloadId,
       payloadName: payloadName ?? this.payloadName,
       startedAt: startedAt ?? this.startedAt,
@@ -196,6 +201,7 @@ class ExecutionController extends Notifier<ExecutionState> {
       success: ok,
       stopRequested: false,
       panicAvailable: false,
+      clearButtonPrompt: true,
     );
     final detail = durationMs == null ? message : '$message ($durationMs ms on device)';
     _pushTail(_mkTail(
@@ -406,7 +412,12 @@ class ExecutionController extends Notifier<ExecutionState> {
     if (waitMs is! int || waitMs <= 0) return;
     final label = event['message']?.toString() ?? 'Waiting';
     final line = event['lineNumber'];
-    state = state.copyWith(status: label);
+    final promptId = event['promptId'];
+    state = state.copyWith(
+      status: label,
+      buttonPromptId: promptId is String ? promptId : null,
+      clearButtonPrompt: promptId is! String,
+    );
     _pushTail(_mkTail(
       executionId: executionId,
       level: 'info',
@@ -528,6 +539,7 @@ class ExecutionController extends Notifier<ExecutionState> {
         final msg = (evt['message']?.toString() ?? '').trim();
         state = state.copyWith(
           progress: p.clamp(0.0, 0.99),
+          clearButtonPrompt: true,
           status: msg.isNotEmpty ? msg : state.status,
         );
         if (msg.isNotEmpty) {
@@ -689,6 +701,7 @@ class ExecutionController extends Notifier<ExecutionState> {
         final msg = (evt['message']?.toString() ?? '').trim();
         state = state.copyWith(
           progress: p.clamp(0.0, 0.99),
+          clearButtonPrompt: true,
           status: msg.isNotEmpty ? msg : state.status,
         );
         if (msg.isNotEmpty) {
@@ -762,6 +775,21 @@ class ExecutionController extends Notifier<ExecutionState> {
 
   Future<void> stop() => _requestStop('Stopping…');
 
+  Future<void> confirmButtonPrompt(String promptId) async {
+    final executionId = _activeExecutionId;
+    if (executionId == null || state.stopRequested || state.buttonPromptId != promptId) return;
+    try {
+      final accepted = await ref.read(platformGadgetServiceProvider).confirmButtonPrompt(executionId, promptId);
+      if (accepted && _activeExecutionId == executionId && state.buttonPromptId == promptId) {
+        state = state.copyWith(clearButtonPrompt: true);
+      }
+    } catch (_) {
+      if (_activeExecutionId == executionId && state.buttonPromptId == promptId) {
+        state = state.copyWith(status: 'Could not continue. Try again.');
+      }
+    }
+  }
+
   Future<void> _requestStop(String status) async {
     if (!state.isRunning || state.stopRequested) return;
     final id = _activeExecutionId;
@@ -771,6 +799,7 @@ class ExecutionController extends Notifier<ExecutionState> {
       status: status,
       stopRequested: true,
       panicAvailable: false,
+      clearButtonPrompt: true,
     );
     _startPanicGraceTimer(id);
     _startAutoPanicTimer(id);

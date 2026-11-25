@@ -8,7 +8,9 @@ class DuckyScriptHostOsTest {
   @Test
   fun comparesTheCurrentFingerprintWithHak5Names() {
     var host: String? = null
-    val evaluator = ExpressionEvaluator { DuckyScriptHostOs.encode(host) }
+    val evaluator = ExpressionEvaluator {
+      if (it == DuckyScriptHostOs.variable) DuckyScriptHostOs.encode(host) else null
+    }
     val os = DuckyScriptHostOs.variable
     assertEquals(1, evaluator.evaluate("$os == UNKNOWN", emptyMap()))
 

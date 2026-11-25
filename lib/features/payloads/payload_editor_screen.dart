@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/services.dart' show PlatformException;
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -8,6 +9,7 @@ import 'package:uuid/uuid.dart';
 
 import '../../app/router.dart';
 import '../../data/models/payload.dart';
+import '../../data/services/ducky_script.dart';
 import '../../data/services/ducky_script_validator.dart';
 import '../../data/services/local_drafts_service.dart';
 import '../../state/controllers/app_settings_controller.dart';
@@ -57,6 +59,7 @@ class _PayloadEditorScreenState extends ConsumerState<PayloadEditorScreen>
   Timer? _estimateDebounce;
   bool _showValidation = false;
   int? _engineEstimateMs;
+  ValidationIssue? _engineIssue;
   int _estimateRevision = 0;
   String _observedScript = '';
 
@@ -106,6 +109,7 @@ class _PayloadEditorScreenState extends ConsumerState<PayloadEditorScreen>
       _hasChanges = true;
       _scriptError = null;
       _engineEstimateMs = null;
+      _engineIssue = null;
     });
     _validationDebounce?.cancel();
     _validationDebounce = Timer(const Duration(milliseconds: 500), () {
@@ -177,7 +181,7 @@ class _PayloadEditorScreenState extends ConsumerState<PayloadEditorScreen>
     _estimateDebounce?.cancel();
     if (script.trim().isEmpty ||
         _validationResult.hasErrors ||
-        RegExp(r'\$\{[\w-]+\}').hasMatch(script))
+        DuckyScript.hasPlaceholders(script))
       return;
     final mul = _currentDelayMultiplier();
     _estimateDebounce = Timer(const Duration(milliseconds: 600), () async {
@@ -189,6 +193,19 @@ class _PayloadEditorScreenState extends ConsumerState<PayloadEditorScreen>
         );
         if (!mounted || revision != _estimateRevision) return;
         setState(() => _engineEstimateMs = ms);
+      } on PlatformException catch (error) {
+        if (!mounted || revision != _estimateRevision) return;
+        final line = error.details;
+        if (error.code == 'DUCKY_EXPRESSION_SYNTAX' && line is int) {
+          setState(() {
+            _engineEstimateMs = null;
+            _engineIssue = ValidationIssue(
+              line: line,
+              severity: IssueSeverity.warning,
+              message: error.message ?? 'Invalid expression',
+            );
+          });
+        }
       } catch (_) {
         if (!mounted || revision != _estimateRevision) return;
         setState(() => _engineEstimateMs = null);
@@ -314,7 +331,7 @@ class _PayloadEditorScreenState extends ConsumerState<PayloadEditorScreen>
   Widget _scriptSection(BuildContext context) {
     final model = ref.watch(localModelStatusProvider).value;
     final theme = Theme.of(context);
-    final issueCount = _validationResult.issues.length;
+    final issueCount = _validationResult.issues.length + (_engineIssue == null ? 0 : 1);
     return LayoutBuilder(
       builder: (context, constraints) => Padding(
         padding: EdgeInsets.fromLTRB(
@@ -512,10 +529,21 @@ class _PayloadEditorScreenState extends ConsumerState<PayloadEditorScreen>
 
   void _showValidationDialog(BuildContext context) {
     if (_validationDebounce?.isActive == true) return;
+    final issue = _engineIssue;
+    final result = issue == null
+        ? _validationResult
+        : ValidationResult(
+            issues: [..._validationResult.issues, issue],
+            commandCount: _validationResult.commandCount,
+            estimatedDurationMs: _validationResult.estimatedDurationMs,
+            totalDelayMs: _validationResult.totalDelayMs,
+            hasErrors: _validationResult.hasErrors,
+            hasWarnings: true,
+          );
     showConfigurationPage<void>(
       context,
       (_) => _ValidationDialog(
-        result: _validationResult,
+        result: result,
         engineEstimateMs: _engineEstimateMs,
         formatDuration: _formatDuration,
       ),

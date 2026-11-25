@@ -54,6 +54,7 @@ class GadgetManager(
   private val executionLock = Any()
   private var activeExecutionId: String? = null
   private var cancelledExecutionId: String? = null
+  private var buttonPrompt: DuckyButtonPrompt? = null
   private var activeKeyboardMarker: File? = null
   private val keyboardMarkerForWorker = ThreadLocal<File>()
 
@@ -92,6 +93,9 @@ class GadgetManager(
     val inferredHostOs: String? = null,
     val hostOsDetectionAvailable: Boolean = false,
     val hostOsDetecting: Boolean = false,
+    val scriptVid: Int? = null,
+    val scriptPid: Int? = null,
+    val scriptAttackMode: Int? = null,
   ) {
     val isActive: Boolean get() = desiredArmed
     fun toMap(): Map<String, Any?> = mapOf(
@@ -183,6 +187,30 @@ class GadgetManager(
     )
   }
 
+  internal fun beginButtonPrompt(executionId: String, waitMs: Long): DuckyButtonPrompt = synchronized(executionLock) {
+    check(activeExecutionId == executionId && buttonPrompt == null)
+    DuckyButtonPrompt(
+      executionId,
+      java.util.UUID.randomUUID().toString(),
+      android.os.SystemClock.elapsedRealtime() + waitMs,
+    ).also { buttonPrompt = it }
+  }
+
+  fun confirmButtonPrompt(executionId: String, promptId: String): Boolean = synchronized(executionLock) {
+    if (activeExecutionId != executionId || cancelledExecutionId == executionId) return@synchronized false
+    buttonPrompt?.confirm(executionId, promptId, android.os.SystemClock.elapsedRealtime()) == true
+  }
+
+  internal fun buttonPromptConfirmedAt(promptId: String): Long? = synchronized(executionLock) {
+    buttonPrompt?.takeIf { it.id == promptId }?.confirmedAtMs
+  }
+
+  internal fun endButtonPrompt(promptId: String) = synchronized(executionLock) {
+    if (buttonPrompt?.id == promptId) {
+      buttonPrompt = null
+    }
+  }
+
   private fun requestExecutionCancellation(executionId: String? = null) {
     synchronized(executionLock) {
       val active = activeExecutionId
@@ -229,11 +257,12 @@ class GadgetManager(
   private fun readPhysicalStatus(current: Status): Status {
     val dir = prefs.pendingGadgetDir.takeIf { prefs.pendingSharedGadget }
       ?: prefs.activeGadgetDir.takeIf { prefs.preparedVersion == PREPARED_LAYOUT_VERSION }
-    val probe = if (current.supportAvailable && dir != null) {
-      probeSavedSession(dir) as? SessionProbe.Bound
-    } else {
-      null
+    val session = when {
+      current.supportAvailable && dir != null -> probeSavedSession(dir)
+      dir == null && !prefs.armed && !prefs.pendingSharedGadget -> SessionProbe.Unbound
+      else -> SessionProbe.Unknown
     }
+    val probe = session as? SessionProbe.Bound
     val udcState = probe?.udcState ?: if (current.supportAvailable) pollUdcState() else null
     val connected = probe?.udcState == "configured" && probe.devicesReady
     val pcConnected = when (udcState) {
@@ -288,6 +317,9 @@ class GadgetManager(
       inferredHostOs = fingerprint?.os,
       hostOsDetectionAvailable = armed && hostOsObserver.available,
       hostOsDetecting = fingerprint?.detecting == true,
+      scriptVid = probe?.vid,
+      scriptPid = probe?.pid,
+      scriptAttackMode = session.scriptAttackMode,
       udcState = udcState,
       hostConfigurationRequestCount = hostConfigurationRequestCount,
       activeRoleType = probe?.role,
@@ -898,7 +930,12 @@ class GadgetManager(
     return false
   }
 
-  fun executeDuckyScript(script: String, delayMultiplier: Double = 1.0, executionId: String? = null) {
+  fun executeDuckyScript(
+    script: String,
+    delayMultiplier: Double = 1.0,
+    executionId: String? = null,
+    canShowButtonPrompt: Boolean = false,
+  ) {
     val id = executionId?.takeIf { it.isNotBlank() } ?: "exec_${System.currentTimeMillis()}"
     val startedAt = android.os.SystemClock.elapsedRealtime()
     var terminalSent = false
@@ -920,6 +957,7 @@ class GadgetManager(
         log = log,
         delayMultiplier = delayMultiplier,
         executionId = id,
+        canShowButtonPrompt = canShowButtonPrompt,
         emitExec = { event ->
           if (event["type"] == "done" || event["type"] == "error") {
             terminalSent = true
@@ -938,6 +976,7 @@ class GadgetManager(
           "type" to "error",
           "executionId" to id,
           "message" to (e.message ?: "Could not start execution"),
+          "lineNumber" to (e as? DuckyExpressionSyntaxException)?.lineNumber,
           "elapsedMs" to (android.os.SystemClock.elapsedRealtime() - startedAt),
         ))
       }
@@ -949,6 +988,7 @@ class GadgetManager(
         keyboardMarkerForWorker.remove()
         activeExecutionId = null
         cancelledExecutionId = null
+        buttonPrompt = null
       }
     }
   }
@@ -987,9 +1027,11 @@ class GadgetManager(
 
   fun estimateDuckyScriptDurationMs(script: String, delayMultiplier: Double = 1.0): Long {
     val estimator = DuckyScriptEstimator(
-      manager = this,
-      log = log,
+      internalVariables = DuckyScriptVariables(::readScriptUsbVariable, ::scriptKeyStroke),
+      estimateTextDuration = ::estimateTypeStringDurationMs,
+      estimateKeyTapDuration = ::estimateKeyTapDurationMs,
       delayMultiplier = delayMultiplier,
+      onDelayClamp = { log.log("ducky", it) },
     )
     return estimator.estimate(script)
   }
@@ -1164,11 +1206,20 @@ class GadgetManager(
     return statusRef.get().deviceConnected
   }
 
-  internal fun scriptHostOs(): Int {
+  internal fun readScriptUsbVariable(name: String): Int? {
     val status = statusRef.get()
-    val detected = status.inferredHostOs.takeIf { status.desiredArmed && status.deviceConnected }
-    return DuckyScriptHostOs.encode(detected)
+    return when (name) {
+      DuckyScriptHostOs.variable -> DuckyScriptHostOs.encode(
+        status.inferredHostOs.takeIf { status.desiredArmed && status.deviceConnected },
+      )
+      "\$_CURRENT_ATTACKMODE" -> status.scriptAttackMode
+      "\$_CURRENT_VID" -> status.scriptVid
+      "\$_CURRENT_PID" -> status.scriptPid
+      else -> null
+    }
   }
+
+  internal fun scriptKeyStroke(character: Char): KeyStroke? = keyboardMapper.getStrokeForChar(character)
 
   internal fun isScriptHostOsPending(): Boolean {
     val status = statusRef.get()
@@ -1595,7 +1646,14 @@ class GadgetManager(
     return mounted.ok
   }
 
-  private sealed interface SessionProbe {
+  internal sealed interface SessionProbe {
+    val scriptAttackMode: Int?
+      get() = when (this) {
+        is Bound -> if (storage) 3 else 1
+        Unbound -> 0
+        Unknown -> null
+      }
+
     data class Bound(
       val role: String,
       val keyboard: String?,
@@ -1603,6 +1661,9 @@ class GadgetManager(
       val media: String?,
       val udcState: String?,
       val devicesReady: Boolean,
+      val vid: Int? = null,
+      val pid: Int? = null,
+      val storage: Boolean = false,
     ) : SessionProbe
     data object Unbound : SessionProbe
     data object Unknown : SessionProbe
@@ -1640,7 +1701,13 @@ class GadgetManager(
     }
     val expectedRole = prefs.activeRoleType.takeIf { prefs.activeGadgetDir == gadgetDir }
       ?: prefs.desiredRole.takeIf { shared }
-    return if (expectedRole == null || binding.role == expectedRole.lowercase(Locale.US)) binding else SessionProbe.Unknown
+    return if (expectedRole == null || binding.role == expectedRole.lowercase(Locale.US)) {
+      binding.copy(
+        vid = hak5UsbId(functions["vid"]),
+        pid = hak5UsbId(functions["pid"]),
+        storage = functions["storage"] == "1",
+      )
+    } else SessionProbe.Unknown
   }
 
   private fun startForeground(title: String) {

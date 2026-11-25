@@ -42,6 +42,7 @@ class TaskBar extends ConsumerWidget {
         : exec.success == null
         ? null
         : exec.status;
+    final buttonPromptId = exec.isRunning && !exec.stopRequested ? exec.buttonPromptId : null;
 
     return Material(
       color: bg,
@@ -83,6 +84,26 @@ class TaskBar extends ConsumerWidget {
                           style: const TextStyle(fontSize: 11, height: 1.2),
                         ),
                       ],
+                      if (buttonPromptId != null) ...[
+                        const SizedBox(height: 4),
+                        Wrap(
+                          spacing: 8,
+                          children: [
+                            FilledButton(
+                              onPressed: () => ref
+                                  .read(executionControllerProvider.notifier)
+                                  .confirmButtonPrompt(buttonPromptId),
+                              child: const Text('Continue'),
+                            ),
+                            TextButton(
+                              onPressed: () => ref
+                                  .read(executionControllerProvider.notifier)
+                                  .stop(),
+                              child: const Text('Stop'),
+                            ),
+                          ],
+                        ),
+                      ],
                       if (expanded) ...[
                         const SizedBox(height: 8),
                         SingleChildScrollView(
@@ -113,7 +134,7 @@ class TaskBar extends ConsumerWidget {
                                 label: hid.sessionArmed ? 'Disarm' : 'Arm',
                                 onTap: () => toggleUsbSession(context, ref),
                               ),
-                              if (exec.isRunning) ...[
+                              if (exec.isRunning && buttonPromptId == null) ...[
                                 const SizedBox(width: 8),
                                 _chip(
                                   context,

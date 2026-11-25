@@ -23,4 +23,15 @@ void main() {
     expect(stringLn.estimatedDurationMs - string.estimatedDurationMs, 75);
     expect(validator.validate('STRINGLN\nEND_STRINGLN').estimatedDurationMs, 0);
   });
+
+  test('text estimates count expanded constants before concatenating blocks', () {
+    final result = validator.validate(
+      'DEFINE TEXT hello\nDEFINE #SPEED 20\n'
+      'STRING\nTEXT\nworld\nEND_STRING\nSTRING_DELAY #SPEED TEXT',
+    );
+    final direct = validator.validate('STRING helloworld\nSTRING_DELAY 20 hello');
+    expect(result.issues, isEmpty);
+    expect(result.totalDelayMs, direct.totalDelayMs);
+    expect(result.estimatedDurationMs, direct.estimatedDurationMs);
+  });
 }

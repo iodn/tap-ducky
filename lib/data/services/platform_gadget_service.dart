@@ -431,6 +431,14 @@ class PlatformGadgetService {
     }
   }
 
+  Future<bool> confirmButtonPrompt(String executionId, String promptId) async {
+    return await _methods.invokeMethod<bool>('confirmButtonPrompt', {
+          'executionId': executionId,
+          'promptId': promptId,
+        }) ??
+        false;
+  }
+
   Future<void> executeDuckyScript({
     required String script,
     required double delayMultiplier,

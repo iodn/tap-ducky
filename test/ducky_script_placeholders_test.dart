@@ -2,6 +2,11 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:tap_ducky/data/services/ducky_script.dart';
 
 void main() {
+  test('detects placeholders in either supported style before estimation', () {
+    expect(DuckyScript.hasPlaceholders('DELAY {{PAUSE}}'), isTrue);
+    expect(DuckyScript.hasPlaceholders(r'DELAY ${ PAUSE }'), isTrue);
+    expect(DuckyScript.hasPlaceholders(r'DELAY $pause'), isFalse);
+  });
   test('resolves the double-brace placeholders shown in the editor', () {
     const script = 'STRING {{TARGET_IP}}\nENTER';
     expect(

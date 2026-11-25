@@ -57,6 +57,11 @@ class MainActivity : FlutterActivity() {
           val executionId = args["executionId"]?.toString()
           runAsync(result) { manager.cancelExecution(executionId); null }
         }
+        "confirmButtonPrompt" -> {
+          val executionId = call.argument<String>("executionId")
+          val promptId = call.argument<String>("promptId")
+          result.success(executionId != null && promptId != null && manager.confirmButtonPrompt(executionId, promptId))
+        }
         "testMouseMove" -> {
           val args = call.arguments as? Map<*, *> ?: emptyMap<String, Any>()
           val dx = (args["dx"] as? Number)?.toInt() ?: 8
@@ -79,7 +84,12 @@ class MainActivity : FlutterActivity() {
 
           scriptExecutor.execute {
             try {
-              manager.executeDuckyScript(script, multiplier, executionId)
+              manager.executeDuckyScript(
+                script,
+                multiplier,
+                executionId,
+                canShowButtonPrompt = !executionId.isNullOrBlank(),
+              )
             } catch (t: Throwable) {
               try {
                 logBus.logError("exec", "executeDuckyScript failed: ${t.message ?: t.toString()}")
@@ -226,6 +236,8 @@ class MainActivity : FlutterActivity() {
       try {
         val value = block()
         mainHandler.post { result.success(value) }
+      } catch (e: DuckyExpressionSyntaxException) {
+        mainHandler.post { result.error("DUCKY_EXPRESSION_SYNTAX", e.message, e.lineNumber) }
       } catch (t: Throwable) {
         mainHandler.post { result.error("ERR", t.message, null) }
       }

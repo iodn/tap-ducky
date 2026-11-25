@@ -1,3 +1,4 @@
+import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -108,6 +109,25 @@ class _RunningExecution extends ExecutionController {
   }
 }
 
+class _WaitingExecution extends ExecutionController {
+  String? confirmedPrompt;
+
+  @override
+  ExecutionState build() => const ExecutionState(
+    isRunning: true,
+    progress: 0.25,
+    status: 'Waiting for you to press Continue',
+    executionId: 'test',
+    buttonPromptId: 'prompt',
+  );
+
+  @override
+  Future<void> confirmButtonPrompt(String promptId) async {
+    confirmedPrompt = promptId;
+    state = state.copyWith(clearButtonPrompt: true);
+  }
+}
+
 Future<void> _pumpScreen(
   WidgetTester tester,
   Widget screen, {
@@ -171,6 +191,23 @@ final _longPayload = Payload(
 );
 
 void main() {
+  testWidgets('button prompt keeps Continue and Stop visible at large text', (tester) async {
+    final execution = _WaitingExecution();
+    await _pumpScreen(
+      tester,
+      const Scaffold(bottomNavigationBar: TaskBar()),
+      size: const Size(320, 568),
+      execution: execution,
+    );
+
+    expect(find.text('Stop').hitTestable(), findsOneWidget);
+    await tester.tap(find.text('Continue').hitTestable());
+    await tester.pumpAndSettle();
+    expect(execution.confirmedPrompt, 'prompt');
+    expect(find.text('Continue'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('task bar grows and keeps actions reachable', (tester) async {
     await _pumpScreen(
       tester,
@@ -565,6 +602,35 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
+
+  testWidgets('payload editor shows Android expression diagnostics', (tester) async {
+    const channel = MethodChannel('org.kaijinlab.tap_ducky/gadget');
+    final messenger = TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      if (call.method == 'estimateDuckyScriptDuration') {
+        throw PlatformException(
+          code: 'DUCKY_EXPRESSION_SYNTAX',
+          message: 'Missing closing parenthesis in expression',
+          details: 2,
+        );
+      }
+      return null;
+    });
+    addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+
+    await _pumpScreen(tester, const PayloadEditorScreen(), size: const Size(420, 900));
+    await tester.enterText(
+      find.byKey(const ValueKey('payload-script-editor')),
+      'REM sample\nDELAY (100 + 20',
+    );
+    await tester.pump(const Duration(milliseconds: 500));
+    await tester.pump(const Duration(milliseconds: 600));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Show validation issues'));
+    await tester.pumpAndSettle();
+    expect(find.text('Line 2'), findsOneWidget);
+    expect(find.text('Missing closing parenthesis in expression'), findsOneWidget);
+  });
 
   testWidgets('schedule cards wrap long labels and metadata', (tester) async {
     await _pumpScreen(

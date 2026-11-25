@@ -2,14 +2,39 @@ package org.kaijinlab.tap_ducky
 
 import kotlin.math.abs
 
-class ExpressionEvaluator(private val hostOs: () -> Int = { 0 }) {
+internal class DuckyExpressionSyntaxException(message: String) : DuckyScriptValueException(message) {
+  var lineNumber: Int? = null
+}
+
+class ExpressionEvaluator(
+  private val readInternalVariable: (String) -> Int? = {
+    if (it == DuckyScriptHostOs.variable) 0 else null
+  },
+) {
   private enum class Kind { NUM, VAR, IDENT, OP, LPAREN, RPAREN, END }
   private data class Tok(val kind: Kind, val text: String)
 
   fun evaluate(expression: String, variables: Map<String, Int>): Int {
     val tokens = tokenize(expression)
-    val p = Parser(tokens, variables, hostOs)
+    val p = Parser(tokens, variables, readInternalVariable)
     return p.parse()
+  }
+
+  internal fun validateSyntax(expression: String) {
+    Parser(tokenize(expression), emptyMap()) { 0 }.parse()
+  }
+
+  internal fun evaluateCondition(
+    expression: String,
+    variables: Map<String, Int>,
+    onInvalidExpression: () -> Unit = {},
+  ): Boolean = try {
+    evaluate(expression, variables) != 0
+  } catch (error: DuckyScriptValueException) {
+    throw error
+  } catch (_: Exception) {
+    onInvalidExpression()
+    false
   }
 
   private fun tokenize(expr: String): List<Tok> {
@@ -84,7 +109,7 @@ class ExpressionEvaluator(private val hostOs: () -> Int = { 0 }) {
 
       val two = if (i + 1 < expr.length) expr.substring(i, i + 2) else ""
       when (two) {
-        "&&", "||", "==", "!=", "<=", ">=" -> {
+        "&&", "||", "==", "!=", "<=", ">=", "<<", ">>" -> {
           out.add(Tok(Kind.OP, two))
           i += 2
           continue
@@ -92,7 +117,7 @@ class ExpressionEvaluator(private val hostOs: () -> Int = { 0 }) {
       }
 
       when (c) {
-        '+', '-', '*', '/', '%', '^', '<', '>', '!' -> {
+        '+', '-', '*', '/', '%', '^', '<', '>', '!', '&', '|' -> {
           out.add(Tok(Kind.OP, c.toString()))
           i++
           continue
@@ -104,10 +129,7 @@ class ExpressionEvaluator(private val hostOs: () -> Int = { 0 }) {
           continue
         }
 
-        else -> {
-          i++
-          continue
-        }
+        else -> throw DuckyExpressionSyntaxException("Unexpected character '$c' in expression")
       }
     }
 
@@ -118,14 +140,19 @@ class ExpressionEvaluator(private val hostOs: () -> Int = { 0 }) {
   private class Parser(
     private val tokens: List<Tok>,
     private val vars: Map<String, Int>,
-    private val hostOs: () -> Int,
+    private val readInternalVariable: (String) -> Int?,
   ) {
     private var pos = 0
 
-    fun parse(): Int = parseOr()
+    fun parse(): Int {
+      val value = parseOr()
+      if (peek().kind != Kind.END) {
+        throw DuckyExpressionSyntaxException("Unexpected token '${peek().text}' after expression")
+      }
+      return value
+    }
 
     private fun peek(): Tok = tokens[pos]
-    private fun consume(): Tok = tokens[pos++]
 
     private fun matchOp(op: String): Boolean {
       val t = peek()
@@ -158,11 +185,23 @@ class ExpressionEvaluator(private val hostOs: () -> Int = { 0 }) {
     }
 
     private fun parseAnd(): Int {
-      var left = parseEquality()
+      var left = parseBitwiseOr()
       while (matchOp("&&")) {
-        val right = parseEquality()
+        val right = parseBitwiseOr()
         left = b(toBool(left) && toBool(right))
       }
+      return left
+    }
+
+    private fun parseBitwiseOr(): Int {
+      var left = parseBitwiseAnd()
+      while (matchOp("|")) left = asU16(left or parseBitwiseAnd())
+      return left
+    }
+
+    private fun parseBitwiseAnd(): Int {
+      var left = parseEquality()
+      while (matchOp("&")) left = asU16(left and parseEquality())
       return left
     }
 
@@ -186,30 +225,49 @@ class ExpressionEvaluator(private val hostOs: () -> Int = { 0 }) {
     }
 
     private fun parseRelational(): Int {
-      var left = parseAddSub()
+      var left = parseShift()
       while (true) {
         when {
           matchOp("<=") -> {
-            val right = parseAddSub()
+            val right = parseShift()
             left = b(left <= right)
           }
 
           matchOp(">=") -> {
-            val right = parseAddSub()
+            val right = parseShift()
             left = b(left >= right)
           }
 
           matchOp("<") -> {
-            val right = parseAddSub()
+            val right = parseShift()
             left = b(left < right)
           }
 
           matchOp(">") -> {
-            val right = parseAddSub()
+            val right = parseShift()
             left = b(left > right)
           }
 
           else -> return left
+        }
+      }
+    }
+
+    private fun asU16(value: Int): Int = value and 0xffff
+
+    private fun parseShift(): Int {
+      var left = parseAddSub()
+      while (true) {
+        val operator = when {
+          matchOp("<<") -> "<<"
+          matchOp(">>") -> ">>"
+          else -> return left
+        }
+        val count = asU16(parseAddSub())
+        left = when {
+          count >= 16 -> 0
+          operator == "<<" -> asU16(left shl count)
+          else -> asU16(left) ushr count
         }
       }
     }
@@ -272,18 +330,18 @@ class ExpressionEvaluator(private val hostOs: () -> Int = { 0 }) {
     private fun parsePrimary(): Int {
       val n = match(Kind.NUM)
       if (n != null) {
-        val t = n.text
-        return if (t.startsWith("0x", ignoreCase = true)) {
-          t.substring(2).toLongOrNull(16)?.toInt() ?: 0
+        val literal = n.text
+        val value = if (literal.startsWith("0x", ignoreCase = true)) {
+          literal.substring(2).toIntOrNull(16)
         } else {
-          t.toIntOrNull() ?: 0
+          literal.toIntOrNull()
         }
+        return value ?: throw DuckyExpressionSyntaxException("Invalid or out-of-range integer literal: $literal")
       }
 
       val v = match(Kind.VAR)
       if (v != null) {
-        if (v.text == DuckyScriptHostOs.variable) return hostOs()
-        return vars[v.text] ?: 0
+        return readInternalVariable(v.text) ?: vars[v.text] ?: 0
       }
 
       val id = match(Kind.IDENT)
@@ -295,12 +353,19 @@ class ExpressionEvaluator(private val hostOs: () -> Int = { 0 }) {
 
       if (match(Kind.LPAREN) != null) {
         val inside = parseOr()
-        match(Kind.RPAREN)
+        if (match(Kind.RPAREN) == null) {
+          throw DuckyExpressionSyntaxException("Missing closing parenthesis in expression")
+        }
         return inside
       }
 
-      consume()
-      return 0
+      val unexpected = peek()
+      val message = if (unexpected.kind == Kind.END) {
+        "Expected a value at the end of the expression"
+      } else {
+        "Expected a value in expression, got '${unexpected.text}'"
+      }
+      throw DuckyExpressionSyntaxException(message)
     }
 
     private fun satAdd(a: Int, b: Int): Int {

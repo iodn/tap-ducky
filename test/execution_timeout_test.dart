@@ -40,6 +40,7 @@ class _SilentGadget extends PlatformGadgetService {
   String? startedId;
   final startedScripts = <String>[];
   final cancelledIds = <String>[];
+  final acceptedPrompts = <(String, String)>[];
   int panicCount = 0;
 
   @override
@@ -61,6 +62,12 @@ class _SilentGadget extends PlatformGadgetService {
   }
 
   @override
+  Future<bool> confirmButtonPrompt(String executionId, String promptId) async {
+    acceptedPrompts.add((executionId, promptId));
+    return true;
+  }
+
+  @override
   Future<void> panicStop() async {
     panicCount++;
   }
@@ -78,6 +85,37 @@ Future<ProviderContainer> _createContainer(_SilentGadget service) async {
 }
 
 void main() {
+  testWidgets('button wait accepts the active prompt and clears it on stop', (tester) async {
+    final events = StreamController<Map<String, dynamic>>.broadcast();
+    addTearDown(events.close);
+    final service = _SilentGadget(events: events);
+    final container = await _createContainer(service);
+    final controller = container.read(executionControllerProvider.notifier);
+    await controller.sendRawCommand('WAIT_FOR_BUTTON_PRESS');
+    final id = service.startedId!;
+
+    void waitForPress(String prompt) => events.add({
+      'type': 'wait', 'executionId': id, 'waitMs': 60000, 'promptId': prompt,
+    });
+
+    waitForPress('first');
+    await tester.pump();
+    expect(container.read(executionControllerProvider).buttonPromptId, 'first');
+    await controller.confirmButtonPrompt('stale');
+    await controller.confirmButtonPrompt('first');
+    expect(service.acceptedPrompts, [(id, 'first')]);
+    expect(container.read(executionControllerProvider).buttonPromptId, isNull);
+
+    waitForPress('second');
+    await tester.pump();
+    await controller.stop();
+    await controller.confirmButtonPrompt('second');
+    expect(service.acceptedPrompts, [(id, 'first')]);
+    expect(container.read(executionControllerProvider).buttonPromptId, isNull);
+    events.add({'type': 'done', 'executionId': id, 'cancelled': true});
+    await tester.pump();
+  });
+
   testWidgets('native failure ends execution without reporting 100%', (tester) async {
     final events = StreamController<Map<String, dynamic>>.broadcast();
     addTearDown(events.close);

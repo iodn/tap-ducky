@@ -86,6 +86,13 @@ object Configfs {
         [ -n "${'$'}UDC_NAME" ] || continue
         echo bound
         printf 'state=%s\n' "${'$'}(cat "/sys/class/udc/${'$'}UDC_NAME/state" 2>/dev/null)"
+        printf 'vid=%s\npid=%s\n' "${'$'}(cat "${'$'}G/idVendor")" "${'$'}(cat "${'$'}G/idProduct")"
+        for link in "${'$'}G"/configs/*/*; do
+          [ -L "${'$'}link" ] || continue
+          case "${'$'}(readlink "${'$'}link")" in
+            */mass_storage.*|mass_storage.*) echo storage=1; break ;;
+          esac
+        done
         devices_ready=1
         for fn in ${prefix}0 ${prefix}1 ${prefix}2; do
           for link in "${'$'}G"/configs/*/"${'$'}fn"; do

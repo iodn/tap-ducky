@@ -12,6 +12,7 @@ FUNCTION DETECT_OS()
 END_FUNCTION
 END_EXTENSION
 DETECT_OS()
+VAR $pause = 20
 IF ($_OS == MACOS) THEN
   DELAY $pause
 END_IF
@@ -44,5 +45,117 @@ END_IF
     expect(result.issues.single.line, 3);
     expect(result.issues.single.message,
         contains(r'$_HOST_CONFIGURATION_REQUEST_COUNT'));
+  });
+
+  test('recognizes USB identity, writable ranges, and stored scancodes', () {
+    final result = validator.validate(r'''
+$_RANDOM_MIN = 1
+$_RANDOM_MAX = 6
+VAR $key = $_RANDOM_UPPER_LETTER_KEYCODE
+IF $_CURRENT_VID == 0x1234 THEN
+  INJECT_VAR $key
+END_IF
+''');
+    expect(result.issues, isEmpty);
+    expect(validator.validate(r'$_CURRENT_PID = 0').hasErrors, isTrue);
+    expect(validator.validate('INJECT_VAR').hasErrors, isTrue);
+  });
+
+  test('accepts delay expressions and Hak5 DEFINE constants', () {
+    final result = validator.validate(r'''
+DEFINE #WAIT 100
+DEFINE #BASE 100
+VAR $pause = 200
+DELAY #WAIT
+DELAY ( #BASE + ($pause >> 1) )
+DELAY 100 + $pause
+''');
+    expect(result.issues, isEmpty);
+    expect(validator.validate('DELAY (100 + unresolved)').hasErrors, isTrue);
+    expect(validator.validate('DEFINE #WAIT').hasErrors, isTrue);
+  });
+
+  test('DEFINE protects variable names and preserves nested labels', () {
+    final result = validator.validate(r'''
+DEFINE WAIT 100
+VAR $WAIT = 30
+DELAY $WAIT
+DELAY WAIT
+''');
+    expect(result.issues, isEmpty);
+    expect(result.totalDelayMs, 120);
+    expect(validator.validate('DEFINE #A 100\nDEFINE #B #A\nDELAY #B').hasErrors, isTrue);
+  });
+
+  test('rejects literal random bounds outside the unsigned 16-bit range', () {
+    final result = validator.validate(r'''
+DEFINE #LIMIT 65536
+$_RANDOM_MIN = -1
+VAR $_RANDOM_MAX = #LIMIT
+$_RANDOM_MAX = 0xffff
+VAR $next = 42
+$_RANDOM_MIN = $next + 2
+''');
+    expect(result.issues.map((issue) => (issue.line, issue.message)), [
+      (2, r'$_RANDOM_MIN requires a value from 0 to 65535, got -1'),
+      (3, r'$_RANDOM_MAX requires a value from 0 to 65535, got 65536'),
+    ]);
+    expect(result.hasErrors, isTrue);
+  });
+
+  test('validates the button timeout as a writable debounce interval', () {
+    final result = validator.validate(r'''
+$_BUTTON_TIMEOUT = 0
+WAIT_FOR_BUTTON_PRESS
+$_BUTTON_TIMEOUT = 65536
+''');
+    expect(result.issues.single.line, 3);
+    expect(result.issues.single.message,
+        r'$_BUTTON_TIMEOUT requires a value from 0 to 65535, got 65536');
+  });
+
+  test('flags literals too large for native integer parsing', () {
+    for (final literal in ['0x100000000', '0x10000000000000000', '999999999999999999999999']) {
+      final result = validator.validate('\$_RANDOM_MAX = $literal');
+      expect(result.hasErrors, isTrue, reason: literal);
+      expect(result.issues.single.message, contains('requires a value from 0 to 65535'));
+    }
+  });
+
+  test('warns for variable references with no assignment in their scope', () {
+    final result = validator.validate(r'''
+DEFINE #WAIT $misspelled
+FUNCTION adjust($amount)
+  $amount = $amount + $later
+  RETURN $amount
+END_FUNCTION
+DELAY #WAIT
+DELAY $amount
+DELAY $misspelled
+IF ($_CURRENT_VID > 0 && $? == 0) THEN
+  REM ($ignored)
+  STRING ($literal)
+END_IF
+$later = 20
+''');
+
+    expect(result.hasErrors, isFalse);
+    expect(result.issues.map((issue) => (issue.line, issue.message)), [
+      (6, r'$misspelled has no assignment in this script'),
+      (7, r'$amount has no assignment in this script'),
+    ]);
+  });
+
+  test('checks declaration names and requires a value after equals', () {
+    final valid = validator.validate(r'''
+VAR $2seconds
+$2seconds = 2000
+VAR $pause $2seconds + 30
+DELAY $pause
+''');
+    expect(valid.issues, isEmpty);
+    for (final script in [r'VAR $bad-name = 20', r'VAR $pause =', r'$pause =']) {
+      expect(validator.validate(script).errorCount, 1, reason: script);
+    }
   });
 }

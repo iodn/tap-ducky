@@ -6,6 +6,38 @@ import org.junit.Test
 
 class DuckyScriptParserTest {
   @Test
+  fun expandsDefinesUsingHak5LabelBoundaries() {
+    val commands = DuckyScriptParser().parse(
+      """
+        DEFINE WAIT 100
+        DEFINE #PART  example
+        DEFINE #NESTED #PART
+        VAR ${'$'}WAIT = 30
+        DELAY ${'$'}WAIT
+        DELAY WAIT
+        STRING WAITING WAIT xWAIT (WAIT) prefix#PART
+        STRING #NESTED
+      """.trimIndent(),
+    )
+    assertEquals(listOf("\$WAIT", "30"), commands[0].args)
+    assertEquals(listOf("\$WAIT"), commands[1].args)
+    assertEquals(listOf("100"), commands[2].args)
+    assertEquals(listOf("WAITING 100 xWAIT (WAIT) prefix example"), commands[3].args)
+    assertEquals(listOf("#PART"), commands[4].args)
+  }
+
+  @Test
+  fun expandsDefinesPerLineInsideMultilineText() {
+    val commands = DuckyScriptParser().parse(
+      "DEFINE #END END_STRINGLN\nDEFINE TEXT hello\n" +
+        "STRINGLN\n  TEXT \n#END\n  \\END_STRINGLN \nEND_STRINGLN\n" +
+        "STRING\nTEXT\nworld\nEND_STRING",
+    )
+    assertEquals(listOf("  hello \nEND_STRINGLN\n  END_STRINGLN "), commands[0].args)
+    assertEquals(listOf("helloworld"), commands[1].args)
+  }
+
+  @Test
   fun commentBlocksDoNotEmitCommands() {
     val commands = DuckyScriptParser().parse(
       "DEFINE REM_BLOCK ENTER\nREM_BLOCK\nSTRING ignored\nENTER\n  end_rem\nSTRING kept"

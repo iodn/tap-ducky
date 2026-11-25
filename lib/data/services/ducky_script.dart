@@ -17,8 +17,12 @@ class DuckyStep {
 }
 
 class DuckyScript {
+  static final _placeholderPattern = RegExp(r'\{\{([^{}]+)\}\}|\$\{([^{}]+)\}');
+
+  static bool hasPlaceholders(String script) => _placeholderPattern.hasMatch(script);
+
   static String resolvePlaceholders(String input, Map<String, String> values) {
-    return input.replaceAllMapped(RegExp(r'\{\{([^{}]+)\}\}|\$\{([^{}]+)\}'), (match) {
+    return input.replaceAllMapped(_placeholderPattern, (match) {
       final key = (match.group(1) ?? match.group(2)!).trim();
       return values[key] ?? match.group(0)!;
     });

@@ -33,6 +33,7 @@ enum class CommandType {
   HOLD,
   RELEASE,
   INJECT_MOD,
+  INJECT_VAR,
   REPEAT,
   MODIFIER_COMBO,
   MOUSE_CLICK,
@@ -51,6 +52,7 @@ enum class CommandType {
   END_TRY,
   SLEEP_UNTIL,
   WAIT_FOR,
+  WAIT_FOR_BUTTON_PRESS,
   FUNCTION,
   END_FUNCTION,
   RETURN,
@@ -141,6 +143,8 @@ enum class CommandType {
 
 class DuckyScriptParser {
   private val defines = mutableMapOf<String, String>()
+  private var definePattern: Regex? = null
+  private val defineDeclaration = Regex("^DEFINE\\s+(\\S+)\\s(.*)$", RegexOption.IGNORE_CASE)
   private val modifierCommands = setOf(
     "GUI",
     "WINDOWS",
@@ -153,11 +157,13 @@ class DuckyScriptParser {
   )
 
   private val functionCallRegex = Regex("^([A-Za-z_][A-Za-z0-9_]*)\\s*\\((.*)\\)\\s*$")
-  private val assignRegex = Regex("^(\\$[A-Za-z_][A-Za-z0-9_]*|\\$\\?)\\s*=\\s*(.+)\\s*$")
-  private val varDeclRegex = Regex("^VAR\\s+(\\$[A-Za-z_][A-Za-z0-9_]*|\\$\\?)\\s*(?:=\\s*(.*))?$", RegexOption.IGNORE_CASE)
+  private val variableName = "\\$(?:[A-Za-z0-9_]+|\\?)"
+  private val assignRegex = Regex("^($variableName)\\s*=\\s*(.*)$")
+  private val varDeclRegex = Regex("^VAR\\s+($variableName)(?:\\s*=\\s*(.*)|\\s+(.+))?$", RegexOption.IGNORE_CASE)
 
   fun parse(script: String): List<DuckyCommand> {
     defines.clear()
+    definePattern = null
     val commands = mutableListOf<DuckyCommand>()
     val lines = script.lines()
     var inRemBlock = false
@@ -194,10 +200,9 @@ class DuckyScriptParser {
           }
           stringBlockType = null
           stringBlockLines.clear()
-        } else if (trimmed.equals("\\$end", ignoreCase = true)) {
-          stringBlockLines.add(raw.replaceFirst("\\", ""))
         } else {
-          stringBlockLines.add(raw)
+          val text = if (trimmed.equals("\\$end", ignoreCase = true)) raw.replaceFirst("\\", "") else raw
+          stringBlockLines.add(expandDefines(text))
         }
         continue
       }
@@ -206,6 +211,13 @@ class DuckyScriptParser {
       val sourceKeyword = trimmed.takeWhile { !it.isWhitespace() }
       when (sourceKeyword.uppercase(Locale.US)) {
         "REM" -> continue
+        "DEFINE" -> {
+          defineDeclaration.matchEntire(raw.trimStart())?.let { declaration ->
+            defines[declaration.groupValues[1]] = declaration.groupValues[2]
+            definePattern = null
+          }
+          continue
+        }
         "REM_BLOCK" -> {
           inRemBlock = true
           blockStart = lineNumber
@@ -230,6 +242,7 @@ class DuckyScriptParser {
       if (assignMatch != null) {
         val varName = assignMatch.groupValues[1].trim()
         val expr = assignMatch.groupValues[2].trim()
+        if (expr.isEmpty()) variableSyntaxError(lineNumber, "Expected a value after '='")
         requireWritableVariable(varName, lineNumber)
         commands.add(DuckyCommand(CommandType.VAR, listOf(varName, expr), lineNumber))
         continue
@@ -262,6 +275,10 @@ class DuckyScriptParser {
         "WAITFOR" -> {
           val args = parts.drop(1)
           commands.add(DuckyCommand(CommandType.WAIT_FOR, args, lineNumber))
+        }
+        "WAITFORBUTTONPRESS" -> {
+          require(parts.size == 1) { "Line $lineNumber: WAIT_FOR_BUTTON_PRESS takes no arguments" }
+          commands.add(DuckyCommand(CommandType.WAIT_FOR_BUTTON_PRESS, emptyList(), lineNumber))
         }
 
         "STRING", "STRINGLN" -> {
@@ -315,6 +332,12 @@ class DuckyScriptParser {
         "INJECTMOD" -> {
           val args = parts.drop(1)
           commands.add(DuckyCommand(CommandType.INJECT_MOD, args, lineNumber))
+        }
+
+        "INJECTVAR" -> {
+          val expression = line.drop(parts[0].length).trim()
+          require(expression.isNotEmpty()) { "Line $lineNumber: INJECT_VAR requires a scancode variable" }
+          commands.add(DuckyCommand(CommandType.INJECT_VAR, listOf(expression), lineNumber))
         }
 
         "MOUSE", "POINTER" -> {
@@ -404,7 +427,11 @@ class DuckyScriptParser {
 
         "FUNCTION" -> {
           val (funcName, funcArgs) = extractFunctionSignature(line)
-          funcArgs.forEach { requireWritableVariable(it, lineNumber) }
+          funcArgs.forEach {
+            require(normalizeVariableName(it) !in DuckyScriptVariables.reserved) {
+              "Line $lineNumber: reserved variable $it cannot be a function parameter"
+            }
+          }
           commands.add(DuckyCommand(CommandType.FUNCTION, listOf(funcName, *funcArgs.toTypedArray()), lineNumber))
         }
 
@@ -416,25 +443,13 @@ class DuckyScriptParser {
         }
 
         "VAR" -> {
-          val m = varDeclRegex.find(line)
-          if (m != null) {
-            val varName = m.groupValues[1].trim()
-            requireWritableVariable(varName, lineNumber)
-            val expr = m.groupValues.getOrNull(2)?.trim().orEmpty()
-            val finalExpr = if (expr.isEmpty()) "0" else expr
-            commands.add(DuckyCommand(CommandType.VAR, listOf(varName, finalExpr), lineNumber))
-          } else {
-            if (parts.size >= 3 && parts[1].startsWith("$")) {
-              val varName = parts[1]
-              requireWritableVariable(varName, lineNumber)
-              val expr = parts.drop(2).joinToString(" ")
-              commands.add(DuckyCommand(CommandType.VAR, listOf(varName, expr), lineNumber))
-            }
-          }
-        }
-
-        "DEFINE" -> {
-          if (parts.size >= 3) defines[parts[1]] = parts.drop(2).joinToString(" ")
+          val declaration = varDeclRegex.matchEntire(line)
+            ?: variableSyntaxError(lineNumber, "VAR requires a valid variable name")
+          val varName = declaration.groupValues[1]
+          val expr = (declaration.groups[2]?.value ?: declaration.groups[3]?.value)?.trim()
+          if (expr != null && expr.isEmpty()) variableSyntaxError(lineNumber, "Expected a value after '='")
+          requireWritableVariable(varName, lineNumber)
+          commands.add(DuckyCommand(CommandType.VAR, listOf(varName, expr ?: "0"), lineNumber))
         }
 
         "ATTACKMODE" -> commands.add(DuckyCommand(CommandType.ATTACKMODE, parts.drop(1), lineNumber))
@@ -582,12 +597,40 @@ class DuckyScriptParser {
       else -> stringBlockType?.let { "END_${it.name}" }
     }
     require(missingEnd == null) { "Line $blockStart: missing $missingEnd" }
+    validateExpressions(commands)
     return commands
   }
 
+  private fun validateExpressions(commands: List<DuckyCommand>) {
+    val evaluator = ExpressionEvaluator()
+    for (command in commands) {
+      val expressions = when (command.type) {
+        CommandType.VAR, CommandType.CALL_FUNCTION -> command.args.drop(1)
+        CommandType.DELAY, CommandType.INJECT_VAR, CommandType.RETURN,
+        CommandType.IF, CommandType.ELSE_IF, CommandType.WHILE -> command.args
+        else -> continue
+      }
+      for (expression in expressions) {
+        if (expression.isBlank()) continue
+        try {
+          evaluator.validateSyntax(expression)
+        } catch (e: DuckyExpressionSyntaxException) {
+          e.lineNumber = command.lineNumber
+          throw e
+        }
+      }
+    }
+  }
+
+  private fun normalizeVariableName(name: String): String = "\$${name.trim().removePrefix("$")}"
+
+  private fun variableSyntaxError(line: Int, message: String): Nothing {
+    throw DuckyExpressionSyntaxException(message).also { it.lineNumber = line }
+  }
+
   private fun requireWritableVariable(name: String, lineNumber: Int) {
-    require("\$${name.trim().removePrefix("$")}" != DuckyScriptHostOs.variable) {
-      "Line $lineNumber: ${DuckyScriptHostOs.variable} is read-only"
+    require(normalizeVariableName(name) !in DuckyScriptVariables.readOnly) {
+      "Line $lineNumber: $name is read-only"
     }
   }
 
@@ -646,19 +689,23 @@ class DuckyScriptParser {
   }
 
   private fun expandDefines(line: String): String {
-    var expanded = line
-    for ((key, value) in defines) {
-      expanded = expanded.replace(key, value)
+    if (defines.isEmpty()) return line
+    val pattern = definePattern ?: defines.keys.sortedByDescending { it.length }
+      .joinToString("|") { label ->
+        val literal = Regex.escape(label)
+        if (label.startsWith('#')) literal else "(?<!\\S)$literal(?!\\S)"
+      }.toRegex().also { definePattern = it }
+    return pattern.replace(line) { match ->
+      defines.getValue(match.value)
     }
-    return expanded
   }
 
   fun getDefaultDelay(): Int = 0
 }
 
 private class TimingController(
-  private val log: LogBus,
   private val delayMultiplier: Double,
+  private val onClamp: (String) -> Unit,
 ) {
   private val maxMs = 5 * 60 * 1000
 
@@ -666,7 +713,7 @@ private class TimingController(
     val scaled = (rawMs * delayMultiplier).toLong()
     val clamped = scaled.coerceIn(0, maxMs.toLong()).toInt()
     if (reportClamp && scaled != clamped.toLong()) {
-      log.log("ducky", "Delay clamped from ${scaled}ms to ${clamped}ms")
+      onClamp("Delay clamped from ${scaled}ms to ${clamped}ms")
     }
     return clamped
   }
@@ -683,6 +730,7 @@ class DuckyScriptExecutor(
   private val log: LogBus,
   private val delayMultiplier: Double = 1.0,
   private val executionId: String,
+  private val canShowButtonPrompt: Boolean,
   private val emitExec: (Map<String, Any?>) -> Unit,
   private val shouldCancel: () -> Boolean,
 ) {
@@ -698,16 +746,18 @@ class DuckyScriptExecutor(
   private fun activeModifierMask(): Int = injectedModifierMask or heldModifierMask
   private var heldMouseButtonsMask = 0
   private var callDepth = 0
-  private val evaluator = ExpressionEvaluator(manager::scriptHostOs)
+  private val internalVariables = DuckyScriptVariables(manager::readScriptUsbVariable, manager::scriptKeyStroke)
+  private val evaluator = ExpressionEvaluator(internalVariables::read)
   private val rng = Random.Default
 
   private class ReturnSignal(val value: Int) : RuntimeException()
   private class CancelSignal : RuntimeException()
+  private class ButtonPromptFailure(message: String) : RuntimeException(message)
 
   private var totalSteps = 0
   private var completedSteps = 0
   private var currentLine: Int? = null
-  private val timing = TimingController(log, delayMultiplier)
+  private val timing = TimingController(delayMultiplier) { log.log("ducky", it) }
 
   fun execute(script: String) {
     if (!globalVariables.containsKey("$?")) globalVariables["$?"] = 0
@@ -753,7 +803,7 @@ class DuckyScriptExecutor(
       )
       throw IllegalStateException("Execution cancelled")
     } catch (e: ReturnSignal) {
-      setVar("$?", clampU16(e.value))
+      setVar("$?", e.value)
     } catch (e: Exception) {
       log.logError("ducky", "Execution failed: ${e.message}")
       manager.releaseHeldInputBestEffort()
@@ -846,7 +896,7 @@ class DuckyScriptExecutor(
         CommandType.WHILE -> {
           val endWhile = findMatchingEndWhile(commands, i, endExclusive)
           val condition = normalizeCondition(cmd.args.firstOrNull() ?: "")
-          while (evaluateCondition(condition)) {
+          while (evaluateCondition(condition, cmd.lineNumber)) {
             if (shouldCancel()) throw CancelSignal()
             executeRange(commands, i + 1, endWhile)
           }
@@ -860,6 +910,8 @@ class DuckyScriptExecutor(
             val tryEnd = catchIndex ?: endTry
             executeRange(commands, i + 1, tryEnd)
           } catch (e: CancelSignal) {
+            throw e
+          } catch (e: ButtonPromptFailure) {
             throw e
           } catch (e: ReturnSignal) {
             throw e
@@ -912,13 +964,14 @@ class DuckyScriptExecutor(
     if (shouldCancel()) throw CancelSignal()
   }
 
-  private fun reportWait(message: String, waitMs: Long) {
+  private fun reportWait(message: String, waitMs: Long, promptId: String? = null) {
     emitExec(mapOf(
       "type" to "wait",
       "executionId" to executionId,
       "lineNumber" to currentLine,
       "message" to message,
       "waitMs" to waitMs,
+      "promptId" to promptId,
     ))
   }
 
@@ -1058,7 +1111,7 @@ class DuckyScriptExecutor(
     }
     branches.add(Branch(currentCond, currentStart, endIfIndex))
     for (b in branches) {
-      if (b.condition == null || evaluateCondition(b.condition)) {
+      if (b.condition == null || evaluateCondition(b.condition, commands[b.start - 1].lineNumber)) {
         executeRange(commands, b.start, b.end)
         break
       }
@@ -1130,6 +1183,7 @@ class DuckyScriptExecutor(
       CommandType.HOLD,
       CommandType.RELEASE,
       CommandType.INJECT_MOD,
+      CommandType.INJECT_VAR,
       CommandType.MOUSE_CLICK,
       CommandType.MOUSE_HOLD,
       CommandType.MOUSE_DRAG,
@@ -1265,22 +1319,17 @@ class DuckyScriptExecutor(
     return t.substring(1, t.lastIndex).trim()
   }
 
-  private fun evaluateCondition(condition: String): Boolean {
-    val trimmed = condition.trim()
-    if (trimmed.equals("TRUE", ignoreCase = true)) return true
-    if (trimmed.equals("FALSE", ignoreCase = true)) return false
-    return try {
-      evaluator.evaluate(trimmed, currentVarsView()) != 0
-    } catch (e: Exception) {
-      log.logError("ducky", "Failed to evaluate condition: $trimmed")
-      false
+  private fun evaluateCondition(condition: String, lineNumber: Int): Boolean {
+    currentLine = lineNumber
+    return evaluator.evaluateCondition(condition, currentVarsView()) {
+      log.logError("ducky", "Failed to evaluate condition: $condition")
     }
   }
 
   private fun clampU16(v: Int): Int = v.coerceIn(0, 65535)
 
   private fun setExitCode(v: Int) {
-    setVar("$?", clampU16(v))
+    setVar("$?", v)
   }
 
   private fun randomFrom(chars: String, count: Int): String {
@@ -1341,6 +1390,37 @@ class DuckyScriptExecutor(
       CommandType.DETECT_OS -> {
         waitForPredicateCancellable(10_000L, "Detecting host OS") { !manager.isScriptHostOsPending() }
         setExitCode(0)
+      }
+
+      CommandType.WAIT_FOR_BUTTON_PRESS -> {
+        if (!canShowButtonPrompt) {
+          throw ButtonPromptFailure("WAIT_FOR_BUTTON_PRESS requires a run started in the TapDucky app")
+        }
+        val cooldown = internalVariables.buttonCooldownRemainingMs(android.os.SystemClock.elapsedRealtime())
+        sleepMsCancellable(cooldown, "Button cooldown")
+        throwIfCancelled()
+        val waitMs = 60_000L
+        val prompt = manager.beginButtonPrompt(executionId, waitMs)
+        try {
+          reportWait("Waiting for you to press Continue", waitMs, prompt.id)
+          val confirmedAtMs: Long
+          while (true) {
+            throwIfCancelled()
+            val remaining = prompt.deadlineMs - android.os.SystemClock.elapsedRealtime()
+            val acceptedAtMs = manager.buttonPromptConfirmedAt(prompt.id)
+            if (acceptedAtMs != null) {
+              confirmedAtMs = acceptedAtMs
+              break
+            }
+            if (remaining <= 0) throw ButtonPromptFailure("Continue was not pressed on the phone")
+            Thread.sleep(minOf(cancelPollMs, remaining))
+          }
+          throwIfCancelled()
+          internalVariables.recordButtonPress(confirmedAtMs)
+          setExitCode(0)
+        } finally {
+          manager.endButtonPrompt(prompt.id)
+        }
       }
 
       CommandType.SLEEP_UNTIL -> {
@@ -1416,6 +1496,15 @@ class DuckyScriptExecutor(
         setExitCode(0)
       }
 
+      CommandType.INJECT_VAR -> {
+        val stroke = evaluator.evaluate(cmd.args.first(), currentVarsView())
+        require(stroke in 4..65535 && (stroke and 0xff) in 4..0xdf) {
+          "INJECT_VAR requires a valid keyboard scancode"
+        }
+        sendKeyWithInjectedMods(stroke and 0xff, stroke shr 8)
+        setExitCode(0)
+      }
+
       CommandType.MODIFIER_COMBO -> {
         val line = cmd.args.firstOrNull() ?: ""
         executeModifierCombo(line)
@@ -1438,7 +1527,7 @@ class DuckyScriptExecutor(
         val varName = cmd.args.getOrNull(0) ?: ""
         val expr = cmd.args.getOrNull(1) ?: "0"
         val value = if (expr.isBlank()) 0 else evaluator.evaluate(expr, currentVarsView())
-        setVar(varName, clampU16(value))
+        setVar(varName, value)
         setExitCode(0)
       }
 
@@ -1618,6 +1707,7 @@ class DuckyScriptExecutor(
       throw IllegalStateException("Max function call depth exceeded")
     }
     try {
+      val callerVariables = currentVarsView()
       val scope = mutableMapOf<String, Int>()
       localScopes.addLast(scope)
       if (def != null) {
@@ -1626,7 +1716,7 @@ class DuckyScriptExecutor(
           val param = params[i]
           if (param.isBlank()) continue
           val expr = argsPassed.getOrNull(i) ?: "0"
-          val value = if (expr.isBlank()) 0 else evaluator.evaluate(expr, currentVarsView())
+          val value = if (expr.isBlank()) 0 else evaluator.evaluate(expr, callerVariables)
           scope[normalizeVarName(param)] = clampU16(value)
         }
       }
@@ -1651,16 +1741,18 @@ class DuckyScriptExecutor(
 
   private fun setVar(name: String, value: Int) {
     val key = normalizeVarName(name)
+    if (internalVariables.write(key, value)) return
+    val stored = clampU16(value)
     if (localScopes.isNotEmpty()) {
       for (i in localScopes.size - 1 downTo 0) {
         val scope = localScopes.elementAt(i)
         if (scope.containsKey(key)) {
-          scope[key] = value
+          scope[key] = stored
           return
         }
       }
     }
-    globalVariables[key] = value
+    globalVariables[key] = stored
   }
 
   private fun currentVarsView(): Map<String, Int> {
@@ -1689,9 +1781,13 @@ class DuckyScriptExecutor(
   private fun sendKeyWithInjectedMods(keyName: String) {
     val key = keyName.uppercase(Locale.US)
     val keyCode = HidSpec.keyCodeFor(key) ?: return
+    sendKeyWithInjectedMods(keyCode)
+  }
+
+  private fun sendKeyWithInjectedMods(keyCode: Int, modifiers: Int = 0) {
     val mask = injectedModifierMask or heldModifierMask
     manager.writeKeyboardTapWithMods(
-      mask,
+      mask or modifiers,
       keyCode,
       heldModifiers = mask,
       extraKeys = heldKeyCodes.toList(),
@@ -1846,20 +1942,23 @@ class DuckyScriptExecutor(
   }
 }
 
-class DuckyScriptEstimator(
-  private val manager: GadgetManager,
-  private val log: LogBus,
-  private val delayMultiplier: Double = 1.0,
+internal class DuckyScriptEstimator(
+  private val internalVariables: DuckyScriptVariables,
+  private val estimateTextDuration: (String, Int) -> Long,
+  private val estimateKeyTapDuration: () -> Long,
+  delayMultiplier: Double = 1.0,
+  onDelayClamp: (String) -> Unit = {},
 ) {
   private var defaultDelay = 0
   private val globalVariables = mutableMapOf<String, Int>()
   private val localScopes = ArrayDeque<MutableMap<String, Int>>()
   private val functions = mutableMapOf<String, FunctionDef>()
   private var callDepth = 0
-  private val evaluator = ExpressionEvaluator(manager::scriptHostOs)
-  private val timing = TimingController(log, delayMultiplier)
+  private val evaluator = ExpressionEvaluator(internalVariables::read)
+  private val timing = TimingController(delayMultiplier, onDelayClamp)
   private var elapsedMs: Long = 0
   private var remainingWork = 20_000
+  private var currentLine: Int? = null
 
   private class ReturnSignal(val value: Int) : RuntimeException()
   private class EstimateLimit : RuntimeException("Script estimate exceeded its work limit")
@@ -1882,7 +1981,10 @@ class DuckyScriptEstimator(
     try {
       executeRange(processed, 0, processed.size)
     } catch (e: ReturnSignal) {
-      setVar("$?", clampU16(e.value))
+      setVar("$?", e.value)
+    } catch (e: DuckyExpressionSyntaxException) {
+      e.lineNumber = currentLine
+      throw e
     }
 
     return elapsedMs
@@ -1934,6 +2036,7 @@ class DuckyScriptEstimator(
     while (i < endExclusive) {
       chargeWork()
       val cmd = commands[i]
+      currentLine = cmd.lineNumber
       when (cmd.type) {
         CommandType.IF -> {
           val endIf = findMatchingEndIf(commands, i, endExclusive)
@@ -1945,7 +2048,7 @@ class DuckyScriptEstimator(
         CommandType.WHILE -> {
           val endWhile = findMatchingEndWhile(commands, i, endExclusive)
           val condition = normalizeCondition(cmd.args.firstOrNull() ?: "")
-          while (evaluateCondition(condition)) {
+          while (evaluateCondition(condition, cmd.lineNumber)) {
             chargeWork()
             executeRange(commands, i + 1, endWhile)
           }
@@ -1962,10 +2065,9 @@ class DuckyScriptEstimator(
             throw e
           } catch (e: EstimateLimit) {
             throw e
-          } catch (_: Exception) {
-            if (catchIndex != null) {
-              executeRange(commands, catchIndex + 1, endTry)
-            }
+          } catch (e: Exception) {
+            if (catchIndex == null) throw e
+            executeRange(commands, catchIndex + 1, endTry)
           }
           i = endTry + 1
           continue
@@ -2016,7 +2118,7 @@ class DuckyScriptEstimator(
     }
     branches.add(Branch(currentCond, currentStart, endIfIndex))
     for (b in branches) {
-      if (b.condition == null || evaluateCondition(b.condition)) {
+      if (b.condition == null || evaluateCondition(b.condition, commands[b.start - 1].lineNumber)) {
         executeRange(commands, b.start, b.end)
         break
       }
@@ -2100,29 +2202,23 @@ class DuckyScriptEstimator(
     return t.substring(1, t.lastIndex).trim()
   }
 
-  private fun evaluateCondition(condition: String): Boolean {
-    val trimmed = condition.trim()
-    if (trimmed.equals("TRUE", ignoreCase = true)) return true
-    if (trimmed.equals("FALSE", ignoreCase = true)) return false
-    return try {
-      evaluator.evaluate(trimmed, currentVarsView()) != 0
-    } catch (_: Exception) {
-      false
-    }
+  private fun evaluateCondition(condition: String, lineNumber: Int): Boolean {
+    currentLine = lineNumber
+    return evaluator.evaluateCondition(condition, currentVarsView())
   }
 
   private fun executeCommand(cmd: DuckyCommand) {
     when (cmd.type) {
       CommandType.STRING -> {
         val text = cmd.args.getOrNull(0) ?: ""
-        elapsedMs += manager.estimateTypeStringDurationMs(text, 0)
+        elapsedMs += estimateTextDuration(text, 0)
         setExitCode(0)
       }
 
       CommandType.STRINGLN -> {
         val text = cmd.args.getOrNull(0) ?: ""
-        elapsedMs += manager.estimateTypeStringDurationMs(text, 0)
-        elapsedMs += manager.estimateKeyTapDurationMs()
+        elapsedMs += estimateTextDuration(text, 0)
+        elapsedMs += estimateKeyTapDuration()
         setExitCode(0)
       }
 
@@ -2130,7 +2226,7 @@ class DuckyScriptEstimator(
         val delayMs = cmd.args.getOrNull(0)?.toIntOrNull() ?: 0
         val adjustedDelayMs = timing.scaleMs(delayMs)
         val text = cmd.args.getOrNull(1) ?: ""
-        elapsedMs += manager.estimateTypeStringDurationMs(text, adjustedDelayMs)
+        elapsedMs += estimateTextDuration(text, adjustedDelayMs)
         setExitCode(0)
       }
 
@@ -2144,6 +2240,11 @@ class DuckyScriptEstimator(
       CommandType.SLEEP_UNTIL,
       CommandType.WAIT_FOR -> setExitCode(0)
 
+      CommandType.WAIT_FOR_BUTTON_PRESS -> {
+        internalVariables.write("\$_BUTTON_PUSH_RECEIVED", 1)
+        setExitCode(0)
+      }
+
       CommandType.DEFAULTDELAY,
       CommandType.DEFAULT_DELAY -> {
         val ms = cmd.args.firstOrNull()?.toIntOrNull() ?: 0
@@ -2153,7 +2254,13 @@ class DuckyScriptEstimator(
 
       CommandType.MODIFIER_COMBO -> {
         val line = cmd.args.firstOrNull() ?: ""
-        if (hasKeyInCombo(line)) elapsedMs += manager.estimateKeyTapDurationMs()
+        if (hasKeyInCombo(line)) elapsedMs += estimateKeyTapDuration()
+        setExitCode(0)
+      }
+
+      CommandType.INJECT_VAR -> {
+        evaluator.evaluate(cmd.args.first(), currentVarsView())
+        elapsedMs += estimateKeyTapDuration()
         setExitCode(0)
       }
 
@@ -2173,43 +2280,43 @@ class DuckyScriptEstimator(
         val varName = cmd.args.getOrNull(0) ?: ""
         val expr = cmd.args.getOrNull(1) ?: "0"
         val value = if (expr.isBlank()) 0 else evaluator.evaluate(expr, currentVarsView())
-        setVar(varName, clampU16(value))
+        setVar(varName, value)
         setExitCode(0)
       }
 
       CommandType.RANDOM_LOWERCASE_LETTER -> {
         val count = cmd.args.firstOrNull()?.toIntOrNull() ?: 1
-        elapsedMs += manager.estimateTypeStringDurationMs("a".repeat(count), 0)
+        elapsedMs += estimateTextDuration("a".repeat(count), 0)
         setExitCode(0)
       }
 
       CommandType.RANDOM_UPPERCASE_LETTER -> {
         val count = cmd.args.firstOrNull()?.toIntOrNull() ?: 1
-        elapsedMs += manager.estimateTypeStringDurationMs("A".repeat(count), 0)
+        elapsedMs += estimateTextDuration("A".repeat(count), 0)
         setExitCode(0)
       }
 
       CommandType.RANDOM_LETTER -> {
         val count = cmd.args.firstOrNull()?.toIntOrNull() ?: 1
-        elapsedMs += manager.estimateTypeStringDurationMs("a".repeat(count), 0)
+        elapsedMs += estimateTextDuration("a".repeat(count), 0)
         setExitCode(0)
       }
 
       CommandType.RANDOM_NUMBER -> {
         val count = cmd.args.firstOrNull()?.toIntOrNull() ?: 1
-        elapsedMs += manager.estimateTypeStringDurationMs("0".repeat(count), 0)
+        elapsedMs += estimateTextDuration("0".repeat(count), 0)
         setExitCode(0)
       }
 
       CommandType.RANDOM_SPECIAL -> {
         val count = cmd.args.firstOrNull()?.toIntOrNull() ?: 1
-        elapsedMs += manager.estimateTypeStringDurationMs("!".repeat(count), 0)
+        elapsedMs += estimateTextDuration("!".repeat(count), 0)
         setExitCode(0)
       }
 
       CommandType.RANDOM_CHAR -> {
         val count = cmd.args.firstOrNull()?.toIntOrNull() ?: 1
-        elapsedMs += manager.estimateTypeStringDurationMs("a".repeat(count), 0)
+        elapsedMs += estimateTextDuration("a".repeat(count), 0)
         setExitCode(0)
       }
 
@@ -2296,7 +2403,7 @@ class DuckyScriptEstimator(
       CommandType.NUMPAD_ENTER,
       CommandType.NUMPAD_PERIOD,
       CommandType.UNKNOWN -> {
-        elapsedMs += manager.estimateKeyTapDurationMs()
+        elapsedMs += estimateKeyTapDuration()
         setExitCode(0)
       }
 
@@ -2317,6 +2424,7 @@ class DuckyScriptEstimator(
       return
     }
     try {
+      val callerVariables = currentVarsView()
       val scope = mutableMapOf<String, Int>()
       localScopes.addLast(scope)
       if (def != null) {
@@ -2325,7 +2433,7 @@ class DuckyScriptEstimator(
           val param = params[i]
           if (param.isBlank()) continue
           val expr = argsPassed.getOrNull(i) ?: "0"
-          val value = if (expr.isBlank()) 0 else evaluator.evaluate(expr, currentVarsView())
+          val value = if (expr.isBlank()) 0 else evaluator.evaluate(expr, callerVariables)
           scope[normalizeVarName(param)] = clampU16(value)
         }
       }
@@ -2362,16 +2470,18 @@ class DuckyScriptEstimator(
 
   private fun setVar(name: String, value: Int) {
     val key = normalizeVarName(name)
+    if (internalVariables.write(key, value)) return
+    val stored = clampU16(value)
     if (localScopes.isNotEmpty()) {
       for (i in localScopes.size - 1 downTo 0) {
         val scope = localScopes.elementAt(i)
         if (scope.containsKey(key)) {
-          scope[key] = value
+          scope[key] = stored
           return
         }
       }
     }
-    globalVariables[key] = value
+    globalVariables[key] = stored
   }
 
   private fun currentVarsView(): Map<String, Int> {
@@ -2386,6 +2496,6 @@ class DuckyScriptEstimator(
   private fun clampU16(v: Int): Int = v.coerceIn(0, 65535)
 
   private fun setExitCode(v: Int) {
-    setVar("$?", clampU16(v))
+    setVar("$?", v)
   }
 }
