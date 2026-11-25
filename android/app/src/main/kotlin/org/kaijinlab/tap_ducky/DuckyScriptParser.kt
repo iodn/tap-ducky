@@ -1101,7 +1101,7 @@ class DuckyScriptExecutor(
     updateScriptButton()
   }
 
-  private fun reportWait(message: String, waitMs: Long, promptId: String? = null) {
+  private fun reportWait(message: String, waitMs: Long? = null, promptId: String? = null) {
     emitExec(mapOf(
       "type" to "wait",
       "executionId" to executionId,
@@ -1535,31 +1535,21 @@ class DuckyScriptExecutor(
         if (!canShowButtonPrompt) {
           throw ButtonPromptFailure("WAIT_FOR_BUTTON_PRESS requires a run started in the TapDucky app")
         }
-        val waitMs = 60_000L
-        val prompt = manager.beginButtonPrompt(executionId, waitMs, internalVariables)
+        val prompt = manager.beginButtonPrompt(executionId, internalVariables)
+          ?: throw ButtonPromptFailure("Continue requires an active connection to the TapDucky app")
         updateScriptButton(suspended = true)
         try {
           sleepMsCancellable(prompt.cooldownMs, "Button cooldown", dispatchButton = false)
           throwIfCancelled()
-          reportWait("Waiting for you to press Continue", waitMs, prompt.id)
-          val confirmedAtMs: Long
-          while (true) {
-            throwIfCancelled()
-            val remaining = prompt.deadlineMs - android.os.SystemClock.elapsedRealtime()
-            val acceptedAtMs = manager.buttonPromptConfirmedAt(prompt.id)
-            if (acceptedAtMs != null) {
-              confirmedAtMs = acceptedAtMs
-              break
-            }
-            if (remaining <= 0) throw ButtonPromptFailure("Continue was not pressed on the phone")
-            Thread.sleep(minOf(cancelPollMs, remaining))
-          }
+          reportWait("Waiting for you to press Continue", promptId = prompt.id)
+          val confirmedAtMs = prompt.awaitConfirmation()
           throwIfCancelled()
-          internalVariables.recordButtonPress(confirmedAtMs)
+          internalVariables.recordButtonPress(checkNotNull(confirmedAtMs))
           setExitCode(0)
         } finally {
           manager.endButtonPrompt(prompt.id)
         }
+        emitExec(mapOf("type" to "button_resumed", "executionId" to executionId, "promptId" to prompt.id))
         updateScriptButton()
       }
 

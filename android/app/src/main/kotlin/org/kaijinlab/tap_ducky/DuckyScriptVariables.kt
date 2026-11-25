@@ -1,5 +1,6 @@
 package org.kaijinlab.tap_ducky
 
+import java.util.concurrent.CountDownLatch
 import kotlin.random.Random
 
 internal open class DuckyScriptValueException(message: String) : IllegalArgumentException(message)
@@ -8,18 +9,28 @@ internal class DuckyVariableException(message: String) : DuckyScriptValueExcepti
 internal class DuckyButtonPrompt(
   private val executionId: String,
   val id: String,
-  val deadlineMs: Long,
+  private val availableAtMs: Long,
   val cooldownMs: Long = 0,
 ) {
+  private val completed = CountDownLatch(1)
+  @Volatile
   var confirmedAtMs: Long? = null
     private set
 
   fun confirm(executionId: String, promptId: String, nowMs: Long): Boolean {
     if (this.executionId != executionId || id != promptId ||
-      confirmedAtMs != null || nowMs >= deadlineMs
+      completed.count == 0L || nowMs < availableAtMs
     ) return false
     confirmedAtMs = nowMs
+    completed.countDown()
     return true
+  }
+
+  fun cancel() = completed.countDown()
+
+  fun awaitConfirmation(): Long? {
+    completed.await()
+    return confirmedAtMs
   }
 }
 

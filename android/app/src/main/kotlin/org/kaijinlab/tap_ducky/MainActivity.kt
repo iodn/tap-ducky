@@ -19,6 +19,7 @@ class MainActivity : FlutterActivity() {
 
   @Volatile
   private var keysSink: EventChannel.EventSink? = null
+  private var executionSink: EventChannel.EventSink? = null
 
   override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
     super.configureFlutterEngine(flutterEngine)
@@ -192,11 +193,12 @@ class MainActivity : FlutterActivity() {
 
     EventChannel(messenger, CHANNEL_EXEC).setStreamHandler(object : EventChannel.StreamHandler {
       override fun onListen(arguments: Any?, events: EventChannel.EventSink) {
+        executionSink = events
         manager.attachExecSink(events)
       }
 
       override fun onCancel(arguments: Any?) {
-        manager.detachExecSink()
+        detachExecutionSink()
       }
     })
 
@@ -255,8 +257,14 @@ class MainActivity : FlutterActivity() {
   }
 
   override fun onDestroy() {
+    detachExecutionSink()
     localDrafts.close()
     super.onDestroy()
+  }
+
+  private fun detachExecutionSink() {
+    executionSink?.let(manager::detachExecSink)
+    executionSink = null
   }
 
   companion object {

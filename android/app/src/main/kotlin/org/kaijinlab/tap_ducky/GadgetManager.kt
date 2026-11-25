@@ -169,12 +169,18 @@ class GadgetManager(
     sinkRef.set(null)
   }
 
-  fun attachExecSink(sink: EventChannel.EventSink) {
-    execSinkRef.set(sink)
+  fun attachExecSink(sink: EventChannel.EventSink): Unit = synchronized(executionLock) {
+    if (execSinkRef.getAndSet(sink) != null) cancelPendingButtonPrompt()
   }
 
-  fun detachExecSink() {
-    execSinkRef.set(null)
+  fun detachExecSink(sink: EventChannel.EventSink): Unit = synchronized(executionLock) {
+    if (execSinkRef.compareAndSet(sink, null)) cancelPendingButtonPrompt()
+  }
+
+  private fun cancelPendingButtonPrompt() {
+    val prompt = buttonPrompt ?: return
+    cancelledExecutionId = activeExecutionId
+    prompt.cancel()
   }
 
   fun cancelExecution(executionId: String?) {
@@ -203,16 +209,16 @@ class GadgetManager(
 
   internal fun beginButtonPrompt(
     executionId: String,
-    waitMs: Long,
     variables: DuckyScriptVariables,
-  ): DuckyButtonPrompt = synchronized(executionLock) {
+  ): DuckyButtonPrompt? = synchronized(executionLock) {
     check(activeExecutionId == executionId && buttonPrompt == null)
+    if (execSinkRef.get() == null) return@synchronized null
     val now = android.os.SystemClock.elapsedRealtime()
     val cooldown = variables.buttonCooldownRemainingMs(now)
     DuckyButtonPrompt(
       executionId,
       java.util.UUID.randomUUID().toString(),
-      now + cooldown + waitMs,
+      availableAtMs = now + cooldown,
       cooldownMs = cooldown,
     ).also { buttonPrompt = it }
   }
@@ -220,10 +226,6 @@ class GadgetManager(
   fun confirmButtonPrompt(executionId: String, promptId: String): Boolean = synchronized(executionLock) {
     if (activeExecutionId != executionId || cancelledExecutionId == executionId) return@synchronized false
     buttonPrompt?.confirm(executionId, promptId, android.os.SystemClock.elapsedRealtime()) == true
-  }
-
-  internal fun buttonPromptConfirmedAt(promptId: String): Long? = synchronized(executionLock) {
-    buttonPrompt?.takeIf { it.id == promptId }?.confirmedAtMs
   }
 
   internal fun endButtonPrompt(promptId: String) = synchronized(executionLock) {
@@ -237,6 +239,7 @@ class GadgetManager(
       val active = activeExecutionId
       if (active == null || executionId == null || executionId == active) {
         cancelledExecutionId = executionId ?: active
+        buttonPrompt?.cancel()
         activeKeyboardMarker?.let { marker ->
           if (!marker.delete() && marker.exists()) {
             log.logError("kbd", "Could not cancel the active keyboard batch")
@@ -307,6 +310,7 @@ class GadgetManager(
       if (!prefs.armed) releaseHeldInputBestEffort()
       log.log("udc", "TapDucky configured by host (cfgReq=$hostConfigurationRequestCount)")
     } else if (!connected && current.deviceConnected) {
+      synchronized(executionLock) { cancelPendingButtonPrompt() }
       log.log("udc", "TapDucky no longer configured (state=${udcState ?: "unknown"})")
     }
     if (probe == null || udcState == "not attached") {

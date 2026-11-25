@@ -123,6 +123,7 @@ class ExecutionController extends Notifier<ExecutionState> {
   Timer? _timeoutTimer;
   final _timeoutClock = Stopwatch();
   Duration _timeoutBudget = Duration.zero;
+  String? _waitingButtonPromptId;
   Timer? _panicTimer;
   Timer? _autoPanicTimer;
 
@@ -214,6 +215,7 @@ class ExecutionController extends Notifier<ExecutionState> {
     _activeExecutionId = null;
     _timeoutTimer?.cancel();
     _timeoutTimer = null;
+    _waitingButtonPromptId = null;
     _panicTimer?.cancel();
     _panicTimer = null;
     _autoPanicTimer?.cancel();
@@ -436,10 +438,11 @@ class ExecutionController extends Notifier<ExecutionState> {
   }) {
     if (_activeExecutionId != executionId || state.stopRequested) return;
     final waitMs = event['waitMs'];
-    if (waitMs is! int || waitMs <= 0) return;
+    final timed = waitMs is int && waitMs > 0;
+    final promptId = event['promptId'];
+    if (!timed && promptId is! String) return;
     final label = event['message']?.toString() ?? 'Waiting';
     final line = event['lineNumber'];
-    final promptId = event['promptId'];
     state = state.copyWith(
       status: label,
       buttonPromptId: promptId is String ? promptId : null,
@@ -448,11 +451,18 @@ class ExecutionController extends Notifier<ExecutionState> {
     _pushTail(_mkTail(
       executionId: executionId,
       level: 'info',
-      message: '${line is int ? 'Line $line: ' : ''}$label (up to $waitMs ms)',
+      message: '${line is int ? 'Line $line: ' : ''}$label${timed ? ' (up to $waitMs ms)' : ''}',
       success: true,
       payloadId: payload?.id,
       payloadName: payload?.name,
     ));
+    if (!timed) {
+      _waitingButtonPromptId = promptId as String;
+      _timeoutTimer?.cancel();
+      _timeoutTimer = null;
+      _timeoutClock.stop();
+      return;
+    }
     _startTimeoutTimer(
       executionId: executionId,
       timeout: Duration(milliseconds: waitMs, seconds: 90),
@@ -460,6 +470,26 @@ class ExecutionController extends Notifier<ExecutionState> {
       payloadId: payload?.id,
       payloadName: payload?.name,
       extendOnly: true,
+    );
+  }
+
+  void _resumeAfterButton(
+    String executionId,
+    Object? promptId,
+    bool enableLogging, {
+    Payload? payload,
+  }) {
+    if (_activeExecutionId != executionId || state.stopRequested ||
+        _waitingButtonPromptId == null || _waitingButtonPromptId != promptId) return;
+    _waitingButtonPromptId = null;
+    state = state.copyWith(status: 'Executing…', clearButtonPrompt: true);
+    final remaining = _timeoutBudget - _timeoutClock.elapsed;
+    _startTimeoutTimer(
+      executionId: executionId,
+      timeout: remaining.isNegative ? Duration.zero : remaining,
+      enableLogging: enableLogging,
+      payloadId: payload?.id,
+      payloadName: payload?.name,
     );
   }
 
@@ -613,6 +643,8 @@ class ExecutionController extends Notifier<ExecutionState> {
 
       if (type == 'wait') {
         _noteNativeWait(executionId, evt, enableLogging);
+      } else if (type == 'button_resumed') {
+        _resumeAfterButton(executionId, evt['promptId'], enableLogging);
       } else if (type == 'error' || type == 'done') {
         await _finishFromNative(executionId, evt, startedAt, enableLogging);
       }
@@ -810,6 +842,8 @@ class ExecutionController extends Notifier<ExecutionState> {
 
       if (type == 'wait') {
         _noteNativeWait(executionId, evt, enableLogging, payload: payload);
+      } else if (type == 'button_resumed') {
+        _resumeAfterButton(executionId, evt['promptId'], enableLogging, payload: payload);
       } else if (type == 'error' || type == 'done') {
         await _finishFromNative(executionId, evt, startedAt, enableLogging, payload: payload);
       }
@@ -955,6 +989,7 @@ class ExecutionController extends Notifier<ExecutionState> {
 
     _timeoutTimer?.cancel();
     _timeoutTimer = null;
+    _waitingButtonPromptId = null;
     _panicTimer?.cancel();
     _panicTimer = null;
     _autoPanicTimer?.cancel();

@@ -160,11 +160,13 @@ void main() {
     final id = service.startedId!;
 
     void waitForPress(String prompt) => events.add({
-      'type': 'wait', 'executionId': id, 'waitMs': 60000, 'promptId': prompt,
+      'type': 'wait', 'executionId': id, 'promptId': prompt,
     });
 
     waitForPress('first');
     await tester.pump();
+    await tester.pump(const Duration(minutes: 3));
+    expect(service.cancelledIds, isEmpty);
     expect(container.read(executionControllerProvider).buttonPromptId, 'first');
     await controller.confirmButtonPrompt('stale');
     await controller.confirmButtonPrompt('first');
@@ -177,6 +179,30 @@ void main() {
     await controller.confirmButtonPrompt('second');
     expect(service.acceptedPrompts, [(id, 'first')]);
     expect(container.read(executionControllerProvider).buttonPromptId, isNull);
+    events.add({'type': 'done', 'executionId': id, 'cancelled': true});
+    await tester.pump();
+  });
+
+  testWidgets('the execution watchdog resumes after a confirmed button wait', (tester) async {
+    final events = StreamController<Map<String, dynamic>>.broadcast();
+    addTearDown(events.close);
+    final service = _SilentGadget(events: events);
+    final container = await _createContainer(service);
+    final controller = container.read(executionControllerProvider.notifier);
+    await controller.sendRawCommand('WAIT_FOR_BUTTON_PRESS');
+    final id = service.startedId!;
+
+    events.add({'type': 'wait', 'executionId': id, 'promptId': 'current'});
+    events.add({'type': 'button_resumed', 'executionId': id, 'promptId': 'stale'});
+    await tester.pump();
+    await tester.pump(const Duration(minutes: 3));
+    expect(service.cancelledIds, isEmpty);
+
+    await controller.confirmButtonPrompt('current');
+    events.add({'type': 'button_resumed', 'executionId': id, 'promptId': 'current'});
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 95));
+    expect(service.cancelledIds, [id]);
     events.add({'type': 'done', 'executionId': id, 'cancelled': true});
     await tester.pump();
   });

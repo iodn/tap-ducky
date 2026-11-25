@@ -549,18 +549,20 @@ class DuckyScriptVariablesTest {
     assertThrows(DuckyVariableException::class.java) { variables.write("\$_BUTTON_TIMEOUT", -1) }
   }
 
-  @Test
-  fun acceptsOneConfirmationFromTheOwningRunBeforeItsDeadline() {
-    val prompt = DuckyButtonPrompt("active-run", "current-prompt", deadlineMs = 1000)
-    assertFalse(prompt.confirm("other-run", "current-prompt", nowMs = 900))
-    assertFalse(prompt.confirm("active-run", "older-prompt", nowMs = 900))
-    assertNull(prompt.confirmedAtMs)
-    assertTrue(prompt.confirm("active-run", "current-prompt", nowMs = 999))
+  @Test(timeout = 5000)
+  fun acceptsOneConfirmationFromTheOwningRunAfterCooldown() {
+    val prompt = DuckyButtonPrompt("active-run", "current-prompt", availableAtMs = 1000)
+    assertFalse(prompt.confirm("other-run", "current-prompt", nowMs = 2000))
+    assertFalse(prompt.confirm("active-run", "older-prompt", nowMs = 2000))
     assertFalse(prompt.confirm("active-run", "current-prompt", nowMs = 999))
-    assertEquals(999L, prompt.confirmedAtMs)
+    assertNull(prompt.confirmedAtMs)
+    assertTrue(prompt.confirm("active-run", "current-prompt", nowMs = 180_000))
+    assertFalse(prompt.confirm("active-run", "current-prompt", nowMs = 180_100))
+    assertEquals(180_000L, prompt.awaitConfirmation())
 
-    val expired = DuckyButtonPrompt("active-run", "next-prompt", deadlineMs = 2000)
-    assertFalse(expired.confirm("active-run", "next-prompt", nowMs = 2000))
-    assertNull(expired.confirmedAtMs)
+    val cancelled = DuckyButtonPrompt("active-run", "next-prompt", availableAtMs = 2000)
+    cancelled.cancel()
+    assertFalse(cancelled.confirm("active-run", "next-prompt", nowMs = 2000))
+    assertNull(cancelled.awaitConfirmation())
   }
 }
