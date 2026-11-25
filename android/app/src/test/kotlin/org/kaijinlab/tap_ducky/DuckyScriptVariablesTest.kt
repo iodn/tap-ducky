@@ -9,6 +9,17 @@ import org.junit.Test
 
 class DuckyScriptVariablesTest {
   @Test
+  fun reportsMisspelledInternalVariablesWhilePreservingAssignedNames() {
+    val variables = DuckyScriptVariables({ null }, { null })
+    val estimator = DuckyScriptEstimator(variables, { _, _ -> 0 }, { 0 })
+    val error = assertThrows(DuckyVariableException::class.java) {
+      estimator.estimate("IF (\$_BUTTON_TIMEOT == 0) THEN\nDELAY 100\nEND_IF")
+    }
+    assertEquals("Unknown internal variable '\$_BUTTON_TIMEOT'", error.message)
+    assertEquals(25L, estimator.estimate("VAR \$_LOCAL = 25\nDELAY \$_LOCAL + \$unset"))
+  }
+
+  @Test
   fun respectsInclusiveRangesAndKeepsRandomStatePerRun() {
     val variables = DuckyScriptVariables({ null }, { null }, seed = 42)
     repeat(20) { assertTrue(variables.read("\$_RANDOM_INT")!! in 0..9) }

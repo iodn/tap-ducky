@@ -341,7 +341,11 @@ class ExpressionEvaluator(
 
       val v = match(Kind.VAR)
       if (v != null) {
-        return readInternalVariable(v.text) ?: vars[v.text] ?: 0
+        val name = v.text
+        val value = readInternalVariable(name) ?: vars[name]
+        if (value != null) return value
+        if (name.startsWith("\$_")) throw DuckyVariableException("Unknown internal variable '$name'")
+        return 0
       }
 
       val id = match(Kind.IDENT)
