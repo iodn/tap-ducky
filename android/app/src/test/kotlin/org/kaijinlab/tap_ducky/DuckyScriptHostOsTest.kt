@@ -6,6 +6,17 @@ import org.junit.Test
 
 class DuckyScriptHostOsTest {
   @Test
+  fun keepsTapDuckyNumericOsValuesStable() {
+    val names = listOf("UNKNOWN", "WINDOWS", "MACOS", "LINUX", "CHROMEOS", "ANDROID", "IOS")
+    for ((value, name) in names.withIndex()) {
+      assertEquals(value, DuckyScriptHostOs.constant(name))
+      assertEquals(value, DuckyScriptHostOs.encode(name))
+    }
+    assertEquals(0, DuckyScriptHostOs.encode(null))
+    assertEquals(0, DuckyScriptHostOs.encode("unrecognized"))
+  }
+
+  @Test
   fun rejectsMisspelledConstantsInsteadOfTreatingThemAsUnknownOs() {
     val script = "REM sample\nIF (\$_OS == WINDWOS) THEN\nDELAY 20\nEND_IF"
     val error = assertThrows(DuckyExpressionSyntaxException::class.java) {
