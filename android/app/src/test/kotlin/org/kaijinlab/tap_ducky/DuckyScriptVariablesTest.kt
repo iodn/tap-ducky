@@ -404,12 +404,12 @@ class DuckyScriptVariablesTest {
   }
 
   @Test
-  fun reportsUnavailableVariableFromAnElseIfDuringEstimation() {
+  fun readsVariablesInElseIfConditionsWithSpacesOrTabs() {
     val estimator = DuckyScriptEstimator(DuckyScriptVariables({ null }, { null }), { _, _ -> 0 }, { 0 })
     val script = """
       IF FALSE THEN
         DELAY 1000
-      ELSE IF (${'$'}_CURRENT_PID == 0) THEN
+      ELSE   IF (${'$'}_CURRENT_PID == 0) THEN
         DELAY 20
       ELSE
         DELAY 2000
@@ -417,6 +417,20 @@ class DuckyScriptVariablesTest {
     """.trimIndent()
     val error = assertThrows(DuckyVariableException::class.java) { estimator.estimate(script) }
     assertEquals("\$_CURRENT_PID is unavailable for the current USB gadget", error.message)
+    val available = DuckyScriptVariables({ 0 }, { null })
+    val tabbed = script.replace("ELSE   IF", "ELSE\tIF")
+    assertEquals(20L, DuckyScriptEstimator(available, { _, _ -> 0 }, { 0 }).estimate(tabbed))
+  }
+
+  @Test
+  fun reportsMissingConditionsAtTheirSourceLine() {
+    for (condition in listOf("IF THEN", "ELSE  IF () THEN", "WHILE DO")) {
+      val missing = assertThrows(DuckyExpressionSyntaxException::class.java) {
+        DuckyScriptParser().parse("REM sample\n$condition")
+      }
+      assertEquals(2, missing.lineNumber)
+      assertEquals("Expected a condition", missing.message)
+    }
   }
 
   @Test

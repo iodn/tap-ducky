@@ -439,20 +439,20 @@ class DuckyScriptParser {
         }
 
         "WHILE" -> {
-          val condition = extractConditionAfterKeyword(line, "WHILE", dropThen = false, dropDo = true)
+          val condition = parseCondition(parts, keywordWords = 1, suffix = "DO", lineNumber = lineNumber)
           commands.add(DuckyCommand(CommandType.WHILE, listOf(condition), lineNumber))
         }
 
         "ENDWHILE" -> commands.add(DuckyCommand(CommandType.END_WHILE, emptyList(), lineNumber))
 
         "IF" -> {
-          val condition = extractConditionAfterKeyword(line, "IF", dropThen = true, dropDo = false)
+          val condition = parseCondition(parts, keywordWords = 1, suffix = "THEN", lineNumber = lineNumber)
           commands.add(DuckyCommand(CommandType.IF, listOf(condition), lineNumber))
         }
 
         "ELSE" -> {
           if (parts.size > 1 && parts[1].equals("IF", ignoreCase = true)) {
-            val condition = extractConditionAfterKeyword(line, "ELSE IF", dropThen = true, dropDo = false)
+            val condition = parseCondition(parts, keywordWords = 2, suffix = "THEN", lineNumber = lineNumber)
             commands.add(DuckyCommand(CommandType.ELSE_IF, listOf(condition), lineNumber))
           } else {
             commands.add(DuckyCommand(CommandType.ELSE, emptyList(), lineNumber))
@@ -731,26 +731,12 @@ class DuckyScriptParser {
     return raw.removeSuffix("()") to emptyList()
   }
 
-  private fun extractConditionAfterKeyword(line: String, keyword: String, dropThen: Boolean, dropDo: Boolean): String {
-    var rest = line.trim()
-    val upper = rest.uppercase(Locale.US)
-    val kwUpper = keyword.uppercase(Locale.US)
-    if (upper.startsWith(kwUpper)) {
-      rest = rest.substring(keyword.length).trim()
-    }
-    if (dropThen) rest = dropTrailingToken(rest, "THEN")
-    if (dropDo) rest = dropTrailingToken(rest, "DO")
-    rest = stripOuterParensIfWhole(rest.trim())
-    return rest.trim()
-  }
-
-  private fun dropTrailingToken(s: String, token: String): String {
-    val parts = s.trim().split(Regex("\\s+"))
-    if (parts.isEmpty()) return s.trim()
-    if (parts.last().equals(token, ignoreCase = true)) {
-      return parts.dropLast(1).joinToString(" ").trim()
-    }
-    return s.trim()
+  private fun parseCondition(parts: List<String>, keywordWords: Int, suffix: String, lineNumber: Int): String {
+    val end = if (parts.last().equals(suffix, ignoreCase = true)) parts.lastIndex else parts.size
+    if (end <= keywordWords) variableSyntaxError(lineNumber, "Expected a condition")
+    val condition = stripOuterParensIfWhole(parts.subList(keywordWords, end).joinToString(" "))
+    if (condition.isBlank()) variableSyntaxError(lineNumber, "Expected a condition")
+    return condition
   }
 
   private fun stripOuterParensIfWhole(s: String): String {
