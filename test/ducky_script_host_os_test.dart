@@ -4,6 +4,22 @@ import 'package:tap_ducky/data/services/ducky_script_validator.dart';
 void main() {
   final validator = DuckyScriptValidator();
 
+  test('variable reference permissions match the editor for all documented names', () {
+    const readOnly = DuckyScriptValidator.readOnlyHak5Variables;
+    const writable = DuckyScriptValidator.writableHak5Variables;
+    const unavailable = DuckyScriptValidator.unsupportedHak5Variables;
+    final names = {...readOnly, ...writable, ...unavailable};
+    expect(names.length, 38);
+    expect(readOnly.length + writable.length + unavailable.length, names.length);
+    for (final name in names) {
+      final read = validator.validate('VAR \$probe = $name');
+      expect(read.hasErrors, isFalse, reason: name);
+      expect(read.hasWarnings, unavailable.contains(name), reason: name);
+      final write = validator.validate('$name = 0');
+      expect(write.hasErrors, !writable.contains(name), reason: name);
+    }
+  });
+
   test('recognizes LED commands and supported indicator variables', () {
     final result = validator.validate('LED_G\nLED_R\nLED_OFF\n' r'$_INJECTING_LEDS_ENABLED = TRUE');
     expect(result.issues, isEmpty);

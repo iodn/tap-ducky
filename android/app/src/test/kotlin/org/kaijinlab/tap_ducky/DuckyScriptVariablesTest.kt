@@ -2,12 +2,40 @@ package org.kaijinlab.tap_ducky
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class DuckyScriptVariablesTest {
+  @Test
+  fun verifiesReadAndWritePermissionsForAllDocumentedInternalVariables() {
+    val keyboard = KeyboardMapper(KeyboardLayout.LAYOUT_US)
+    val variables = DuckyScriptVariables({ 1 }, keyboard::getStrokeForChar, seed = 42)
+    val readOnly = DuckyScriptVariables.readOnly
+    val unavailable = DuckyScriptVariables.unavailable
+    val writable = DuckyScriptVariables.reserved - readOnly - unavailable
+    assertEquals(12, readOnly.size)
+    assertEquals(8, writable.size)
+    assertEquals(18, unavailable.size)
+    assertEquals(38, DuckyScriptVariables.reserved.size)
+
+    for (name in readOnly) {
+      assertNotNull(name, variables.read(name))
+      assertThrows(name, DuckyVariableException::class.java) { variables.write(name, 0) }
+    }
+    for (name in writable) {
+      assertNotNull(name, variables.read(name))
+      assertTrue(name, variables.write(name, 0))
+      assertEquals(name, 0, variables.read(name))
+    }
+    for (name in unavailable) {
+      assertThrows(name, DuckyVariableException::class.java) { variables.read(name) }
+      assertThrows(name, DuckyVariableException::class.java) { variables.write(name, 0) }
+    }
+  }
+
   @Test
   fun ledOffDisablesBothSupportedIndicatorModes() {
     val variables = DuckyScriptVariables({ null }, { null })
