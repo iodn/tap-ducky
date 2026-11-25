@@ -18,7 +18,7 @@ class StockUsbVerificationTest {
   fun reportsStorageOnlyWhenEveryUsbConfigurationAgrees() {
     val base = directory.newFolder()
     val gadget = File(base, "stock").apply { mkdir() }
-    File(gadget, "UDC").writeText("fixture_udc\n")
+    val udc = File(gadget, "UDC").apply { writeText("fixture_udc\n") }
     File(gadget, "idVendor").writeText("0x1234\n")
     File(gadget, "idProduct").writeText("0x5678\n")
     val keyboard = File(gadget, "functions/hid.tapducky0").apply { mkdirs() }
@@ -31,16 +31,17 @@ class StockUsbVerificationTest {
     val script = Configfs.buildProbeSessionScript("stock", shared = true)
       .replace("/config/usb_gadget /sys/kernel/config/usb_gadget", "'${base.path}'")
 
-    fun readStorage(): String {
+    fun readProbe(): List<String> {
       val shell = ProcessBuilder("/bin/sh", "-c", script).start()
       try {
         assertTrue(shell.waitFor(10, TimeUnit.SECONDS))
         assertEquals(0, shell.exitValue())
-        return shell.inputStream.bufferedReader().use { it.lines().filter { line -> line.startsWith("storage=") }.findFirst().get() }
+        return shell.inputStream.bufferedReader().use { it.readLines() }
       } finally {
         shell.destroyForcibly()
       }
     }
+    fun readStorage(): String = readProbe().single { it.startsWith("storage=") }
 
     assertEquals("storage=0", readStorage())
     Files.createSymbolicLink(File(second, storage.name).toPath(), storage.toPath())
@@ -49,6 +50,8 @@ class StockUsbVerificationTest {
     assertEquals("storage=1", readStorage())
     Files.delete(File(second, keyboard.name).toPath())
     assertEquals("storage=unknown", readStorage())
+    udc.writeText("\n")
+    assertEquals(listOf("unbound"), readProbe())
   }
 
   @Test
