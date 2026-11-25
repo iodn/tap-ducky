@@ -107,6 +107,8 @@ internal class DuckyScriptVariables(
       if (randomMin > randomMax) throw DuckyVariableException("\$_RANDOM_MIN exceeds \$_RANDOM_MAX")
       random.nextInt(randomMin, randomMax + 1)
     }
+    "\$_RANDOM_UINT16" -> random.nextInt(65536)
+    in randomAsciiSets -> randomAsciiSets.getValue(name).random(random).code
     in randomKeySets -> {
       val keys = randomKeySets.getValue(name).mapNotNull(strokeFor)
         .filter { it.terminatorKeyCode == null }
@@ -163,6 +165,12 @@ internal class DuckyScriptVariables(
     private const val upper = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
     private const val digits = "0123456789"
     private const val special = "!@#\$%^&*()"
+    private val randomAsciiSets = mapOf(
+      "\$_RANDOM_ASCII_LOWER_LETTER" to lower,
+      "\$_RANDOM_ASCII_UPPER_LETTER" to upper,
+      "\$_RANDOM_ASCII_LETTER" to lower + upper,
+      "\$_RANDOM_ASCII_NUMBER" to digits,
+    )
     private val randomKeySets = mapOf(
       "\$_RANDOM_LOWER_LETTER_KEYCODE" to lower,
       "\$_RANDOM_UPPER_LETTER_KEYCODE" to upper,
@@ -174,7 +182,8 @@ internal class DuckyScriptVariables(
     private val usbVariables = setOf(
       DuckyScriptHostOs.variable, "\$_CURRENT_VID", "\$_CURRENT_PID", "\$_CURRENT_ATTACKMODE",
     )
-    val readOnly = usbVariables + randomKeySets.keys + setOf("\$_RANDOM_INT", "\$_RANDOM_SEED")
+    val readOnly = usbVariables + randomKeySets.keys + randomAsciiSets.keys +
+      setOf("\$_RANDOM_INT", "\$_RANDOM_SEED", "\$_RANDOM_UINT16")
     val unavailable = setOf(
       "\$_STORAGE_LEDS_ENABLED",
       "\$_LED_CONTINUOUS_SHOW_STORAGE_ACTIVITY",
@@ -183,6 +192,8 @@ internal class DuckyScriptVariables(
       "\$_SAVED_CAPSLOCK_ON", "\$_SAVED_NUMLOCK_ON", "\$_SAVED_SCROLLLOCK_ON",
       "\$_RECEIVED_HOST_LOCK_LED_REPLY", "\$_STORAGE_ACTIVITY_TIMEOUT",
       "\$_EXFIL_MODE_ENABLED", "\$_HOST_CONFIGURATION_REQUEST_COUNT",
+      "\$_LED_SHOW_STORAGE_ACTIVITY", "\$_PAYLOAD_PARSE_SPEED", "\$_STORAGE_ACTIVE",
+      "\$_RANDOM_ASCII_SPECIAL", "\$_RANDOM_ASCII_CHAR",
     )
     val reserved = readOnly + unavailable + setOf(
       BUTTON_ENABLED, BUTTON_USER_DEFINED, BUTTON_PUSH_RECEIVED, "\$_BUTTON_TIMEOUT",

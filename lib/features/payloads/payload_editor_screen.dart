@@ -780,6 +780,8 @@ class _Hak5VariablesPage extends StatelessWidget {
     r'$_CURRENT_ATTACKMODE': 'Reports OFF, HID, storage, or HID plus storage when the USB configuration can be verified.',
     r'$_RANDOM_SEED': 'TapDucky generates a fresh seed for each run.',
     r'$_RANDOM_CHAR_KEYCODE': 'Uses the selected layout and TapDucky’s scancode format.',
+    r'$_RANDOM_UINT16': 'Returns a random integer from 0 to 65,535, independent of the configured range.',
+    r'$_RANDOM_ASCII_LETTER': 'Returns the ASCII number for a random letter A–Z or a–z.',
     r'$_BUTTON_ENABLED': 'Controls the optional Press button action in the task bar.',
     r'$_BUTTON_USER_DEFINED': 'Controls the callback registered by BUTTON_DEF for on-phone taps.',
     r'$_BUTTON_PUSH_RECEIVED': 'Set by Press button or Continue in the task bar.',

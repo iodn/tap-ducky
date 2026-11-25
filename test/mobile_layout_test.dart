@@ -199,8 +199,8 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Hak5 variables'), findsOneWidget);
     expect(find.text('Writable (8)'), findsOneWidget);
-    expect(find.text('Unavailable (18)'), findsOneWidget);
-    await tester.tap(find.text('Read-only (12)'));
+    expect(find.text('Unavailable (23)'), findsOneWidget);
+    await tester.tap(find.text('Read-only (17)'));
     await tester.pumpAndSettle();
     expect(find.text(r'$_OS'), findsOneWidget);
     expect(find.textContaining('Auto-detects Windows, macOS, Linux, and Android.'), findsOneWidget);

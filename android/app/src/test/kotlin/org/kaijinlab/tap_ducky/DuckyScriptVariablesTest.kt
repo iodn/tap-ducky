@@ -10,16 +10,16 @@ import org.junit.Test
 
 class DuckyScriptVariablesTest {
   @Test
-  fun verifiesReadAndWritePermissionsForAllDocumentedInternalVariables() {
+  fun verifiesReadAndWritePermissionsForAllKnownHak5Variables() {
     val keyboard = KeyboardMapper(KeyboardLayout.LAYOUT_US)
     val variables = DuckyScriptVariables({ 1 }, keyboard::getStrokeForChar, seed = 42)
     val readOnly = DuckyScriptVariables.readOnly
     val unavailable = DuckyScriptVariables.unavailable
     val writable = DuckyScriptVariables.reserved - readOnly - unavailable
-    assertEquals(12, readOnly.size)
+    assertEquals(17, readOnly.size)
     assertEquals(8, writable.size)
-    assertEquals(18, unavailable.size)
-    assertEquals(38, DuckyScriptVariables.reserved.size)
+    assertEquals(23, unavailable.size)
+    assertEquals(48, DuckyScriptVariables.reserved.size)
 
     for (name in readOnly) {
       assertNotNull(name, variables.read(name))
@@ -253,6 +253,32 @@ class DuckyScriptVariablesTest {
     assertEquals(65535, variables.read("\$_RANDOM_INT"))
     assertEquals(42, variables.read("\$_RANDOM_SEED"))
     assertEquals(0, DuckyScriptVariables({ null }, { null }).read("\$_RANDOM_MIN"))
+  }
+
+  @Test
+  fun readsFullRangeAndAsciiRandomValuesWithoutUsingTheKeyboardLayout() {
+    val variables = DuckyScriptVariables({ null }, { null }, seed = 42)
+    val evaluator = ExpressionEvaluator(variables::read)
+    variables.write("\$_RANDOM_MAX", 0)
+    val fullRangeValues = List(64) { evaluator.evaluate("\$_RANDOM_UINT16", emptyMap()) }
+    assertTrue(fullRangeValues.all { it in 0..65535 })
+    assertTrue(fullRangeValues.any { it > 255 })
+    assertEquals(0, evaluator.evaluate("\$_RANDOM_INT", emptyMap()))
+
+    val asciiRanges = mapOf(
+      "\$_RANDOM_ASCII_LOWER_LETTER" to ('a'..'z').toList(),
+      "\$_RANDOM_ASCII_UPPER_LETTER" to ('A'..'Z').toList(),
+      "\$_RANDOM_ASCII_LETTER" to ('a'..'z') + ('A'..'Z'),
+      "\$_RANDOM_ASCII_NUMBER" to ('0'..'9').toList(),
+    )
+    for ((name, characters) in asciiRanges) {
+      repeat(64) {
+        val code = evaluator.evaluate(name, emptyMap())
+        assertTrue("$name returned $code", characters.any { it.code == code })
+      }
+    }
+    val estimator = DuckyScriptEstimator(variables, { _, _ -> 0 }, { 0 })
+    assertTrue(estimator.estimate("VAR \$digit = \$_RANDOM_ASCII_NUMBER\nDELAY (\$digit - 47)") in 1L..10L)
   }
 
   @Test

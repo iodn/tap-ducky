@@ -21,12 +21,12 @@ DELAY 20
     expect(result.issues.single.message, contains(r'$_CAPSLOCK_ON'));
   });
 
-  test('variable reference permissions match the editor for all documented names', () {
+  test('variable reference permissions match the editor for all known Hak5 names', () {
     const readOnly = DuckyScriptValidator.readOnlyHak5Variables;
     const writable = DuckyScriptValidator.writableHak5Variables;
     const unavailable = DuckyScriptValidator.unsupportedHak5Variables;
     final names = {...readOnly, ...writable, ...unavailable};
-    expect(names.length, 38);
+    expect(names.length, 48);
     expect(readOnly.length + writable.length + unavailable.length, names.length);
     for (final name in names) {
       final read = validator.validate('VAR \$probe = $name');
