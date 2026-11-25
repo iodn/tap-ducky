@@ -439,6 +439,13 @@ class PlatformGadgetService {
         false;
   }
 
+  Future<bool> pressScriptButton(String executionId) async {
+    return await _methods.invokeMethod<bool>('pressScriptButton', {
+          'executionId': executionId,
+        }) ??
+        false;
+  }
+
   Future<void> executeDuckyScript({
     required String script,
     required double delayMultiplier,

@@ -41,6 +41,7 @@ class _SilentGadget extends PlatformGadgetService {
   final startedScripts = <String>[];
   final cancelledIds = <String>[];
   final acceptedPrompts = <(String, String)>[];
+  final buttonPresses = <String>[];
   int panicCount = 0;
 
   @override
@@ -68,6 +69,12 @@ class _SilentGadget extends PlatformGadgetService {
   }
 
   @override
+  Future<bool> pressScriptButton(String executionId) async {
+    buttonPresses.add(executionId);
+    return true;
+  }
+
+  @override
   Future<void> panicStop() async {
     panicCount++;
   }
@@ -85,6 +92,30 @@ Future<ProviderContainer> _createContainer(_SilentGadget service) async {
 }
 
 void main() {
+  testWidgets('polling scripts receive presses only for the active run', (tester) async {
+    final events = StreamController<Map<String, dynamic>>.broadcast();
+    addTearDown(events.close);
+    final service = _SilentGadget(events: events);
+    final container = await _createContainer(service);
+    final controller = container.read(executionControllerProvider.notifier);
+    await controller.sendRawCommand(r'DELAY $_BUTTON_PUSH_RECEIVED');
+    final id = service.startedId!;
+
+    await controller.pressScriptButton(id);
+    events.add({'type': 'button_available', 'executionId': id});
+    await tester.pump();
+    await controller.pressScriptButton('other-run');
+    await controller.pressScriptButton(id);
+    expect(service.buttonPresses, [id]);
+
+    events.add({'type': 'button_available', 'executionId': id, 'available': false});
+    await tester.pump();
+    await controller.pressScriptButton(id);
+    expect(service.buttonPresses, [id]);
+    events.add({'type': 'done', 'executionId': id, 'success': true});
+    await tester.pump();
+  });
+
   testWidgets('button wait accepts the active prompt and clears it on stop', (tester) async {
     final events = StreamController<Map<String, dynamic>>.broadcast();
     addTearDown(events.close);

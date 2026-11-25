@@ -21,6 +21,7 @@ class ExecutionState {
     this.stopRequested = false,
     this.panicAvailable = false,
     this.buttonPromptId,
+    this.scriptButtonAvailable = false,
     this.payloadId,
     this.payloadName,
     this.startedAt,
@@ -36,6 +37,7 @@ class ExecutionState {
   final bool stopRequested;
   final bool panicAvailable;
   final String? buttonPromptId;
+  final bool scriptButtonAvailable;
   final String? payloadId;
   final String? payloadName;
   final DateTime? startedAt;
@@ -52,6 +54,7 @@ class ExecutionState {
     bool? panicAvailable,
     String? buttonPromptId,
     bool clearButtonPrompt = false,
+    bool? scriptButtonAvailable,
     String? payloadId,
     String? payloadName,
     DateTime? startedAt,
@@ -67,6 +70,7 @@ class ExecutionState {
       stopRequested: stopRequested ?? this.stopRequested,
       panicAvailable: panicAvailable ?? this.panicAvailable,
       buttonPromptId: clearButtonPrompt ? null : buttonPromptId ?? this.buttonPromptId,
+      scriptButtonAvailable: scriptButtonAvailable ?? this.scriptButtonAvailable,
       payloadId: payloadId ?? this.payloadId,
       payloadName: payloadName ?? this.payloadName,
       startedAt: startedAt ?? this.startedAt,
@@ -526,6 +530,12 @@ class ExecutionController extends Notifier<ExecutionState> {
       if (id != executionId) return;
 
       final type = evt['type']?.toString() ?? '';
+      if (type == 'button_available') {
+        if (_activeExecutionId == executionId && !state.stopRequested) {
+          state = state.copyWith(scriptButtonAvailable: evt['available'] != false);
+        }
+        return;
+      }
       if (type == 'start') {
         final msg = (evt['message']?.toString() ?? '').trim();
         final m = msg.isNotEmpty ? msg : 'Executing…';
@@ -681,6 +691,12 @@ class ExecutionController extends Notifier<ExecutionState> {
       if (id != executionId) return;
 
       final type = evt['type']?.toString() ?? '';
+      if (type == 'button_available') {
+        if (_activeExecutionId == executionId && !state.stopRequested) {
+          state = state.copyWith(scriptButtonAvailable: evt['available'] != false);
+        }
+        return;
+      }
       if (type == 'start') {
         final msg = (evt['message']?.toString() ?? '').trim();
         final m = msg.isNotEmpty ? msg : 'Executing…';
@@ -774,6 +790,18 @@ class ExecutionController extends Notifier<ExecutionState> {
   }
 
   Future<void> stop() => _requestStop('Stopping…');
+
+  Future<void> pressScriptButton(String executionId) async {
+    if (_activeExecutionId != executionId || state.stopRequested ||
+        !state.scriptButtonAvailable || state.buttonPromptId != null) return;
+    try {
+      await ref.read(platformGadgetServiceProvider).pressScriptButton(executionId);
+    } catch (_) {
+      if (_activeExecutionId == executionId && !state.stopRequested) {
+        state = state.copyWith(status: 'Could not send button press.');
+      }
+    }
+  }
 
   Future<void> confirmButtonPrompt(String promptId) async {
     final executionId = _activeExecutionId;

@@ -9,6 +9,7 @@ internal class DuckyButtonPrompt(
   private val executionId: String,
   val id: String,
   val deadlineMs: Long,
+  val cooldownMs: Long = 0,
 ) {
   var confirmedAtMs: Long? = null
     private set
@@ -34,16 +35,22 @@ internal class DuckyScriptVariables(
   private var buttonTimeoutMs = 1000
   private var lastButtonPressMs: Long? = null
 
-  fun recordButtonPress(elapsedMs: Long) {
+  @Synchronized fun recordButtonPress(elapsedMs: Long) {
     lastButtonPressMs = elapsedMs
     buttonPressed = true
   }
 
-  fun buttonCooldownRemainingMs(nowMs: Long): Long = lastButtonPressMs?.let { pressedAt ->
+  @Synchronized fun buttonCooldownRemainingMs(nowMs: Long): Long = lastButtonPressMs?.let { pressedAt ->
     (pressedAt + buttonTimeoutMs - nowMs).coerceAtLeast(0L)
   } ?: 0L
 
-  fun read(name: String): Int? = when (name) {
+  @Synchronized fun tryRecordButtonPress(elapsedMs: Long): Boolean {
+    if (buttonCooldownRemainingMs(elapsedMs) > 0) return false
+    recordButtonPress(elapsedMs)
+    return true
+  }
+
+  @Synchronized fun read(name: String): Int? = when (name) {
     "\$_BUTTON_PUSH_RECEIVED" -> if (buttonPressed) 1 else 0
     "\$_BUTTON_TIMEOUT" -> buttonTimeoutMs
     "\$_RANDOM_MIN" -> randomMin
@@ -66,7 +73,7 @@ internal class DuckyScriptVariables(
     else -> null
   }
 
-  fun write(name: String, value: Int): Boolean {
+  @Synchronized fun write(name: String, value: Int): Boolean {
     when (name) {
       "\$_BUTTON_PUSH_RECEIVED" -> buttonPressed = value != 0
       "\$_BUTTON_TIMEOUT", "\$_RANDOM_MIN", "\$_RANDOM_MAX" -> {

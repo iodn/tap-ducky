@@ -62,6 +62,10 @@ class MainActivity : FlutterActivity() {
           val promptId = call.argument<String>("promptId")
           result.success(executionId != null && promptId != null && manager.confirmButtonPrompt(executionId, promptId))
         }
+        "pressScriptButton" -> {
+          val executionId = call.argument<String>("executionId")
+          result.success(executionId != null && manager.pressScriptButton(executionId))
+        }
         "testMouseMove" -> {
           val args = call.arguments as? Map<*, *> ?: emptyMap<String, Any>()
           val dx = (args["dx"] as? Number)?.toInt() ?: 8

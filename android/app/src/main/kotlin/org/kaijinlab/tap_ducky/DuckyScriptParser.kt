@@ -753,7 +753,16 @@ class DuckyScriptExecutor(
   private var heldMouseButtonsMask = 0
   private var callDepth = 0
   private val internalVariables = DuckyScriptVariables(manager::readScriptUsbVariable, manager::scriptKeyStroke)
-  private val evaluator = ExpressionEvaluator(internalVariables::read)
+  private var scriptButtonEnabled = false
+  private val evaluator = ExpressionEvaluator { name ->
+    if (name == "\$_BUTTON_PUSH_RECEIVED" && canShowButtonPrompt && !scriptButtonEnabled &&
+      manager.enableScriptButton(executionId, internalVariables)
+    ) {
+      scriptButtonEnabled = true
+      emitExec(mapOf("type" to "button_available", "executionId" to executionId))
+    }
+    internalVariables.read(name)
+  }
   private val rng = Random.Default
 
   private class ReturnSignal(val value: Int) : RuntimeException()
@@ -1402,12 +1411,14 @@ class DuckyScriptExecutor(
         if (!canShowButtonPrompt) {
           throw ButtonPromptFailure("WAIT_FOR_BUTTON_PRESS requires a run started in the TapDucky app")
         }
-        val cooldown = internalVariables.buttonCooldownRemainingMs(android.os.SystemClock.elapsedRealtime())
-        sleepMsCancellable(cooldown, "Button cooldown")
-        throwIfCancelled()
         val waitMs = 60_000L
-        val prompt = manager.beginButtonPrompt(executionId, waitMs)
+        val prompt = manager.beginButtonPrompt(executionId, waitMs, internalVariables)
+        if (scriptButtonEnabled) {
+          emitExec(mapOf("type" to "button_available", "executionId" to executionId, "available" to false))
+        }
         try {
+          sleepMsCancellable(prompt.cooldownMs, "Button cooldown")
+          throwIfCancelled()
           reportWait("Waiting for you to press Continue", waitMs, prompt.id)
           val confirmedAtMs: Long
           while (true) {
@@ -1426,6 +1437,9 @@ class DuckyScriptExecutor(
           setExitCode(0)
         } finally {
           manager.endButtonPrompt(prompt.id)
+        }
+        if (scriptButtonEnabled) {
+          emitExec(mapOf("type" to "button_available", "executionId" to executionId))
         }
       }
 

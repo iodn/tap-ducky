@@ -55,6 +55,7 @@ class GadgetManager(
   private var activeExecutionId: String? = null
   private var cancelledExecutionId: String? = null
   private var buttonPrompt: DuckyButtonPrompt? = null
+  private var scriptButton: DuckyScriptVariables? = null
   private var activeKeyboardMarker: File? = null
   private val keyboardMarkerForWorker = ThreadLocal<File>()
 
@@ -187,12 +188,32 @@ class GadgetManager(
     )
   }
 
-  internal fun beginButtonPrompt(executionId: String, waitMs: Long): DuckyButtonPrompt = synchronized(executionLock) {
+  internal fun enableScriptButton(executionId: String, variables: DuckyScriptVariables): Boolean = synchronized(executionLock) {
+    if (activeExecutionId != executionId || cancelledExecutionId == executionId) return@synchronized false
+    scriptButton = variables
+    true
+  }
+
+  fun pressScriptButton(executionId: String): Boolean = synchronized(executionLock) {
+    if (activeExecutionId != executionId || cancelledExecutionId == executionId || buttonPrompt != null) {
+      return@synchronized false
+    }
+    scriptButton?.tryRecordButtonPress(android.os.SystemClock.elapsedRealtime()) == true
+  }
+
+  internal fun beginButtonPrompt(
+    executionId: String,
+    waitMs: Long,
+    variables: DuckyScriptVariables,
+  ): DuckyButtonPrompt = synchronized(executionLock) {
     check(activeExecutionId == executionId && buttonPrompt == null)
+    val now = android.os.SystemClock.elapsedRealtime()
+    val cooldown = variables.buttonCooldownRemainingMs(now)
     DuckyButtonPrompt(
       executionId,
       java.util.UUID.randomUUID().toString(),
-      android.os.SystemClock.elapsedRealtime() + waitMs,
+      now + cooldown + waitMs,
+      cooldownMs = cooldown,
     ).also { buttonPrompt = it }
   }
 
@@ -989,6 +1010,7 @@ class GadgetManager(
         activeExecutionId = null
         cancelledExecutionId = null
         buttonPrompt = null
+        scriptButton = null
       }
     }
   }

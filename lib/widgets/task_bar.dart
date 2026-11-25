@@ -43,6 +43,7 @@ class TaskBar extends ConsumerWidget {
         ? null
         : exec.status;
     final buttonPromptId = exec.isRunning && !exec.stopRequested ? exec.buttonPromptId : null;
+    final showScriptButton = exec.isRunning && !exec.stopRequested && exec.scriptButtonAvailable;
 
     return Material(
       color: bg,
@@ -84,16 +85,21 @@ class TaskBar extends ConsumerWidget {
                           style: const TextStyle(fontSize: 11, height: 1.2),
                         ),
                       ],
-                      if (buttonPromptId != null) ...[
+                      if (buttonPromptId != null || showScriptButton) ...[
                         const SizedBox(height: 4),
                         Wrap(
                           spacing: 8,
                           children: [
                             FilledButton(
-                              onPressed: () => ref
-                                  .read(executionControllerProvider.notifier)
-                                  .confirmButtonPrompt(buttonPromptId),
-                              child: const Text('Continue'),
+                              onPressed: () {
+                                final controller = ref.read(executionControllerProvider.notifier);
+                                if (buttonPromptId == null) {
+                                  controller.pressScriptButton(exec.executionId);
+                                } else {
+                                  controller.confirmButtonPrompt(buttonPromptId);
+                                }
+                              },
+                              child: Text(buttonPromptId == null ? 'Press button' : 'Continue'),
                             ),
                             TextButton(
                               onPressed: () => ref
@@ -134,7 +140,7 @@ class TaskBar extends ConsumerWidget {
                                 label: hid.sessionArmed ? 'Disarm' : 'Arm',
                                 onTap: () => toggleUsbSession(context, ref),
                               ),
-                              if (exec.isRunning && buttonPromptId == null) ...[
+                              if (exec.isRunning && buttonPromptId == null && !showScriptButton) ...[
                                 const SizedBox(width: 8),
                                 _chip(
                                   context,

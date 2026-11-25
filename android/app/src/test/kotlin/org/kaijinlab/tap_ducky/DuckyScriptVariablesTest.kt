@@ -9,6 +9,18 @@ import org.junit.Test
 
 class DuckyScriptVariablesTest {
   @Test
+  fun debouncesManualButtonPressesEvenAfterTheScriptClearsTheFlag() {
+    val variables = DuckyScriptVariables({ null }, { null })
+    assertTrue(variables.tryRecordButtonPress(100))
+    assertEquals(1, variables.read("\$_BUTTON_PUSH_RECEIVED"))
+    variables.write("\$_BUTTON_PUSH_RECEIVED", 0)
+    assertFalse(variables.tryRecordButtonPress(1099))
+    assertEquals(0, variables.read("\$_BUTTON_PUSH_RECEIVED"))
+    assertTrue(variables.tryRecordButtonPress(1100))
+    assertEquals(1, variables.read("\$_BUTTON_PUSH_RECEIVED"))
+  }
+
+  @Test
   fun checksStoredScancodeValuesBeforeEstimatingAKeyTap() {
     val variables = DuckyScriptVariables({ null }, { null })
     val estimator = DuckyScriptEstimator(variables, { _, _ -> 0 }, { 23 })
