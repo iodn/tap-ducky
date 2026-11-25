@@ -87,7 +87,7 @@ internal class DuckyScriptVariables(
     BUTTON_USER_DEFINED -> if (buttonCallbackEnabled) 1 else 0
     INJECTING_LEDS_ENABLED -> if (injectingLedsEnabled) 1 else 0
     SYSTEM_LEDS_ENABLED -> if (systemLedsEnabled) 1 else 0
-    "\$_BUTTON_PUSH_RECEIVED" -> if (buttonPressed) 1 else 0
+    BUTTON_PUSH_RECEIVED -> if (buttonPressed) 1 else 0
     "\$_BUTTON_TIMEOUT" -> buttonTimeoutMs
     "\$_RANDOM_MIN" -> randomMin
     "\$_RANDOM_MAX" -> randomMax
@@ -124,7 +124,7 @@ internal class DuckyScriptVariables(
         buttonCallbackEnabled = value != 0
         if (!buttonCallbackEnabled) buttonCallbackPending = false
       }
-      "\$_BUTTON_PUSH_RECEIVED" -> buttonPressed = value != 0
+      BUTTON_PUSH_RECEIVED -> buttonPressed = value != 0
       "\$_BUTTON_TIMEOUT", "\$_RANDOM_MIN", "\$_RANDOM_MAX" -> {
         if (value !in 0..65535) {
           throw DuckyVariableException("$name requires a value from 0 to 65535, got $value")
@@ -144,6 +144,7 @@ internal class DuckyScriptVariables(
 
   companion object {
     const val BUTTON_ENABLED = "\$_BUTTON_ENABLED"
+    const val BUTTON_PUSH_RECEIVED = "\$_BUTTON_PUSH_RECEIVED"
     const val BUTTON_USER_DEFINED = "\$_BUTTON_USER_DEFINED"
     const val INJECTING_LEDS_ENABLED = "\$_INJECTING_LEDS_ENABLED"
     const val SYSTEM_LEDS_ENABLED = "\$_SYSTEM_LEDS_ENABLED"
@@ -173,7 +174,7 @@ internal class DuckyScriptVariables(
       "\$_EXFIL_MODE_ENABLED", "\$_HOST_CONFIGURATION_REQUEST_COUNT",
     )
     val reserved = readOnly + unavailable + setOf(
-      BUTTON_ENABLED, BUTTON_USER_DEFINED, "\$_BUTTON_PUSH_RECEIVED", "\$_BUTTON_TIMEOUT",
+      BUTTON_ENABLED, BUTTON_USER_DEFINED, BUTTON_PUSH_RECEIVED, "\$_BUTTON_TIMEOUT",
       "\$_RANDOM_MIN", "\$_RANDOM_MAX", INJECTING_LEDS_ENABLED, SYSTEM_LEDS_ENABLED,
     )
   }

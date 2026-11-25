@@ -150,6 +150,9 @@ enum class CommandType {
 }
 
 class DuckyScriptParser {
+  internal var readsButtonPress = false
+    private set
+
   private val defines = mutableMapOf<String, String>()
   private var definePattern: Regex? = null
   private val defineDeclaration = Regex("^DEFINE\\s+(\\S+)\\s(.*)$", RegexOption.IGNORE_CASE)
@@ -170,6 +173,7 @@ class DuckyScriptParser {
   private val varDeclRegex = Regex("^VAR\\s+($variableName)(?:\\s*=\\s*(.*)|\\s+(.+))?$", RegexOption.IGNORE_CASE)
 
   fun parse(script: String): List<DuckyCommand> {
+    readsButtonPress = false
     defines.clear()
     definePattern = null
     val commands = mutableListOf<DuckyCommand>()
@@ -685,7 +689,9 @@ class DuckyScriptParser {
       for (expression in expressions) {
         if (expression.isBlank()) continue
         try {
-          evaluator.validateSyntax(expression)
+          evaluator.validateSyntax(expression) { name ->
+            if (name == DuckyScriptVariables.BUTTON_PUSH_RECEIVED) readsButtonPress = true
+          }
         } catch (e: DuckyExpressionSyntaxException) {
           e.lineNumber = command.lineNumber
           throw e
@@ -831,10 +837,7 @@ class DuckyScriptExecutor(
   private val internalVariables = DuckyScriptVariables(manager::readScriptUsbVariable, manager::scriptKeyStroke)
   private var scriptButtonRegistered = false
   private var buttonBody: List<DuckyCommand>? = null
-  private val evaluator = ExpressionEvaluator { name ->
-    if (name == "\$_BUTTON_PUSH_RECEIVED") registerScriptButton()
-    internalVariables.read(name)
-  }
+  private val evaluator = ExpressionEvaluator(internalVariables::read)
 
   private fun registerScriptButton() {
     if (canShowButtonPrompt && !scriptButtonRegistered &&
@@ -889,6 +892,7 @@ class DuckyScriptExecutor(
     log.log("ducky", "=== Starting execution of ${commands.size} commands ===")
 
     try {
+      if (parser.readsButtonPress) registerScriptButton()
       executeRange(processed, 0, processed.size)
       internalVariables.closeScriptButtonInput()
       updateScriptButton()
@@ -2433,7 +2437,7 @@ internal class DuckyScriptEstimator(
       CommandType.WAIT_FOR -> setExitCode(0)
 
       CommandType.WAIT_FOR_BUTTON_PRESS -> {
-        internalVariables.write("\$_BUTTON_PUSH_RECEIVED", 1)
+        internalVariables.write(DuckyScriptVariables.BUTTON_PUSH_RECEIVED, 1)
         setExitCode(0)
       }
 

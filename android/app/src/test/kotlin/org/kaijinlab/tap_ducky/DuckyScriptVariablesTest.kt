@@ -149,6 +149,22 @@ class DuckyScriptVariablesTest {
   }
 
   @Test
+  fun identifiesButtonPollingBeforeTheFirstCommandRuns() {
+    val parser = DuckyScriptParser()
+    val flag = DuckyScriptVariables.BUTTON_PUSH_RECEIVED
+
+    parser.parse("DEFINE #PRESSED $flag\nDELAY 500\nIF (#PRESSED) THEN\nDELAY 20\nEND_IF")
+    assertTrue(parser.readsButtonPress)
+
+    val variables = DuckyScriptVariables({ null }, { null })
+    assertTrue(variables.tryRecordButtonPress(100))
+    assertEquals(1, ExpressionEvaluator(variables::read).evaluate(flag, emptyMap()))
+
+    parser.parse("REM $flag\nSTRING $flag\n$flag = FALSE\nVAR \$copy = ${flag}_OTHER")
+    assertFalse(parser.readsButtonPress)
+  }
+
+  @Test
   fun checksStoredScancodeValuesBeforeEstimatingAKeyTap() {
     val variables = DuckyScriptVariables({ null }, { null })
     val estimator = DuckyScriptEstimator(variables, { _, _ -> 0 }, { 23 })

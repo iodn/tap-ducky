@@ -20,8 +20,11 @@ class ExpressionEvaluator(
     return p.parse()
   }
 
-  internal fun validateSyntax(expression: String) {
-    Parser(tokenize(expression), emptyMap(), { 0 }, syntaxOnly = true).parse()
+  internal fun validateSyntax(expression: String, onVariableRead: (String) -> Unit) {
+    Parser(tokenize(expression), emptyMap(), { name ->
+      onVariableRead(name)
+      0
+    }, syntaxOnly = true).parse()
   }
 
   internal fun evaluateCondition(
