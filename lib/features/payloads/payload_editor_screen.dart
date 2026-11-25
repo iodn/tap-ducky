@@ -775,6 +775,19 @@ class _PayloadEditorScreenState extends ConsumerState<PayloadEditorScreen>
 class _Hak5VariablesPage extends StatelessWidget {
   const _Hak5VariablesPage();
 
+  static const _compatibilityNotes = {
+    r'$_OS': 'Auto-detects Windows, macOS, Linux, and Android. Compare with symbolic OS names.',
+    r'$_CURRENT_ATTACKMODE': 'Reports OFF, HID, or HID plus storage when the USB configuration can be verified.',
+    r'$_RANDOM_SEED': 'TapDucky generates a fresh seed for each run.',
+    r'$_RANDOM_CHAR_KEYCODE': 'Uses the selected layout and TapDucky’s scancode format.',
+    r'$_BUTTON_ENABLED': 'Controls the optional Press button action in the task bar.',
+    r'$_BUTTON_USER_DEFINED': 'Controls the callback registered by BUTTON_DEF for on-phone taps.',
+    r'$_BUTTON_PUSH_RECEIVED': 'Set by Press button or Continue in the task bar.',
+    r'$_BUTTON_TIMEOUT': 'Minimum interval between accepted taps, in milliseconds.',
+    r'$_SYSTEM_LEDS_ENABLED': 'Controls the on-screen pulse at run start and completion.',
+    r'$_INJECTING_LEDS_ENABLED': 'Controls the on-screen pulse during script steps.',
+  };
+
   @override
   Widget build(BuildContext context) {
     const groups = [
@@ -798,7 +811,13 @@ class _Hak5VariablesPage extends StatelessWidget {
                   for (final name in names.toList()..sort())
                     Padding(
                       padding: const EdgeInsets.symmetric(vertical: 4),
-                      child: SelectableText(name, style: const TextStyle(fontFamily: 'monospace')),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          SelectableText(name, style: const TextStyle(fontFamily: 'monospace')),
+                          if (_compatibilityNotes[name] case final String note) Text(note),
+                        ],
+                      ),
                     ),
                 ],
               ),

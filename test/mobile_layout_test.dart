@@ -203,6 +203,7 @@ void main() {
     await tester.tap(find.text('Read-only (12)'));
     await tester.pumpAndSettle();
     expect(find.text(r'$_OS'), findsOneWidget);
+    expect(find.textContaining('Auto-detects Windows, macOS, Linux, and Android.'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
