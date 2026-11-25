@@ -125,3 +125,11 @@ internal fun hak5UsbId(descriptor: String?): Int? {
   val id = digits.toIntOrNull(16)?.takeIf { it in 0..65535 } ?: return null
   return ((id and 0xff) shl 8) or (id shr 8)
 }
+
+internal fun decodeDuckyKeyStroke(value: Int): KeyStroke {
+  val keyCode = value and 0xff
+  if (value !in 4..65535 || keyCode !in 4..0xdf) {
+    throw DuckyVariableException("INJECT_VAR requires a valid keyboard scancode")
+  }
+  return KeyStroke(modifiers = value shr 8, keyCode = keyCode)
+}

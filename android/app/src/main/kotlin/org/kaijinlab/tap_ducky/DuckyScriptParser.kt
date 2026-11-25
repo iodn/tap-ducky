@@ -1502,11 +1502,8 @@ class DuckyScriptExecutor(
       }
 
       CommandType.INJECT_VAR -> {
-        val stroke = evaluator.evaluate(cmd.args.first(), currentVarsView())
-        require(stroke in 4..65535 && (stroke and 0xff) in 4..0xdf) {
-          "INJECT_VAR requires a valid keyboard scancode"
-        }
-        sendKeyWithInjectedMods(stroke and 0xff, stroke shr 8)
+        val stroke = decodeDuckyKeyStroke(evaluator.evaluate(cmd.args.first(), currentVarsView()))
+        sendKeyWithInjectedMods(stroke.keyCode, stroke.modifiers)
         setExitCode(0)
       }
 
@@ -2264,7 +2261,7 @@ internal class DuckyScriptEstimator(
       }
 
       CommandType.INJECT_VAR -> {
-        evaluator.evaluate(cmd.args.first(), currentVarsView())
+        decodeDuckyKeyStroke(evaluator.evaluate(cmd.args.first(), currentVarsView()))
         elapsedMs += estimateKeyTapDuration()
         setExitCode(0)
       }

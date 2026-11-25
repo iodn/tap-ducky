@@ -9,6 +9,20 @@ import org.junit.Test
 
 class DuckyScriptVariablesTest {
   @Test
+  fun checksStoredScancodeValuesBeforeEstimatingAKeyTap() {
+    val variables = DuckyScriptVariables({ null }, { null })
+    val estimator = DuckyScriptEstimator(variables, { _, _ -> 0 }, { 23 })
+    val german = KeyboardMapper(KeyboardLayout.LAYOUT_DE)
+    val mappedAtSign = german.getStrokeForChar('@')
+    assertEquals(KeyStroke(modifiers = 0x40, keyCode = 0x14), mappedAtSign)
+    assertEquals(mappedAtSign, decodeDuckyKeyStroke(0x4014))
+    assertEquals(23L, estimator.estimate("VAR \$scancode = 0x4014\nINJECT_VAR \$scancode"))
+    for (value in listOf("0x4000", "0xff", "0x10004")) {
+      assertThrows(DuckyVariableException::class.java) { estimator.estimate("INJECT_VAR $value") }
+    }
+  }
+
+  @Test
   fun estimatesDefaultDelaySetFromAnExpression() {
     val estimator = DuckyScriptEstimator(DuckyScriptVariables({ null }, { null }), { _, _ -> 0 }, { 0 })
     val script = """
