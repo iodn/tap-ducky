@@ -2,6 +2,7 @@ package org.kaijinlab.tap_ducky
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class UsbHostOsObserverTest {
@@ -42,6 +43,7 @@ class UsbHostOsObserverTest {
       "android" to listOf("android-01", "android-02"),
       "windows" to listOf("windows-usb-a", "windows-usb-c"),
       "macos" to listOf("macos-01", "macos-02"),
+      "ios" to listOf("ios-01", "ios-02"),
     )
     for ((host, trials) in captures) {
       for (trial in trials) {
@@ -104,6 +106,84 @@ class UsbHostOsObserverTest {
     assertNull(classifyUsbHostTrace(trace.replace("bRequest=1 wValue=0 wIndex=4 wLength=40",
       "bRequest=2 wValue=0 wIndex=4 wLength=40"), 6000).os)
   }
+
+  @Test
+  fun distinguishesIosFromMacosByTheAppleLedReport() {
+    assertEquals("macos", classifyUsbHostTrace(capture("macos-01"), 11500).os)
+    assertEquals("ios", classifyUsbHostTrace(capture("ios-01"), 11500).os)
+    assertEquals("ios", classifyUsbHostTrace(capture("ios-02"), 11500).os)
+  }
+
+  @Test
+  fun doesNotUseAnUnrelatedHidSetReportAsIos() {
+    val unrelated = "capture [000] .... 10.210000: mtu3_handle_setup: setup - 21 09 0100 0001 0001"
+    assertEquals("macos", classifyUsbHostTrace("${capture("macos-01")}\n$unrelated", 11500).os)
+  }
+
+  @Test
+  fun capturesTheHidSetReportNeededForIos() {
+    val script = UsbHostOsObserver.buildStartScript("16751000.usb0")
+    assertTrue(script.contains("bRequest == 9"))
+  }
+
+  @Test
+  fun doesNotLatchIosAsMacosBeforeTheLedReport() {
+    val beforeLed = capture("ios-01").lineSequence()
+      .takeWhile { !it.endsWith("setup - 21 09 0200 0001 0001") }
+      .joinToString("\n")
+    assertEquals(UsbHostFingerprint(detecting = true), classifyUsbHostTrace(beforeLed, 10110))
+    assertEquals("ios", classifyUsbHostTrace(capture("ios-01"), 10200).os)
+  }
+
+  @Test
+  fun doesNotLatchIosAsMacosWhenTheAppleGateArrivesLate() {
+    val trace = listOf(
+      traceLine("10.000000", "usb_gadget_set_state: speed 3/3 state 0 0mA [bus-powered:activated:connected] --> 0"),
+      traceLine("10.001000", "mtu3_handle_setup: setup - 00 05 0001 0000 0000"),
+      traceLine("10.002000", "usb_gadget_set_state: speed 3/3 state 6 0mA [bus-powered:activated:connected] --> 0"),
+      traceLine("10.003000", "mtu3_handle_setup: setup - 80 06 0302 0409 0002"),
+      traceLine("10.004000", "mtu3_handle_setup: setup - 80 06 0302 0409 0012"),
+      traceLine("10.005000", "mtu3_handle_setup: setup - 80 06 0301 0409 0002"),
+      traceLine("10.006000", "mtu3_handle_setup: setup - 80 06 0301 0409 000c"),
+      traceLine("10.007000", "mtu3_handle_setup: setup - 80 06 0303 0409 0002"),
+      traceLine("10.008000", "mtu3_handle_setup: setup - 80 06 0303 0409 0022"),
+      traceLine("10.009000", "mtu3_handle_setup: setup - 00 09 0001 0000 0000"),
+      traceLine("10.010000", "usb_gadget_set_state: speed 3/3 state 7 0mA [bus-powered:activated:connected] --> 0"),
+      traceLine("10.400000", "mtu3_handle_setup: setup - 21 0a 0600 0001 0000"),
+      traceLine("10.401000", "mtu3_handle_setup: setup - 21 0b 0001 0001 0000"),
+    ).joinToString("\n")
+    assertEquals(UsbHostFingerprint(detecting = true), classifyUsbHostTrace(trace, 10420))
+  }
+
+  @Test
+  fun ignoresAnAppleLedReportLongAfterTheHidGate() {
+    val late = "capture [000] .... 11.000000: mtu3_handle_setup: setup - 21 09 0200 0001 0001"
+    assertEquals("macos", classifyUsbHostTrace("${capture("macos-01")}\n$late", 11500).os)
+  }
+
+  @Test
+  fun recognizesIosInDecodedDwc3Output() {
+    val configured = "${prefix}usb_gadget_set_state: speed 3/5 state 7 0mA [connected] --> 0"
+    val requests = listOf(
+      "Set Address(Addr = 01)",
+      "Get String Descriptor(Index = 2, Length = 2)",
+      "Get String Descriptor(Index = 2, Length = 18)",
+      "Get String Descriptor(Index = 1, Length = 2)",
+      "Get String Descriptor(Index = 1, Length = 12)",
+      "Get String Descriptor(Index = 3, Length = 2)",
+      "Get String Descriptor(Index = 3, Length = 34)",
+      "Type=Class Recipient=Interface Dir=OUT bRequest=10 wValue=1536 wIndex=1 wLength=0",
+      "Type=Class Recipient=Interface Dir=OUT bRequest=11 wValue=1 wIndex=1 wLength=0",
+      "Type=Class Recipient=Interface Dir=OUT bRequest=9 wValue=512 wIndex=1 wLength=1",
+    )
+    val trace = requests.joinToString("\n", postfix = "\n$configured") {
+      "${prefix}dwc3_ctrl_req: a600000: $it"
+    }
+    assertEquals("ios", classifyUsbHostTrace(trace, 6000).os)
+  }
+
+  private fun traceLine(time: String, details: String): String =
+    "capture [000] .... $time: $details"
 
   private fun capture(name: String): String =
     checkNotNull(javaClass.getResource("/usb-host/$name.trace")).readText()

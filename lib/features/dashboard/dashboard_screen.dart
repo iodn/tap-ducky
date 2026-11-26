@@ -244,11 +244,11 @@ class _HeroStatusCard extends ConsumerWidget {
     if (restorePhase != UsbRestorePhase.idle) {
       statusText = switch (restorePhase) {
         UsbRestorePhase.waitingForUnplug => 'Unplug to finish',
-        UsbRestorePhase.verifying => 'Verifying original USB settings…',
-        UsbRestorePhase.verified => 'Original USB restored',
+        UsbRestorePhase.verifying => 'Verifying original USB settings...',
+        UsbRestorePhase.verified => 'Session Disarmed',
         UsbRestorePhase.finished => 'USB restoration finished',
         UsbRestorePhase.failed => 'USB restoration incomplete',
-        _ => 'Restoring original USB settings…',
+        _ => 'Restoring original USB settings...',
       };
       (statusIcon, statusColor) = switch (restorePhase) {
         UsbRestorePhase.verified => (Icons.check_circle, cs.success),

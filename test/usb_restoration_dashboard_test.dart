@@ -108,7 +108,7 @@ void main() {
 
     usb.update('VERIFYING');
     await tester.pumpAndSettle();
-    expect(find.text('Verifying original USB settings…'), findsOneWidget);
+    expect(find.text('Verifying original USB settings...'), findsOneWidget);
 
     usb.update('FAILED', message: 'USB restoration incomplete (exit=25).');
     await tester.pumpAndSettle();
@@ -134,16 +134,16 @@ void main() {
     tester.state<ScrollableState>(scrollable).position.jumpTo(0);
     await tester.pumpAndSettle();
     expect(usb.restoreRequests, 1);
-    expect(find.text('Restoring original USB settings…'), findsOneWidget);
+    expect(find.text('Restoring USB settings...'), findsOneWidget);
 
     usb.update('FINISHED');
     await tester.pumpAndSettle();
     expect(find.text('USB restoration finished'), findsOneWidget);
-    expect(find.text('Original USB restored'), findsNothing);
+    expect(find.text('Session Disarmed'), findsNothing);
 
     usb.update('VERIFIED');
     await tester.pumpAndSettle();
-    expect(find.text('Original USB restored'), findsOneWidget);
+    expect(find.text('Session Disarmed'), findsOneWidget);
     expect(find.text('Arm Session'), findsOneWidget);
     await tester.scrollUntilVisible(recentRun, 120, scrollable: scrollable);
     expect(tester.widget<IconButton>(recentRun).onPressed, isNotNull);
