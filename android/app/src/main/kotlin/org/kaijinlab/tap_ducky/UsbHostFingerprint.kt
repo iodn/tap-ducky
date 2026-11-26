@@ -1,6 +1,7 @@
 package org.kaijinlab.tap_ducky
 
 private const val ENUMERATION_WINDOW_MS = 2500L
+private const val APPLE_LED_GRACE_MS = 250L
 
 internal data class UsbHostFingerprint(val os: String? = null, val detecting: Boolean = false)
 
@@ -17,6 +18,7 @@ private data class SetupRequest(
   val value: Int,
   val index: Int?,
   val length: Int,
+  val timeMs: Long,
 ) {
   val isAddress: Boolean get() = type == 0 && request == 5
   val isDescriptorRead: Boolean get() = type == 0x80 && request == 6
@@ -26,23 +28,23 @@ private data class SetupRequest(
     isDescriptorRead && value == 0x03ee && (index == 0 || index == null) && length == 18
 }
 
-private fun parseSetup(event: String, details: String): SetupRequest? {
+private fun parseSetup(event: String, details: String, timeMs: Long): SetupRequest? {
   if (event == "mtu3_handle_setup") {
     val values = mtu3Setup.matchEntire(details)?.groupValues?.drop(1)?.map { it.toInt(16) } ?: return null
     val (type, request, value, index, length) = values
-    return SetupRequest(type, request, value, index, length)
+    return SetupRequest(type, request, value, index, length, timeMs)
   }
 
   // Upstream DWC3 may prefix the decoded request with a controller address.
   val decoded = details.substringAfter(": ")
   dwc3Address.matchEntire(decoded)?.let { match ->
-    return SetupRequest(0, 5, match.groupValues[1].toInt(16), 0, 0)
+    return SetupRequest(0, 5, match.groupValues[1].toInt(16), 0, 0, timeMs)
   }
   dwc3Descriptor.matchEntire(decoded)?.let { match ->
     val (label, index, length) = match.destructured
     val type = if (label == "String") 3 else 2
     val id = index.toIntOrNull()?.takeIf { it in 0..255 } ?: return null
-    return SetupRequest(0x80, 6, (type shl 8) or id, null, length.toIntOrNull() ?: return null)
+    return SetupRequest(0x80, 6, (type shl 8) or id, null, length.toIntOrNull() ?: return null, timeMs)
   }
   val match = dwc3Request.matchEntire(decoded) ?: return null
   val (kind, recipient, direction, request, value, index, length) = match.destructured
@@ -54,6 +56,7 @@ private fun parseSetup(event: String, details: String): SetupRequest? {
     value.toIntOrNull() ?: return null,
     index.toIntOrNull() ?: return null,
     length.toIntOrNull() ?: return null,
+    timeMs,
   )
 }
 
@@ -78,7 +81,7 @@ internal fun classifyUsbHostTrace(trace: String, nowMs: Long): UsbHostFingerprin
       continue
     }
 
-    val request = parseSetup(event, details) ?: continue
+    val request = parseSetup(event, details, time) ?: continue
     if (request.isAddress) {
       addressed = request.value in 1..127
       configuredAt = null
@@ -90,12 +93,22 @@ internal fun classifyUsbHostTrace(trace: String, nowMs: Long): UsbHostFingerprin
 
   if (requests.any { it.isMicrosoftString }) return UsbHostFingerprint("windows")
   val configured = configuredAt ?: return UsbHostFingerprint()
-  val windowComplete = nowMs - configured >= ENUMERATION_WINDOW_MS
-  val os = inferFromEnumeration(requests, windowComplete)
+  val elapsed = nowMs - configured
+  val windowComplete = elapsed >= ENUMERATION_WINDOW_MS
+  val protocolAt = requests.filter {
+    it.type == 0x21 && it.request == 11 && it.value == 1
+  }.maxOfOrNull { it.timeMs }
+  val gateElapsed = protocolAt?.let { nowMs - it } ?: elapsed
+  val os = inferFromEnumeration(requests, windowComplete, gateElapsed, protocolAt)
   return UsbHostFingerprint(os, detecting = os == null && !windowComplete)
 }
 
-private fun inferFromEnumeration(requests: List<SetupRequest>, windowComplete: Boolean): String? {
+private fun inferFromEnumeration(
+  requests: List<SetupRequest>,
+  windowComplete: Boolean,
+  gateElapsedMs: Long,
+  protocolAt: Long?,
+): String? {
   val strings = requests.filter { it.isDescriptorRead && it.descriptorType == 3 }
   val configurations = requests.filter { it.isDescriptorRead && it.descriptorType == 2 }
   val compatibilityReads = requests.filter { it.type == 0xc0 && it.value == 0 && it.index == 4 }
@@ -113,7 +126,22 @@ private fun inferFromEnumeration(requests: List<SetupRequest>, windowComplete: B
   val appleHid = requests.any { it.type == 0x21 && it.request == 10 && (it.value shr 8) > 0 } &&
     requests.any { it.type == 0x21 && it.request == 11 && it.value == 1 }
   if (appleHid && pairedStrings(strings, 2) >= 3 && strings.none { it.length >= 254 }) {
-    return "macos"
+    // iOS initializes the keyboard LED report during enumeration; the macOS
+    // captures do not. Keep the exact report shape so unrelated HID output
+    // reports do not turn a Mac into iOS.
+    val gate = protocolAt ?: return null
+    val appleLedReport = requests.any {
+      it.type == 0x21 && it.request == 9 &&
+        it.value == 0x0200 && it.index == 1 && it.length == 1 &&
+        it.timeMs >= gate && it.timeMs - gate <= APPLE_LED_GRACE_MS
+    }
+    return when {
+      appleLedReport -> "ios"
+      // iOS sends the LED report shortly after SET_PROTOCOL. Wait a short grace
+      // from that request so an early poll cannot latch iOS as macOS.
+      gateElapsedMs < APPLE_LED_GRACE_MS -> null
+      else -> "macos"
+    }
   }
 
   val longStrings = strings.filter { it.length == 255 }

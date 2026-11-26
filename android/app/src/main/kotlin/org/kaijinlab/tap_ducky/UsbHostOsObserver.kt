@@ -82,7 +82,7 @@ internal class UsbHostOsObserver(private val root: RootShell, private val log: L
       echo '(bRequestType == 0 && bRequest == 5) ||
         (bRequestType == 128 && bRequest == 6 &&
           ((wValue >= 512 && wValue < 1024 && wValue != 1006) || (wValue == 1006 && wIndex == 0))) ||
-        (bRequestType == 33 && (bRequest == 10 || bRequest == 11)) ||
+        (bRequestType == 33 && (bRequest == 9 || bRequest == 10 || bRequest == 11)) ||
         (bRequestType == 192 && wValue == 0 && wIndex == 4 && wLength >= 16)' |
         tr '\n' ' ' > "${'$'}dir/events/${'$'}setup/filter"
       echo 1 > "${'$'}dir/events/${'$'}state/enable"
