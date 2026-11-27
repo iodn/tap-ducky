@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -66,6 +68,31 @@ Future<void> _openEditor(
 
 void main() {
   setUp(() => SharedPreferences.setMockInitialValues({}));
+
+  testWidgets('validation updates an open issue list when Android responds', (
+    tester,
+  ) async {
+    final response = Completer<Map<String, Object>>();
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(_gadget, (call) async {
+      if (call.method == 'validateDuckyScript') return response.future;
+      return null;
+    });
+    addTearDown(() => messenger.setMockMethodCallHandler(_gadget, null));
+    await _openEditor(tester, payloads: _Payloads([]));
+    await tester.enterText(_scriptField, 'DELAY (100 + 20');
+    await tester.pump(const Duration(milliseconds: 500));
+    await tester.tap(find.byTooltip('Script validation and estimate'));
+    await tester.pumpAndSettle();
+    expect(find.text('Checking Android syntax...'), findsOneWidget);
+    expect(find.text('No issues found'), findsNothing);
+
+    response.complete({'message': 'Missing closing parenthesis', 'line': 1});
+    await tester.pumpAndSettle();
+    expect(find.text('Missing closing parenthesis'), findsOneWidget);
+    expect(find.text('Checking Android syntax...'), findsNothing);
+  });
 
   testWidgets('Save refuses an Android parser error and opens its line', (
     tester,

@@ -776,27 +776,25 @@ class _PayloadEditorScreenState extends ConsumerState<PayloadEditorScreen>
       _validationDebounce?.cancel();
       _validateAndRequestEstimate();
     }
-    final issue = _engineIssue;
-    final result = issue == null
-        ? _validationResult
-        : ValidationResult(
-            issues: [..._validationResult.issues, issue],
-            commandCount: _validationResult.commandCount,
-            estimatedDurationMs: _validationResult.estimatedDurationMs,
-            totalDelayMs: _validationResult.totalDelayMs,
-            hasErrors: true,
-            hasWarnings: _validationResult.hasWarnings,
-          );
+    final result = _validationResult;
+    final estimate = _engineEstimateMs;
+    final script = _scriptCtrl.text;
+    final hasParameters = DuckyScript.hasPlaceholders(script);
+    final check = result.hasErrors || hasParameters || script.trim().isEmpty
+        ? null
+        : _getNativeValidation(script);
     final line = await showConfigurationPage<int>(
       context,
       (_) => _ValidationDialog(
         result: result,
-        engineEstimateMs: _engineEstimateMs,
+        nativeValidation: check,
+        engineEstimateMs: estimate,
         formatDuration: _formatDuration,
-        hasParameters: DuckyScript.hasPlaceholders(_scriptCtrl.text),
+        hasParameters: hasParameters,
       ),
     );
-    if (mounted && line != null) _jumpToLine(line);
+    if (mounted && line != null && _scriptCtrl.text == script)
+      _jumpToLine(line);
   }
 
   void _jumpToLine(int line) {
@@ -1124,12 +1122,14 @@ class _Hak5VariablesPage extends StatelessWidget {
 class _ValidationDialog extends StatelessWidget {
   const _ValidationDialog({
     required this.result,
+    required this.nativeValidation,
     required this.engineEstimateMs,
     required this.formatDuration,
     required this.hasParameters,
   });
 
   final ValidationResult result;
+  final Future<ValidationIssue?>? nativeValidation;
   final int? engineEstimateMs;
   final String Function(int) formatDuration;
   final bool hasParameters;
@@ -1148,39 +1148,53 @@ class _ValidationDialog extends StatelessWidget {
       ),
       body: SafeArea(
         top: false,
-        child: ListView.builder(
-          padding: const EdgeInsets.all(16),
-          itemCount: result.issues.length + 1,
-          itemBuilder: (context, index) {
-            if (index > 0)
-              return _IssueListTile(issue: result.issues[index - 1]);
-            return Card(
-              color: cs.surfaceContainerHighest,
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text('${result.commandCount} commands'),
-                    if (!result.hasErrors) ...[
-                      Text(estimate),
-                      const Text('Excludes host and scheduled waits.'),
-                    ],
-                    if (hasParameters)
-                      const Text(
-                        'Android checks syntax when parameter values are supplied.',
-                      ),
-                    Text(
-                      'Total delays: ${(result.totalDelayMs / 1000).toStringAsFixed(1)}s',
+        child: FutureBuilder<ValidationIssue?>(
+          future: nativeValidation,
+          builder: (context, snapshot) {
+            final nativeIssue = snapshot.data;
+            final issues = [
+              ...result.issues,
+              if (nativeIssue != null) nativeIssue,
+            ];
+            final pending = snapshot.connectionState == ConnectionState.waiting;
+            return ListView.builder(
+              padding: const EdgeInsets.all(16),
+              itemCount: issues.length + 1,
+              itemBuilder: (context, index) {
+                if (index > 0) return _IssueListTile(issue: issues[index - 1]);
+                return Card(
+                  color: cs.surfaceContainerHighest,
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('${result.commandCount} commands'),
+                        if (!result.hasErrors && nativeIssue == null) ...[
+                          Text(estimate),
+                          const Text('Excludes host and scheduled waits.'),
+                        ],
+                        if (hasParameters)
+                          const Text(
+                            'Android checks syntax when parameter values are supplied.',
+                          ),
+                        Text(
+                          'Total delays: ${(result.totalDelayMs / 1000).toStringAsFixed(1)}s',
+                        ),
+                        Text(
+                          pending
+                              ? 'Checking Android syntax...'
+                              : snapshot.hasError
+                              ? 'Could not check Android syntax.'
+                              : issues.isEmpty
+                              ? 'No issues found'
+                              : 'Issues (${issues.length})',
+                        ),
+                      ],
                     ),
-                    Text(
-                      result.issues.isEmpty
-                          ? 'No issues found'
-                          : 'Issues (${result.issues.length})',
-                    ),
-                  ],
-                ),
-              ),
+                  ),
+                );
+              },
             );
           },
         ),
