@@ -245,7 +245,7 @@ Note: In addition to the listed aliases, TapDucky accepts snake_case forms like 
 ## Payloads Management
 
 - Create/edit payloads with parameters and defaults.
-- Validate scripts live; open the DuckyScript Syntax reference.
+- Validate scripts live. Open **Settings > DuckyScript reference** to search commands, variables, and examples offline.
 - Share individual payloads or export a pack; import from the GitHub Store.
 
 ## Device Diagnostics

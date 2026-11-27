@@ -266,6 +266,29 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('settings opens and searches the offline DuckyScript reference', (
+    tester,
+  ) async {
+    await _pumpScreen(tester, const SettingsScreen(), size: const Size(375, 740));
+    await tester.enterText(find.byType(TextField), 'syntax');
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('DuckyScript reference'));
+    await tester.pumpAndSettle();
+
+    final search = find.widgetWithText(TextField, 'Search commands and variables');
+    await tester.enterText(search, r'$_random_uint16');
+    await tester.pumpAndSettle();
+    expect(find.textContaining(r'$_RANDOM_UINT16', findRichText: true), findsWidgets);
+
+    await tester.enterText(search, 'zz-no-such-entry');
+    await tester.pumpAndSettle();
+    expect(find.text('No matching entries.'), findsOneWidget);
+    await tester.tap(find.byTooltip('Clear search'));
+    await tester.pumpAndSettle();
+    expect(find.text('No matching entries.'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('execution settings show when Android rejects a change', (tester) async {
     await _pumpScreen(tester, const SettingsScreen(), size: const Size(390, 740), settings: _RejectingKeyboardSettings());
     await tester.enterText(find.byType(TextField), 'typing');

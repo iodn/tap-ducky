@@ -14,6 +14,7 @@ import '../../state/controllers/hid_status_controller.dart';
 import '../../widgets/arm_profile_sheet.dart';
 import '../../widgets/configuration_page.dart';
 import 'about_screen.dart';
+import 'script_reference_screen.dart';
 import 'usb_id_reference_screen.dart';
 import 'widgets/donation_sheet.dart';
 import 'widgets/section_card.dart';
@@ -274,6 +275,16 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       keywords: const ['store', 'github', 'payload', 'import', 'repository'],
       onTap: (context) => context.push(const PayloadsStoreRoute().location),
     );
+    final scriptReference = _SettingsDestination(
+      icon: Icons.menu_book_outlined,
+      title: 'DuckyScript reference',
+      subtitle: 'Offline commands, syntax, and variables',
+      keywords: const ['script', 'syntax', 'commands', 'variables', 'offline'],
+      onTap: (context) => showConfigurationPage<void>(
+        context,
+        (_) => const ScriptReferenceScreen(),
+      ),
+    );
     final about = _SettingsDestination(
       icon: Icons.info_outline,
       title: 'About TapDucky',
@@ -311,7 +322,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         if (model == null || model.state != 'unsupported') aiDraft,
       ]),
       _SettingsGroup('Keyboard & USB', [execution, usb, usbIds, advanced]),
-      _SettingsGroup('Library', [store]),
+      _SettingsGroup('Library', [store, scriptReference]),
       _SettingsGroup('About & Support', [about, support, reset]),
     ];
   }
