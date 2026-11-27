@@ -33,8 +33,13 @@ class PrefsStorage {
     }
   }
 
-  Future<void> setJsonList(String key, List<Map<String, dynamic>> value) async {
-    await _prefs.setString(key, jsonEncode(value));
+  Future<bool> setJsonList(String key, List<Map<String, dynamic>> value) async {
+    if (await _prefs.setString(key, jsonEncode(value))) return true;
+    // SharedPreferences updates its local cache even when persistence fails.
+    try {
+      await _prefs.reload();
+    } catch (_) {}
+    return false;
   }
 
   Map<String, dynamic>? getJsonMap(String key) {

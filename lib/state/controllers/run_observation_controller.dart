@@ -180,7 +180,9 @@ class RunObservationController extends Notifier<RunObservation?> {
           .getJsonList(_recordingsKey)
           .where((item) => item['executionId'] != id)
           .take(_maxRecordings - 1);
-      await storage.setJsonList(_recordingsKey, [recording.toJson(), ...saved]);
+      if (!await storage.setJsonList(_recordingsKey, [recording.toJson(), ...saved])) {
+        throw StateError('Preferences rejected the run recording');
+      }
       if (ref.mounted) ref.invalidate(runRecordingsProvider);
     });
     _writes = write.then<void>((_) {}, onError: (Object _, StackTrace _) {});
