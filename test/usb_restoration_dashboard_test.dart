@@ -36,9 +36,13 @@ class _Usb extends PlatformGadgetService {
   final _statuses = StreamController<Map<String, dynamic>>.broadcast();
   int restoreRequests = 0;
 
-  Map<String, dynamic> _status(String phase, {String? message}) => {
-    'rootAvailable': true,
-    'supportAvailable': true,
+  Map<String, dynamic> _status(
+    String phase, {
+    String? message,
+    bool root = true,
+  }) => {
+    'rootAvailable': root,
+    'supportAvailable': root,
     'state': phase == 'VERIFIED' || phase == 'FINISHED' ? 'IDLE' : 'RESTORING',
     'usbRestorePhase': phase,
     'message': message,
@@ -57,8 +61,8 @@ class _Usb extends PlatformGadgetService {
     update('RESTORING');
   }
 
-  void update(String phase, {String? message}) =>
-      _statuses.add(_status(phase, message: message));
+  void update(String phase, {String? message, bool root = true}) =>
+      _statuses.add(_status(phase, message: message, root: root));
 
   Future<void> close() => _statuses.close();
 }
@@ -106,6 +110,23 @@ void main() {
     tester.state<ScrollableState>(scrollable).position.jumpTo(0);
     await tester.pumpAndSettle();
 
+    usb.update('RESTORING', root: false);
+    await tester.pumpAndSettle();
+    expect(find.text('USB restoration paused'), findsOneWidget);
+    expect(find.text('Restoring original USB settings...'), findsNothing);
+    expect(
+      find.text('Grant TapDucky root access, then recheck the device.'),
+      findsOneWidget,
+    );
+    final recheck = find.text('Recheck device');
+    await Scrollable.ensureVisible(tester.element(recheck), alignment: 0.5);
+    await tester.pumpAndSettle();
+    await tester.tap(recheck.hitTestable());
+    await tester.pumpAndSettle();
+    tester.state<ScrollableState>(scrollable).position.jumpTo(0);
+    await tester.pumpAndSettle();
+    expect(find.text('Unplug to finish'), findsOneWidget);
+
     usb.update('VERIFYING');
     await tester.pumpAndSettle();
     expect(find.text('Verifying original USB settings...'), findsOneWidget);
@@ -134,16 +155,16 @@ void main() {
     tester.state<ScrollableState>(scrollable).position.jumpTo(0);
     await tester.pumpAndSettle();
     expect(usb.restoreRequests, 1);
-    expect(find.text('Restoring USB settings...'), findsOneWidget);
+    expect(find.text('Restoring original USB settings...'), findsOneWidget);
 
     usb.update('FINISHED');
     await tester.pumpAndSettle();
     expect(find.text('USB restoration finished'), findsOneWidget);
-    expect(find.text('Session Disarmed'), findsNothing);
+    expect(find.text('Original USB restored'), findsNothing);
 
     usb.update('VERIFIED');
     await tester.pumpAndSettle();
-    expect(find.text('Session Disarmed'), findsOneWidget);
+    expect(find.text('Original USB restored'), findsOneWidget);
     expect(find.text('Arm Session'), findsOneWidget);
     await tester.scrollUntilVisible(recentRun, 120, scrollable: scrollable);
     expect(tester.widget<IconButton>(recentRun).onPressed, isNotNull);

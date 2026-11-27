@@ -231,6 +231,7 @@ class _HeroStatusCard extends ConsumerWidget {
     final restorePhase = hid.usbRestoring && hid.usbRestorePhase == UsbRestorePhase.idle
         ? UsbRestorePhase.restoring
         : hid.usbRestorePhase;
+    final restoreBlocked = hid.usbRestoring && (!hid.rootAvailable || !hid.hidSupported);
     final showStatusIcon = restorePhase == UsbRestorePhase.idle ||
         MediaQuery.textScalerOf(context).scale(16) <= 24;
     final live = ref.watch(runObservationProvider);
@@ -241,11 +242,15 @@ class _HeroStatusCard extends ConsumerWidget {
     IconData statusIcon;
     Color statusColor;
 
-    if (restorePhase != UsbRestorePhase.idle) {
+    if (restoreBlocked) {
+      statusText = 'USB restoration paused';
+      statusIcon = Icons.error_outline;
+      statusColor = cs.error;
+    } else if (restorePhase != UsbRestorePhase.idle) {
       statusText = switch (restorePhase) {
         UsbRestorePhase.waitingForUnplug => 'Unplug to finish',
         UsbRestorePhase.verifying => 'Verifying original USB settings...',
-        UsbRestorePhase.verified => 'Session Disarmed',
+        UsbRestorePhase.verified => 'Original USB restored',
         UsbRestorePhase.finished => 'USB restoration finished',
         UsbRestorePhase.failed => 'USB restoration incomplete',
         _ => 'Restoring original USB settings...',
@@ -373,12 +378,17 @@ class _HeroStatusCard extends ConsumerWidget {
                 ],
               ),
             ],
-            if (restorePhase == UsbRestorePhase.failed) ...[
+            if (restoreBlocked || restorePhase == UsbRestorePhase.failed) ...[
               const SizedBox(height: 16),
               Wrap(
                 spacing: 8,
                 children: [
-                  if (hid.rootAvailable && hid.hidSupported)
+                  if (restoreBlocked)
+                    FilledButton(
+                      onPressed: () => ref.invalidate(hidStatusProvider),
+                      child: const Text('Recheck device'),
+                    )
+                  else if (hid.rootAvailable && hid.hidSupported)
                     FilledButton(
                       onPressed: () => _retryRestoration(context, ref),
                       child: const Text('Retry restoration'),
@@ -430,6 +440,12 @@ class _HeroStatusCard extends ConsumerWidget {
   }
 
   String? _statusDetail() {
+    if (hid.usbRestoring && !hid.rootAvailable) {
+      return 'Grant TapDucky root access, then recheck the device.';
+    }
+    if (hid.usbRestoring && !hid.hidSupported) {
+      return 'Android cannot access USB gadget support. Recheck once it is available.';
+    }
     if (hid.usbRestorePhase == UsbRestorePhase.waitingForUnplug) {
       return 'Disconnect the USB cable. Restoration will continue automatically.';
     }
