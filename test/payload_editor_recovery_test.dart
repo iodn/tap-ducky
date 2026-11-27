@@ -136,6 +136,7 @@ void main() {
   testWidgets('Save refuses an Android parser error and opens its line', (
     tester,
   ) async {
+    const errorLine = 75;
     final messenger =
         TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
     messenger.setMockMethodCallHandler(_gadget, (call) async {
@@ -143,7 +144,7 @@ void main() {
           (call.arguments as Map)['script'] != _savedPayload.script) {
         return {
           'message': 'Missing closing parenthesis in expression',
-          'line': 12,
+          'line': errorLine,
         };
       }
       return null;
@@ -151,9 +152,25 @@ void main() {
     addTearDown(() => messenger.setMockMethodCallHandler(_gadget, null));
     final payloads = _Payloads([_savedPayload]);
     await _openEditor(tester, payloads: payloads, payloadId: _savedPayload.id);
-    final prefix = List.filled(11, 'REM sample').join('\n');
+    final prefix = List.filled(errorLine - 1, 'REM sample').join('\n');
     const badLine = 'DELAY (100 + 20';
     await tester.enterText(_scriptField, '$prefix\n$badLine');
+    final editable = find.descendant(
+      of: _scriptField,
+      matching: find.byType(EditableText),
+    );
+    final field = tester.widget<EditableText>(editable);
+    field.controller.selection = const TextSelection.collapsed(offset: 0);
+    await tester.pumpAndSettle();
+    field.scrollController!.jumpTo(0);
+    await tester.pump();
+    Rect caret() => tester
+        .state<EditableTextState>(editable)
+        .renderEditable
+        .getLocalRectForCaret(TextPosition(offset: prefix.length + 1));
+    final fieldHeight = tester.getSize(editable).height;
+    expect(caret().top, greaterThan(fieldHeight));
+
     await tester.tap(find.text('Save'));
     await tester.pumpAndSettle();
 
@@ -162,10 +179,11 @@ void main() {
       find.text('Missing closing parenthesis in expression'),
       findsOneWidget,
     );
-    await tester.tap(find.text('Line 12'));
+    await tester.tap(find.text('Line $errorLine'));
     await tester.pumpAndSettle();
     final editor = tester.widget<TextFormField>(_scriptField).controller!;
     expect(editor.selection.textInside(editor.text), badLine);
+    expect(caret().top, inInclusiveRange(0, fieldHeight));
     expect(tester.takeException(), isNull);
   });
 
@@ -230,7 +248,10 @@ void main() {
     expect(find.text('My name'), findsOneWidget);
     expect(find.text('Generated name'), findsNothing);
     expect(find.text('Undo'), findsOneWidget);
-    await tester.enterText(find.widgetWithText(TextFormField, 'Name'), 'New name');
+    await tester.enterText(
+      find.widgetWithText(TextFormField, 'Name'),
+      'New name',
+    );
     await tester.pumpAndSettle();
     expect(find.text('Undo'), findsNothing);
     expect(find.text('New name'), findsOneWidget);
