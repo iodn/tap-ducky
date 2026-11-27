@@ -126,6 +126,7 @@ final executionControllerProvider =
 
 class ExecutionController extends Notifier<ExecutionState> {
   static const _uuid = Uuid();
+  static const _inputReleaseWarning = 'Input release could not be confirmed.';
   static const Duration _panicGraceDelay = Duration(seconds: 3);
   static const Duration _autoPanicDelay = Duration(seconds: 6);
 
@@ -145,7 +146,7 @@ class ExecutionController extends Notifier<ExecutionState> {
   DateTime? _lastStepTailAt;
   String? _lastStepTailMsg;
 
-  bool get isBusy => state.isRunning;
+  bool get isBusy => state.isRunning || _activeExecutionId != null || _panicStoppingId != null;
 
   @override
   ExecutionState build() {
@@ -227,7 +228,6 @@ class ExecutionController extends Notifier<ExecutionState> {
       ExecutionOutcome.failed => message,
       _ => outcome.label,
     };
-    const releaseWarning = 'Input release could not be confirmed.';
     final payloadId = payload?.id ?? state.payloadId;
     final payloadName = payload?.name ?? state.payloadName;
     final meta = {
@@ -268,17 +268,17 @@ class ExecutionController extends Notifier<ExecutionState> {
       isRunning: false,
       systemIndicatorStep: state.systemIndicatorStep + 1,
       progress: ok ? 1.0 : state.progress,
-      status: releaseUnconfirmed ? '$status. $releaseWarning' : status,
+      status: releaseUnconfirmed ? '$status. $_inputReleaseWarning' : status,
       finishedAt: finishedAt,
       success: ok,
       outcome: outcome,
       inputReleaseUnconfirmed: releaseUnconfirmed,
       stopRequested: false,
-      panicAvailable: false,
+      panicAvailable: releaseUnconfirmed,
       clearButtonPrompt: true,
       scriptButtonAvailable: false,
     );
-    final resultMessage = releaseUnconfirmed ? '$message. $releaseWarning' : message;
+    final resultMessage = releaseUnconfirmed ? '$message. $_inputReleaseWarning' : message;
     final detail = durationMs == null ? resultMessage : '$resultMessage ($durationMs ms on device)';
     _pushTail(_mkTail(
       executionId: executionId,
@@ -582,7 +582,7 @@ class ExecutionController extends Notifier<ExecutionState> {
   Future<void> sendRawCommand(String cmd) async {
     final script = cmd.trim();
     if (script.isEmpty) return;
-    if (state.isRunning || _activeExecutionId != null) return;
+    if (isBusy) return;
 
     final settings = ref.read(appSettingsControllerProvider).value ?? AppSettings.defaults();
     final enableLogging = settings.enableLogging;
@@ -771,7 +771,7 @@ class ExecutionController extends Notifier<ExecutionState> {
   }
 
   Future<void> runPayload(Payload payload, Map<String, String> params, {bool recordTimeline = false}) async {
-    if (state.isRunning || _activeExecutionId != null) return;
+    if (isBusy) return;
 
     final settings = ref.read(appSettingsControllerProvider).value ?? AppSettings.defaults();
     final enableLogging = settings.enableLogging;
@@ -1078,6 +1078,31 @@ class ExecutionController extends Notifier<ExecutionState> {
       {'type': 'done', 'cancelled': true, 'inputReleased': inputReleased},
       startedAt,
       _logCurrentRun,
+    );
+  }
+
+  Future<void> retryInputRelease() async {
+    if (isBusy || !state.inputReleaseUnconfirmed || !state.panicAvailable) return;
+    final id = state.executionId;
+    _panicStoppingId = id;
+    state = state.copyWith(panicAvailable: false);
+    var released = false;
+    try {
+      released = await ref.read(platformGadgetServiceProvider).panicStop(executionId: id);
+    } catch (_) {
+      // Keep the release warning and retry action available on transport failure.
+    } finally {
+      _panicStoppingId = null;
+    }
+    if (!ref.mounted || state.executionId != id) return;
+    const suffix = '. $_inputReleaseWarning';
+    final status = state.status;
+    state = state.copyWith(
+      inputReleaseUnconfirmed: !released,
+      panicAvailable: !released,
+      status: released && status.endsWith(suffix)
+          ? status.substring(0, status.length - suffix.length)
+          : status,
     );
   }
 

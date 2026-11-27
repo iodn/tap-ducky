@@ -135,6 +135,13 @@ class TaskBar extends ConsumerWidget {
                           style: const TextStyle(fontSize: 11, height: 1.2),
                         ),
                       ],
+                      if (!exec.isRunning && exec.inputReleaseUnconfirmed)
+                        TextButton(
+                          onPressed: exec.panicAvailable
+                              ? () => ref.read(executionControllerProvider.notifier).retryInputRelease()
+                              : null,
+                          child: const Text('Retry input release'),
+                        ),
                       if (buttonPromptId != null || showScriptButton) ...[
                         const SizedBox(height: 4),
                         Wrap(

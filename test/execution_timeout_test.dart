@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:tap_ducky/data/models/app_settings.dart';
 import 'package:tap_ducky/data/models/execution_outcome.dart';
@@ -14,6 +15,7 @@ import 'package:tap_ducky/state/controllers/hid_status_controller.dart';
 import 'package:tap_ducky/state/controllers/logs_controller.dart';
 import 'package:tap_ducky/state/controllers/run_observation_controller.dart';
 import 'package:tap_ducky/state/providers.dart';
+import 'package:tap_ducky/widgets/task_bar.dart';
 
 class _TestSettings extends AppSettingsController {
   @override
@@ -315,7 +317,12 @@ void main() {
     addTearDown(events.close);
     final service = _SilentGadget(events: events);
     final container = await _createContainer(service);
-    await container.read(executionControllerProvider.notifier).sendRawCommand('DELAY 20');
+    final controller = container.read(executionControllerProvider.notifier);
+    await tester.pumpWidget(UncontrolledProviderScope(
+      container: container,
+      child: const MaterialApp(home: Scaffold(bottomNavigationBar: TaskBar())),
+    ));
+    await controller.sendRawCommand('DELAY 20');
 
     events.add({
       'type': 'done',
@@ -332,6 +339,28 @@ void main() {
     expect(state.status, contains('Input release could not be confirmed'));
     expect(state.tail.last.meta?['inputReleased'], 'false');
     expect(state.tail.last.meta?['outcome'], 'failed');
+    expect(state.panicAvailable, isTrue);
+
+    final retry = find.text('Retry input release');
+    expect(retry, findsOneWidget);
+    service.panicInputReleased = false;
+    await tester.tap(retry);
+    await tester.pump();
+    expect(container.read(executionControllerProvider).panicAvailable, isTrue);
+    expect(container.read(executionControllerProvider).inputReleaseUnconfirmed, isTrue);
+
+    service.panicInputReleased = true;
+    await tester.tap(retry);
+    await tester.pump();
+    final recovered = container.read(executionControllerProvider);
+    expect(service.panicExecutionId, service.startedId);
+    expect(service.panicCount, 2);
+    expect(recovered.inputReleaseUnconfirmed, isFalse);
+    expect(recovered.status, 'Script finished');
+    expect(recovered.outcome, ExecutionOutcome.failed);
+    expect(recovered.tail.last.meta?['inputReleased'], 'false');
+    expect(service.startedScripts, ['DELAY 20']);
+    expect(retry, findsNothing);
   });
 
   testWidgets('watchdog allows the wait announced by Android', (tester) async {
@@ -392,6 +421,13 @@ void main() {
     expect(container.read(executionControllerProvider).isRunning, isFalse);
     expect(container.read(executionControllerProvider).outcome, ExecutionOutcome.timedOut);
     expect(container.read(executionControllerProvider).inputReleaseUnconfirmed, isTrue);
+    expect(container.read(executionControllerProvider).panicAvailable, isTrue);
+    service.panicInputReleased = true;
+    await controller.retryInputRelease();
+    expect(service.panicCount, 2);
+    expect(service.panicExecutionId, id);
+    expect(container.read(executionControllerProvider).inputReleaseUnconfirmed, isFalse);
+    expect(container.read(executionControllerProvider).outcome, ExecutionOutcome.timedOut);
   });
 
   test('failed panic transport leaves the same run stoppable', () async {
