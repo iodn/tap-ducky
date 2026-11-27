@@ -229,6 +229,11 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('My name'), findsOneWidget);
     expect(find.text('Generated name'), findsNothing);
+    expect(find.text('Undo'), findsOneWidget);
+    await tester.enterText(find.widgetWithText(TextFormField, 'Name'), 'New name');
+    await tester.pumpAndSettle();
+    expect(find.text('Undo'), findsNothing);
+    expect(find.text('New name'), findsOneWidget);
   });
 
   testWidgets(

@@ -204,10 +204,16 @@ class _PayloadEditorScreenState extends ConsumerState<PayloadEditorScreen>
   }
 
   void _recordDraftChange() {
-    _pendingDraftUndo = null;
+    _dismissDraftUndo();
     if (!_hasChanges) setState(() => _hasChanges = true);
     _draftDebounce?.cancel();
     _draftDebounce = Timer(const Duration(milliseconds: 300), _flushDraft);
+  }
+
+  void _dismissDraftUndo() {
+    if (_pendingDraftUndo == null) return;
+    _pendingDraftUndo = null;
+    ScaffoldMessenger.maybeOf(context)?.hideCurrentSnackBar();
   }
 
   void _flushDraft() {
@@ -345,26 +351,29 @@ class _PayloadEditorScreenState extends ConsumerState<PayloadEditorScreen>
     _recordDraftChange();
     _validateAndRequestEstimate();
     final undo = _pendingDraftUndo = Object();
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(
-          content: const Text('Draft applied'),
-          action: SnackBarAction(
-            label: 'Undo',
-            onPressed: () {
-              if (!mounted || _pendingDraftUndo != undo || _saving) return;
-              setState(() {
-                _applySnapshot(previous);
-                _hasChanges = hadChanges;
-              });
-              _recordDraftChange();
-              if (!hadChanges) unawaited(_clearDraft());
-              _validateAndRequestEstimate();
-            },
-          ),
+    final messenger = ScaffoldMessenger.of(context)..hideCurrentSnackBar();
+    final snackBar = messenger.showSnackBar(
+      SnackBar(
+        content: const Text('Draft applied'),
+        action: SnackBarAction(
+          label: 'Undo',
+          onPressed: () {
+            if (!mounted || _pendingDraftUndo != undo || _saving) return;
+            _pendingDraftUndo = null;
+            setState(() {
+              _applySnapshot(previous);
+              _hasChanges = hadChanges;
+            });
+            _recordDraftChange();
+            if (!hadChanges) unawaited(_clearDraft());
+            _validateAndRequestEstimate();
+          },
         ),
-      );
+      ),
+    );
+    unawaited(snackBar.closed.then((_) {
+      if (_pendingDraftUndo == undo) _pendingDraftUndo = null;
+    }));
   }
 
   void _loadPayload(List<Payload>? items) {
@@ -893,6 +902,7 @@ class _PayloadEditorScreenState extends ConsumerState<PayloadEditorScreen>
     );
 
     FocusManager.instance.primaryFocus?.unfocus();
+    _dismissDraftUndo();
     setState(() => _saving = true);
     var syntaxChecked = false;
     try {
