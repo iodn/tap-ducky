@@ -131,8 +131,26 @@ class _ExecuteScreenState extends ConsumerState<ExecuteScreen> with SingleTicker
           ),
         ),
         data: (payloads) {
+          final console = ExpansionTile(
+            leading: const Icon(Icons.terminal),
+            title: const Text('Console and live events'),
+            children: [
+              _ConsoleTabs(
+                tabController: _tabController,
+                rawController: _rawCtrl,
+                exec: exec,
+                onSendCommand: (cmd) async {
+                  await ref.read(executionControllerProvider.notifier).sendRawCommand(cmd);
+                  if (mounted) _rawCtrl.clear();
+                },
+              ),
+            ],
+          );
+          final runDetails = !exec.isRunning && exec.outcome != null
+              ? _RecordedRunLink(executionId: exec.executionId)
+              : null;
           if (payloads.isEmpty) {
-            return EmptyState(
+            final empty = EmptyState(
               title: 'No payloads available',
               subtitle: 'Create or import a payload first.',
               icon: Icons.inventory_2_outlined,
@@ -158,6 +176,10 @@ class _ExecuteScreenState extends ConsumerState<ExecuteScreen> with SingleTicker
                   ),
                 ],
               ),
+            );
+            return ListView(
+              padding: const EdgeInsets.all(16),
+              children: [empty, ?runDetails, console],
             );
           }
 
@@ -222,23 +244,8 @@ class _ExecuteScreenState extends ConsumerState<ExecuteScreen> with SingleTicker
                 },
               ),
               const SizedBox(height: 16),
-              if (!exec.isRunning && exec.outcome != null)
-                _RecordedRunLink(executionId: exec.executionId),
-              ExpansionTile(
-                leading: const Icon(Icons.terminal),
-                title: const Text('Console and live events'),
-                children: [
-                  _ConsoleTabs(
-                    tabController: _tabController,
-                    rawController: _rawCtrl,
-                    exec: exec,
-                    onSendCommand: (cmd) async {
-                      await ref.read(executionControllerProvider.notifier).sendRawCommand(cmd);
-                      if (mounted) _rawCtrl.clear();
-                    },
-                  ),
-                ],
-              ),
+              ?runDetails,
+              console,
             ],
           );
         },

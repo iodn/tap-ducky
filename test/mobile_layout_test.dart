@@ -816,6 +816,25 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('console and event tabs remain available without payloads', (tester) async {
+    await _pumpScreen(tester, const ExecuteScreen(), size: const Size(320, 568));
+    expect(find.text('No payloads available'), findsOneWidget);
+    final console = find.text('Console and live events');
+    await tester.scrollUntilVisible(console.hitTestable(), 150);
+    await tester.pumpAndSettle();
+    await tester.tap(console);
+    await tester.pumpAndSettle();
+
+    final events = find.widgetWithText(Tab, 'Events');
+    await tester.ensureVisible(events);
+    await tester.pumpAndSettle();
+    expect(find.widgetWithText(Tab, 'Console'), findsOneWidget);
+    await tester.tap(events);
+    await tester.pumpAndSettle();
+    expect(find.text('No events yet'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('console controls fit at large text size', (tester) async {
     await _pumpScreen(
       tester,
