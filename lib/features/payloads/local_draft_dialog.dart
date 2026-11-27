@@ -28,7 +28,7 @@ class _LocalDraftDialogState extends State<LocalDraftDialog> {
   PayloadDraft? _draft;
   String? _error;
   bool _generating = false;
-  late bool _scriptOnly = widget.editingExisting;
+  late bool _scriptOnly = widget.editingExisting || widget.replacing;
 
   @override
   void dispose() {

@@ -156,6 +156,42 @@ void main() {
     expect(find.text('Unsaved name'), findsOneWidget);
   });
 
+  testWidgets('AI replaces only the script in a partially filled new payload', (
+    tester,
+  ) async {
+    await _openEditor(tester, payloads: _Payloads([]), model: _LocalDrafts());
+    await tester.tap(find.text('Details'));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.widgetWithText(TextFormField, 'Name'),
+      'My name',
+    );
+    await tester.tap(find.text('Script'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Draft with AI'));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.widgetWithText(TextField, 'Request'),
+      'Type text',
+    );
+    await tester.tap(find.text('Generate'));
+    await tester.pumpAndSettle();
+    expect(
+      tester
+          .widget<SwitchListTile>(
+            find.widgetWithText(SwitchListTile, 'Replace script only'),
+          )
+          .value,
+      isTrue,
+    );
+    await tester.tap(find.text('Use draft'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Details'));
+    await tester.pumpAndSettle();
+    expect(find.text('My name'), findsOneWidget);
+    expect(find.text('Generated name'), findsNothing);
+  });
+
   testWidgets(
     'an existing payload applies only the draft script and can undo',
     (tester) async {
