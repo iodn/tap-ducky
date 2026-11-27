@@ -8,12 +8,14 @@ class HostOsLabel extends StatelessWidget {
     required this.diagnostic,
     this.showTitle = false,
     this.detecting = false,
+    this.detectionAvailable = true,
     this.style,
   });
 
   final HostOsDiagnostic diagnostic;
   final bool showTitle;
   final bool detecting;
+  final bool detectionAvailable;
   final TextStyle? style;
 
   @override
@@ -25,8 +27,11 @@ class HostOsLabel extends StatelessWidget {
       );
     }
 
+    final label = !detectionAvailable && !diagnostic.isKnown
+        ? 'Detection unavailable'
+        : diagnostic.label;
     final text = Text(
-      showTitle ? 'Host OS · ${diagnostic.label}' : diagnostic.label,
+      showTitle ? 'Host OS · $label' : label,
       style: style,
     );
     if (diagnostic.source != HostOsSource.inferred) return text;

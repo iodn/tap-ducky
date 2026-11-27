@@ -68,7 +68,7 @@ class _Usb extends PlatformGadgetService {
 }
 
 void main() {
-  testWidgets('Dashboard shows restore progress, recovery, and verification', (
+  testWidgets('Dashboard shows restore progress, recovery, and disarm', (
     tester,
   ) async {
     final usb = _Usb();
@@ -99,7 +99,12 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Unplug to finish'), findsOneWidget);
+    expect(find.text('Session disarmed'), findsOneWidget);
+    expect(find.text('Unplug to finish'), findsNothing);
+    expect(
+      find.text('USB cleanup is deferred while the cable is connected.'),
+      findsOneWidget,
+    );
     expect(find.text('Arm Session'), findsNothing);
     final recentRun = find.byWidgetPredicate(
       (widget) => widget is IconButton && widget.tooltip == 'Run',
@@ -125,7 +130,7 @@ void main() {
     await tester.pumpAndSettle();
     tester.state<ScrollableState>(scrollable).position.jumpTo(0);
     await tester.pumpAndSettle();
-    expect(find.text('Unplug to finish'), findsOneWidget);
+    expect(find.text('Session disarmed'), findsOneWidget);
 
     usb.update('VERIFYING');
     await tester.pumpAndSettle();
@@ -157,14 +162,19 @@ void main() {
     expect(usb.restoreRequests, 1);
     expect(find.text('Restoring original USB settings...'), findsOneWidget);
 
-    usb.update('FINISHED');
+    usb.update(
+      'FINISHED',
+      message: 'No saved USB layout was available for verification.',
+    );
     await tester.pumpAndSettle();
-    expect(find.text('USB restoration finished'), findsOneWidget);
-    expect(find.text('Original USB restored'), findsNothing);
+    expect(find.text('Session disarmed'), findsOneWidget);
+    expect(find.text('USB restoration finished'), findsNothing);
+    expect(find.textContaining('No saved USB layout'), findsNothing);
 
-    usb.update('VERIFIED');
+    usb.update('VERIFIED', message: 'Original USB restored');
     await tester.pumpAndSettle();
-    expect(find.text('Original USB restored'), findsOneWidget);
+    expect(find.text('Session disarmed'), findsOneWidget);
+    expect(find.text('Original USB restored'), findsNothing);
     expect(find.text('Arm Session'), findsOneWidget);
     await tester.scrollUntilVisible(recentRun, 120, scrollable: scrollable);
     expect(tester.widget<IconButton>(recentRun).onPressed, isNotNull);

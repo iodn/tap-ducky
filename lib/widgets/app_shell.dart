@@ -1,10 +1,12 @@
 import 'dart:async';
+import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../app/router.dart';
 import '../data/models/payload.dart';
 import '../data/services/hardware_keys_service.dart';
+import '../features/settings/app_updates_screen.dart';
 import '../state/controllers/advanced_settings_controller.dart';
 import '../state/controllers/execution_controller.dart';
 import '../state/controllers/hid_status_controller.dart';
@@ -43,6 +45,12 @@ class _AppShellState extends ConsumerState<AppShell> with WidgetsBindingObserver
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    appUpdatesChannel.setMethodCallHandler((call) async {
+      if (call.method == 'openUpdates') await _openUpdateNotification();
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) unawaited(_openUpdateNotification());
+    });
     _keysSub = ref.read(hardwareKeysServiceProvider).events.listen((e) {
       if (!_isForeground) return;
       _handleHardwareKeyEvent(e);
@@ -51,6 +59,7 @@ class _AppShellState extends ConsumerState<AppShell> with WidgetsBindingObserver
 
   @override
   void dispose() {
+    appUpdatesChannel.setMethodCallHandler(null);
     WidgetsBinding.instance.removeObserver(this);
     _keysSub?.cancel();
     for (final s in _tap.values) {
@@ -58,6 +67,15 @@ class _AppShellState extends ConsumerState<AppShell> with WidgetsBindingObserver
     }
     _tap.clear();
     super.dispose();
+  }
+
+  Future<void> _openUpdateNotification() async {
+    try {
+      final requested = await appUpdatesChannel.invokeMethod<bool>('takeNavigation');
+      if (requested == true && mounted) context.go(const AppUpdatesRoute().location);
+    } on MissingPluginException {
+      // Android-only integration.
+    }
   }
 
   @override

@@ -248,17 +248,20 @@ class _HeroStatusCard extends ConsumerWidget {
       statusColor = cs.error;
     } else if (restorePhase != UsbRestorePhase.idle) {
       statusText = switch (restorePhase) {
-        UsbRestorePhase.waitingForUnplug => 'Unplug to finish',
         UsbRestorePhase.verifying => 'Verifying original USB settings...',
-        UsbRestorePhase.verified => 'Original USB restored',
-        UsbRestorePhase.finished => 'USB restoration finished',
+        UsbRestorePhase.waitingForUnplug ||
+        UsbRestorePhase.verified ||
+        UsbRestorePhase.finished =>
+          'Session disarmed',
         UsbRestorePhase.failed => 'USB restoration incomplete',
         _ => 'Restoring original USB settings...',
       };
       (statusIcon, statusColor) = switch (restorePhase) {
-        UsbRestorePhase.verified => (Icons.check_circle, cs.success),
+        UsbRestorePhase.waitingForUnplug ||
+        UsbRestorePhase.verified ||
+        UsbRestorePhase.finished =>
+          (Icons.lock_outline, cs.tertiary),
         UsbRestorePhase.failed => (Icons.error_outline, cs.error),
-        UsbRestorePhase.waitingForUnplug => (Icons.usb_off, cs.warning),
         _ => (Icons.settings_input_component, cs.tertiary),
       };
     } else if (!hid.rootAvailable || !hid.hidSupported) {
@@ -266,10 +269,10 @@ class _HeroStatusCard extends ConsumerWidget {
       statusIcon = Icons.error_outline;
       statusColor = cs.error;
     } else if (!hid.sessionArmed) {
-      statusText = 'Session Disarmed';
+      statusText = 'Session disarmed';
       statusIcon = Icons.lock_outline;
       statusColor = cs.tertiary;
-    } else if (hid.pcConnected && !hid.gadgetBound) {
+    } else if (hid.pcConnected && (!hid.gadgetBound || !hid.deviceConnected)) {
       statusText = 'USB host connected · HID pending';
       statusIcon = Icons.settings_input_component;
       statusColor = cs.tertiary;
@@ -329,6 +332,7 @@ class _HeroStatusCard extends ConsumerWidget {
                           diagnostic: host,
                           showTitle: true,
                           detecting: hid.isDetectingHostOs,
+                          detectionAvailable: hid.hostOsDetectionAvailable,
                         ),
                       ],
                     ],
@@ -447,10 +451,11 @@ class _HeroStatusCard extends ConsumerWidget {
       return 'Android cannot access USB gadget support. Recheck once it is available.';
     }
     if (hid.usbRestorePhase == UsbRestorePhase.waitingForUnplug) {
-      return 'Disconnect the USB cable. Restoration will continue automatically.';
+      return 'USB cleanup is deferred while the cable is connected.';
     }
-    if (hid.usbRestorePhase == UsbRestorePhase.finished) {
-      return 'No saved USB layout was available for verification.';
+    if (hid.usbRestorePhase == UsbRestorePhase.finished ||
+        hid.usbRestorePhase == UsbRestorePhase.verified) {
+      return null;
     }
     if (!hid.rootAvailable) return 'Root access required';
     if (!hid.hidSupported) return 'USB gadget support required';

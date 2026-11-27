@@ -1,0 +1,7 @@
+- Improved Arm/Disarm compatibility across Qualcomm, MediaTek, and Exynos USB controllers.
+- Fixed HID descriptor writes and expanded Qualcomm host OS detection.
+- Clearer run outcomes, input-release retry, and opt-in run recordings.
+- Parser diagnostics, draft recovery, and undo for AI edits.
+- Offline scripting reference and optional GitHub update notifications.
+- Simplified Advanced Settings and USB ID lookup.
+- Updated dependencies and fixed F-Droid release packaging.

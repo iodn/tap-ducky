@@ -2,6 +2,10 @@ package org.kaijinlab.tap_ducky
 
 import android.os.Handler
 import android.os.Looper
+import android.os.Build
+import android.content.Intent
+import android.net.Uri
+import android.provider.Settings
 import android.view.KeyEvent
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -15,6 +19,8 @@ class MainActivity : FlutterActivity() {
   private val executor = Executors.newSingleThreadExecutor()
   private val scriptExecutor = Executors.newSingleThreadExecutor()
   private val validationExecutor = Executors.newSingleThreadExecutor()
+  private val updateExecutor = Executors.newSingleThreadExecutor()
+  private var updateChannel: MethodChannel? = null
   private lateinit var logBus: LogBus
   private lateinit var manager: GadgetManager
   private val localDrafts by lazy { LocalDrafts(this) }
@@ -32,6 +38,7 @@ class MainActivity : FlutterActivity() {
 
     val messenger = flutterEngine.dartExecutor.binaryMessenger
     localDrafts.register(messenger)
+    registerUpdates(messenger)
 
     MethodChannel(messenger, CHANNEL_METHODS).setMethodCallHandler { call, result ->
       when (call.method) {
@@ -280,10 +287,75 @@ class MainActivity : FlutterActivity() {
     }
   }
 
+  private fun registerUpdates(messenger: io.flutter.plugin.common.BinaryMessenger) {
+    val updates = AppUpdates(applicationContext)
+    updates.schedule()
+    updateChannel = MethodChannel(messenger, "org.kaijinlab.tap_ducky/updates").also { channel ->
+      channel.setMethodCallHandler { call, result ->
+        when (call.method) {
+          "settings" -> result.success(updates.settings())
+          "setEnabled" -> {
+            updates.setEnabled(call.arguments == true)
+            result.success(updates.settings())
+          }
+          "notificationSettings" -> {
+            updates.openNotificationSettings(this)
+            result.success(null)
+          }
+          "takeNavigation" -> {
+            val requested = intent.getBooleanExtra(AppUpdates.OPEN_UPDATES, false)
+            intent.removeExtra(AppUpdates.OPEN_UPDATES)
+            result.success(requested)
+          }
+          "check" -> runAsync(result, updateExecutor) {
+            updates.check()?.let { mapOf("version" to it.version.toString(), "installable" to (it.asset != null)) }
+          }
+          "install" -> {
+            val version = call.arguments as? String
+            if (version == null) {
+              result.error("update", "Check for an update first.", null)
+            } else if (Build.VERSION.SDK_INT >= 26 && !packageManager.canRequestPackageInstalls()) {
+              startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:$packageName")))
+              result.success(false)
+            } else {
+              updateExecutor.execute {
+                try {
+                  val file = updates.prepareUpdate(version)
+                  mainHandler.post {
+                    try {
+                      if (isFinishing || isDestroyed) throw IllegalStateException("Reopen TapDucky to install the update.")
+                      if (manager.isActive()) throw IllegalStateException("Disarm the USB session before updating.")
+                      updates.launchInstaller(this, file)
+                      result.success(true)
+                    } catch (failure: Exception) {
+                      file.delete()
+                      result.error("update", failure.message, null)
+                    }
+                  }
+                } catch (failure: Exception) {
+                  mainHandler.post { result.error("update", failure.message, null) }
+                }
+              }
+            }
+          }
+          else -> result.notImplemented()
+        }
+      }
+    }
+  }
+
+  override fun onNewIntent(intent: Intent) {
+    super.onNewIntent(intent)
+    setIntent(intent)
+    if (intent.getBooleanExtra(AppUpdates.OPEN_UPDATES, false)) updateChannel?.invokeMethod("openUpdates", null)
+  }
+
   override fun onDestroy() {
     detachExecutionSink()
     localDrafts.close()
     validationExecutor.shutdownNow()
+    updateExecutor.shutdownNow()
+    updateChannel?.setMethodCallHandler(null)
     super.onDestroy()
   }
 

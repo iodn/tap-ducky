@@ -270,6 +270,18 @@ Note: In addition to the listed aliases, TapDucky accepts snake_case forms like 
 
 ## Installation
 
+Use **Settings > App updates** to check for stable GitHub releases or opt into notifications. Background checks run approximately daily when Android allows them. GitHub APK downloads require confirmation and only update installations signed with the same key. If you installed TapDucky through F-Droid, update it there.
+
+For maintainers: publish a stable `vX.Y.Z` GitHub release with a higher Android `versionCode`, signed with the same release key. Keep the APK names `tapducky-arm64-v8a-release.apk`, `tapducky-armeabi-v7a-release.apk`, and `tapducky-x86_64-release.apk` for the ABIs you publish. The release title can include the build number (`X.Y.Z+N`), which must match the APK if included.
+
+Use the Flutter revision pinned in `.github/workflows/release.yml`, then run `flutter pub get --enforce-lockfile`, `python3 tools/build_usbids_db.py`, and `flutter build apk --release --split-per-abi --no-tree-shake-icons`. Before publishing, verify each APK's package name, ABI, version name, and version code. Compare its signing certificate to the previous GitHub release; never upload a debug-signed APK. The Gradle configuration keeps the same version code on all three splits.
+
+F-Droid tracks Git tags and builds from source, not the GitHub APK uploads. Publish the release commit under a new stable tag (for this release, `v1.0.9` with `version: 1.0.9+9`). Keep the single Flutter commit pin in the workflow: F-Droid extracts it during prebuild. The workflow validates locked packages, database generation, tests, F-Droid's ARM64 release command, APK ABI contents, and F-Droid's binary scan without publishing anything. F-Droid's current recipe builds ARM64 only; its scheduling, signing, and publication are managed by F-Droid, not GitHub Actions.
+
+LiteRT's unused Google Play AI-delivery dependency is excluded: TapDucky imports model files locally. Keep that exclusion when updating the native runtime. Single-target APKs restrict native dependencies to the requested Flutter ABI, so F-Droid does not advertise unsupported architectures.
+
+Signing caveat: the published GitHub `v1.0.8` APK uses an Android Debug-named certificate (SHA-256 `bb1475ed0f2c4610df81d60d7c09f6afb1e229252fa95273b81e56386a53d892`). Migrating that signing identity requires an explicit upgrade plan; do not silently generate a new key. F-Droid installations use F-Droid's separate signing identity.
+
 1. Download the latest APK from Releases:
 
   <a href="https://github.com/iodn/tap-ducky/releases" style="display:inline-flex;">

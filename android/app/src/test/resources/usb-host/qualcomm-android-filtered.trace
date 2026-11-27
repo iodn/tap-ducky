@@ -1,0 +1,51 @@
+# tracer: nop
+#
+# entries-in-buffer/entries-written: 40/40   #P:8
+#
+#                              _-----=> irqs-off
+#                             / _----=> need-resched
+#                            | / _---=> hardirq/softirq
+#                            || / _--=> preempt-depth
+#                            ||| /     delay
+#           TASK-PID   CPU#  ||||    TIMESTAMP  FUNCTION
+#              | |       |   ||||       |         |
+          <idle>-0     [001] d.h2  5758.920681: qualcomm_setup: (dbg_print+0x0/0x1d8) addr=255 kind="BUS RST" payload=""
+          <idle>-0     [001] dnh2  5759.049837: qualcomm_setup: (dbg_print+0x0/0x1d8) addr=0 kind="SETUP" payload="80 06 0100 0000 64"
+         ueventd-397   [001] d.h1  5759.053625: qualcomm_setup: (dbg_print+0x0/0x1d8) addr=255 kind="BUS RST" payload=""
+          <idle>-0     [001] d.h2  5759.189902: qualcomm_setup: (dbg_print+0x0/0x1d8) addr=0 kind="SETUP" payload="00 05 0002 0000 0"
+          <idle>-0     [001] d.h2  5759.219253: qualcomm_setup: (dbg_print+0x0/0x1d8) addr=0 kind="SETUP" payload="80 06 0100 0000 18"
+  UEventObserver-2376  [001] d.h3  5759.219587: qualcomm_setup: (dbg_print+0x0/0x1d8) addr=0 kind="SETUP" payload="80 06 0200 0000 9"
+         ueventd-397   [001] d.h1  5759.219922: qualcomm_setup: (dbg_print+0x0/0x1d8) addr=0 kind="SETUP" payload="80 06 0200 0000 59"
+         ueventd-397   [001] d.h1  5759.220185: qualcomm_setup: (dbg_print+0x0/0x1d8) addr=0 kind="SETUP" payload="80 06 0300 0000 255"
+         ueventd-397   [001] d.h1  5759.220421: qualcomm_setup: (dbg_print+0x0/0x1d8) addr=0 kind="SETUP" payload="80 06 0302 0409 255"
+         ueventd-397   [001] d.h1  5759.220552: qualcomm_setup: (dbg_print+0x0/0x1d8) addr=0 kind="SETUP" payload="80 06 0301 0409 255"
+         ueventd-397   [001] d.h1  5759.220682: qualcomm_setup: (dbg_print+0x0/0x1d8) addr=0 kind="SETUP" payload="80 06 0303 0409 255"
+         ueventd-397   [001] d.h1  5759.221682: qualcomm_setup: (dbg_print+0x0/0x1d8) addr=0 kind="SETUP" payload="00 09 0001 0000 0"
+         ueventd-397   [001] d.h1  5759.221949: qualcomm_setup: (dbg_print+0x0/0x1d8) addr=0 kind="SETUP" payload="80 06 0304 0409 255"
+         ueventd-397   [001] d.h1  5759.222350: qualcomm_setup: (dbg_print+0x0/0x1d8) addr=0 kind="SETUP" payload="80 06 0305 0409 255"
+         ueventd-397   [001] d.h1  5759.223003: qualcomm_setup: (dbg_print+0x0/0x1d8) addr=0 kind="SETUP" payload="80 06 0303 0409 255"
+         ueventd-397   [001] d.h1  5759.223252: qualcomm_setup: (dbg_print+0x0/0x1d8) addr=0 kind="SETUP" payload="21 0A 0000 0000 0"
+         ueventd-397   [001] d.h1  5759.223433: qualcomm_setup: (dbg_print+0x0/0x1d8) addr=0 kind="SETUP" payload="81 06 2200 0000 63"
+         ueventd-397   [001] d.h1  5759.225534: qualcomm_setup: (dbg_print+0x0/0x1d8) addr=0 kind="SETUP" payload="21 09 0200 0000 1"
+          <idle>-0     [001] dnh2  5759.282278: qualcomm_setup: (dbg_print+0x0/0x1d8) addr=0 kind="SETUP" payload="80 06 0307 0409 255"
+          <idle>-0     [001] d.h2  5759.282841: qualcomm_setup: (dbg_print+0x0/0x1d8) addr=0 kind="SETUP" payload="80 06 0303 0409 255"
+          <idle>-0     [001] d.h2  5759.283145: qualcomm_setup: (dbg_print+0x0/0x1d8) addr=0 kind="SETUP" payload="21 0A 0000 0001 0"
+          <idle>-0     [001] d.h2  5759.283312: qualcomm_setup: (dbg_print+0x0/0x1d8) addr=0 kind="SETUP" payload="81 06 2200 0001 79"
+          <idle>-0     [001] d.h2  5759.341002: qualcomm_setup: (dbg_print+0x0/0x1d8) addr=0 kind="SETUP" payload="80 06 0300 0000 254"
+          <idle>-0     [001] d.h2  5759.341566: qualcomm_setup: (dbg_print+0x0/0x1d8) addr=0 kind="SETUP" payload="80 06 0301 0409 255"
+  surfaceflinger-1115  [001] d.h1  5759.342303: qualcomm_setup: (dbg_print+0x0/0x1d8) addr=0 kind="SETUP" payload="80 06 0300 0000 254"
+  surfaceflinger-1115  [001] d.h1  5759.342661: qualcomm_setup: (dbg_print+0x0/0x1d8) addr=0 kind="SETUP" payload="80 06 0302 0409 255"
+          <idle>-0     [001] dnh2  5759.343322: qualcomm_setup: (dbg_print+0x0/0x1d8) addr=0 kind="SETUP" payload="80 06 0300 0000 254"
+          <idle>-0     [001] d.h2  5759.343568: qualcomm_setup: (dbg_print+0x0/0x1d8) addr=0 kind="SETUP" payload="80 06 0303 0409 255"
+          <idle>-0     [001] dnh2  5759.344152: qualcomm_setup: (dbg_print+0x0/0x1d8) addr=0 kind="SETUP" payload="80 06 0300 0000 254"
+          <idle>-0     [001] d.h2  5759.344430: qualcomm_setup: (dbg_print+0x0/0x1d8) addr=0 kind="SETUP" payload="80 06 0301 0409 255"
+          <idle>-0     [001] d.h2  5759.344757: qualcomm_setup: (dbg_print+0x0/0x1d8) addr=0 kind="SETUP" payload="80 06 0300 0000 254"
+   binder:1115_2-1161  [001] d.h1  5759.344925: qualcomm_setup: (dbg_print+0x0/0x1d8) addr=0 kind="SETUP" payload="80 06 0302 0409 255"
+          <idle>-0     [001] d.h2  5759.345330: qualcomm_setup: (dbg_print+0x0/0x1d8) addr=0 kind="SETUP" payload="80 06 0300 0000 254"
+          <idle>-0     [001] d.h2  5759.345564: qualcomm_setup: (dbg_print+0x0/0x1d8) addr=0 kind="SETUP" payload="80 06 0303 0409 255"
+          <idle>-0     [001] d.h2  5759.346081: qualcomm_setup: (dbg_print+0x0/0x1d8) addr=0 kind="SETUP" payload="80 06 0300 0000 254"
+ ndroid.systemui-2454  [001] d.h3  5759.346315: qualcomm_setup: (dbg_print+0x0/0x1d8) addr=0 kind="SETUP" payload="80 06 0304 0409 255"
+          <idle>-0     [001] d.h2  5759.346649: qualcomm_setup: (dbg_print+0x0/0x1d8) addr=0 kind="SETUP" payload="80 06 0300 0000 254"
+          <idle>-0     [001] d.h2  5759.346924: qualcomm_setup: (dbg_print+0x0/0x1d8) addr=0 kind="SETUP" payload="80 06 0305 0409 255"
+          <idle>-0     [001] d.h2  5759.347327: qualcomm_setup: (dbg_print+0x0/0x1d8) addr=0 kind="SETUP" payload="80 06 0300 0000 254"
+          <idle>-0     [001] d.h2  5759.347563: qualcomm_setup: (dbg_print+0x0/0x1d8) addr=0 kind="SETUP" payload="80 06 0307 0409 255"

@@ -1,9 +1,11 @@
 import 'dart:async';
 
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:material_ui/material_ui.dart';
 
 import '../../data/db/usb_ids_db.dart';
+import '../../widgets/configuration_page.dart';
 
 class UsbIdReferenceScreen extends ConsumerStatefulWidget {
   const UsbIdReferenceScreen({super.key});
@@ -43,6 +45,78 @@ class _UsbIdReferenceScreenState extends ConsumerState<UsbIdReferenceScreen> {
     });
   }
 
+  String _idPair(UsbProduct product) => '${product.vidHex}:${product.pidHex}';
+
+  Future<void> _copy(String value) async {
+    try {
+      await Clipboard.setData(ClipboardData(text: value));
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            content: Text('Copied $value'),
+            duration: const Duration(seconds: 2),
+          ),
+        );
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not copy the USB ID.')),
+      );
+    }
+  }
+
+  Future<void> _showProduct(UsbProduct product) async {
+    final selected = await showConfigurationPage<String>(
+      context,
+      (context) => Scaffold(
+        appBar: AppBar(
+          leading: const CloseButton(),
+          title: const Text('USB product'),
+        ),
+        body: SafeArea(
+          top: false,
+          child: ListView(
+            padding: const EdgeInsets.all(16),
+            children: [
+              Text(
+                product.productName,
+                style: Theme.of(context).textTheme.titleLarge,
+              ),
+              Text(product.vendorName),
+              const SizedBox(height: 12),
+              for (final (label, value) in [
+                ('Vendor ID (VID)', product.vidHex),
+                ('Product ID (PID)', product.pidHex),
+              ])
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: Text(label),
+                  subtitle: Text(value),
+                  trailing: IconButton(
+                    tooltip: 'Copy $label',
+                    icon: const Icon(Icons.copy_outlined),
+                    onPressed: () => Navigator.pop(context, value),
+                  ),
+                ),
+              const SizedBox(height: 12),
+              Align(
+                alignment: AlignmentDirectional.centerStart,
+                child: FilledButton.icon(
+                  onPressed: () => Navigator.pop(context, _idPair(product)),
+                  icon: const Icon(Icons.copy_outlined),
+                  label: const Text('Copy VID:PID'),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (mounted && selected != null) await _copy(selected);
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -51,6 +125,7 @@ class _UsbIdReferenceScreenState extends ConsumerState<UsbIdReferenceScreen> {
         title: const Text('USB ID reference'),
       ),
       body: SafeArea(
+        top: false,
         child: Column(
           children: [
             Padding(
@@ -72,6 +147,16 @@ class _UsbIdReferenceScreenState extends ConsumerState<UsbIdReferenceScreen> {
                             _search('');
                           },
                         ),
+                ),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+              child: Align(
+                alignment: AlignmentDirectional.centerStart,
+                child: Text(
+                  "Reference only. TapDucky sessions keep Android's USB identity.",
+                  style: Theme.of(context).textTheme.bodySmall,
                 ),
               ),
             ),
@@ -109,8 +194,23 @@ class _UsbIdReferenceScreenState extends ConsumerState<UsbIdReferenceScreen> {
                             final product = products[index];
                             return ListTile(
                               title: Text(product.productName),
-                              subtitle: Text(
-                                '${product.vendorName}\n${product.vidHex}:${product.pidHex}',
+                              subtitle: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(product.vendorName),
+                                  Text(
+                                    _idPair(product),
+                                    style: const TextStyle(
+                                      fontFamily: 'monospace',
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              onTap: () => _showProduct(product),
+                              trailing: IconButton(
+                                tooltip: 'Copy VID:PID',
+                                icon: const Icon(Icons.copy_outlined),
+                                onPressed: () => _copy(_idPair(product)),
                               ),
                             );
                           },

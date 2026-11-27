@@ -101,209 +101,164 @@ class _BodyState extends ConsumerState<_Body> {
         ref.watch(payloadsControllerProvider).value ?? const <Payload>[];
 
     return ListView(
+      padding: const EdgeInsets.only(bottom: 24),
       children: [
-        const SizedBox(height: 10),
-        const SectionHeader(title: 'Keyboard & USB controller'),
+        const SectionHeader(title: 'Keyboard & USB'),
         Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16),
-          child: Card(
-            child: Padding(
-              padding: const EdgeInsets.all(14),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const _UsbReferenceTile(),
-                  const Divider(),
-                  InputDecorator(
-                    decoration: InputDecoration(
-                      labelText: 'Keyboard layout',
-                      helperText: selectedLayout == null
-                          ? 'Saved layout unavailable. Using US.'
-                          : null,
-                    ),
-                    child: DropdownButtonHideUnderline(
-                      child: DropdownButton<String>(
-                        value: selectedLayout?.id ?? 'us',
-                        isExpanded: true,
-                        items: [
-                          for (final layout in layouts)
-                            DropdownMenuItem(
-                              value: layout.id,
-                              child: Text(layout.label, overflow: TextOverflow.ellipsis),
-                            ),
-                        ],
-                        onChanged: (value) {
-                          if (value == null) return;
-                          _applyAdvancedSetting(
-                            context,
-                            () => ref.read(advancedSettingsControllerProvider.notifier).setKeyboardLayout(value),
-                          );
-                        },
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  FutureBuilder<List<String>>(
-                    future: _udcsFuture,
-                    builder: (context, snap) {
-                      final udcs = snap.data ?? const <String>[];
-                      final currentRaw = widget.settings.preferredUdc.trim();
-                      final current = currentRaw.isEmpty ? 'auto' : currentRaw;
-                      final items = <DropdownMenuItem<String>>[
-                        const DropdownMenuItem(
-                          value: 'auto',
-                          child: Text('Automatic'),
-                        ),
-                        ...udcs.map(
-                          (u) => DropdownMenuItem(value: u, child: Text(u)),
-                        ),
-                      ];
-
-                      final hasCurrent = items.any((e) => e.value == current);
-                      final mergedItems = <DropdownMenuItem<String>>[
-                        if (!hasCurrent && current != 'auto')
-                          DropdownMenuItem(
-                            value: current,
-                            child: Text('Current ($current)'),
+          padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
+          child: Column(
+            children: [
+              InputDecorator(
+                decoration: InputDecoration(
+                  labelText: 'Keyboard layout',
+                  helperText: selectedLayout == null
+                      ? 'Saved layout unavailable. Using US.'
+                      : null,
+                ),
+                child: DropdownButtonHideUnderline(
+                  child: DropdownButton<String>(
+                    value: selectedLayout?.id ?? 'us',
+                    isExpanded: true,
+                    items: [
+                      for (final layout in layouts)
+                        DropdownMenuItem(
+                          value: layout.id,
+                          child: Text(
+                            layout.label,
+                            overflow: TextOverflow.ellipsis,
                           ),
-                        ...items,
-                      ];
-
-                      return DropdownButtonFormField<String>(
-                        key: ValueKey(current),
-                        initialValue: hasCurrent ? current : mergedItems.first.value,
-                        isExpanded: true,
-                        decoration: InputDecoration(
-                          labelText: 'USB controller',
-                          helperText:
-                              snap.connectionState == ConnectionState.waiting
-                              ? 'Loading available controllers…'
-                              : null,
                         ),
-                        items: mergedItems,
-                        onChanged: (v) async {
-                          if (v == null) return;
-                          await ref
-                              .read(advancedSettingsControllerProvider.notifier)
-                              .setPreferredUdc(v);
-                        },
+                    ],
+                    onChanged: (value) {
+                      if (value == null) return;
+                      _applyAdvancedSetting(
+                        context,
+                        () => ref
+                            .read(advancedSettingsControllerProvider.notifier)
+                            .setKeyboardLayout(value),
                       );
                     },
                   ),
-                ],
+                ),
               ),
-            ),
+              const SizedBox(height: 12),
+              FutureBuilder<List<String>>(
+                future: _udcsFuture,
+                builder: (context, snap) {
+                  final currentRaw = widget.settings.preferredUdc.trim();
+                  final current = currentRaw.isEmpty ? 'auto' : currentRaw;
+                  final udcs = (snap.data ?? const <String>[])
+                      .where((id) => id != 'auto')
+                      .toSet();
+                  final items = [
+                    const DropdownMenuItem(
+                      value: 'auto',
+                      child: Text('Automatic'),
+                    ),
+                    if (current != 'auto' && !udcs.contains(current))
+                      DropdownMenuItem(
+                        value: current,
+                        child: Text(
+                          'Current ($current)',
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    for (final udc in udcs)
+                      DropdownMenuItem(
+                        value: udc,
+                        child: Text(udc, overflow: TextOverflow.ellipsis),
+                      ),
+                  ];
+                  return DropdownButtonFormField<String>(
+                    key: ValueKey(current),
+                    initialValue: current,
+                    isExpanded: true,
+                    decoration: InputDecoration(
+                      labelText: 'USB controller',
+                      helperText:
+                          snap.connectionState == ConnectionState.waiting
+                          ? 'Loading available controllers...'
+                          : snap.hasError
+                          ? 'USB controllers unavailable'
+                          : null,
+                    ),
+                    items: items,
+                    onChanged: (value) {
+                      if (value == null) return;
+                      _applyAdvancedSetting(
+                        context,
+                        () => ref
+                            .read(advancedSettingsControllerProvider.notifier)
+                            .setPreferredUdc(value),
+                      );
+                    },
+                  );
+                },
+              ),
+            ],
           ),
         ),
-        const SizedBox(height: 10),
-        const SectionHeader(title: 'Command presets'),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16),
-          child: Card(
-            child: Column(
-              children: [
-                for (
-                  int i = 0;
-                  i < widget.settings.commandPresets.length;
-                  i++
-                ) ...[
-                  _PresetTile(
-                    index: i,
-                    preset: widget.settings.commandPresets[i],
-                  ),
-                  if (i != widget.settings.commandPresets.length - 1)
-                    const Divider(height: 1),
-                ],
-                ListTile(
-                  leading: const Icon(Icons.add),
-                  title: const Text('Add preset'),
-                  subtitle: const Text(
-                    'Adds a reusable script fragment for the Execute console',
-                  ),
-                  onTap: () => _addPresetDialog(context, ref),
-                ),
-              ],
+        const _UsbReferenceTile(),
+        const Divider(height: 24),
+        const SectionHeader(title: 'Presets & shortcuts'),
+        ExpansionTile(
+          key: const PageStorageKey('advanced-command-presets'),
+          leading: const Icon(Icons.terminal),
+          title: const Text('Command presets'),
+          children: [
+            for (final (index, preset)
+                in widget.settings.commandPresets.indexed)
+              _PresetTile(index: index, preset: preset),
+            ListTile(
+              leading: const Icon(Icons.add),
+              title: const Text('Add preset'),
+              onTap: () => _addPresetDialog(context, ref),
             ),
-          ),
+          ],
         ),
-        const SizedBox(height: 10),
-        const SectionHeader(title: 'Hotkeys'),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16),
-          child: Card(
-            child: Column(
-              children: [
-                _HotkeyTile(
-                  action: 'arm_toggle',
-                  title: _hotkeyTitles['arm_toggle']!,
-                  allHotkeys: hotkeys,
-                  actionTitles: _hotkeyTitles,
-                ),
-                const Divider(height: 1),
-                _HotkeyTile(
-                  action: 'stop_execution',
-                  title: _hotkeyTitles['stop_execution']!,
-                  allHotkeys: hotkeys,
-                  actionTitles: _hotkeyTitles,
-                ),
-                const Divider(height: 1),
-                _HotkeyTile(
-                  action: 'execute_recent',
-                  title: _hotkeyTitles['execute_recent']!,
-                  allHotkeys: hotkeys,
-                  actionTitles: _hotkeyTitles,
-                ),
-                const Divider(height: 1),
-                _HotkeyTile(
-                  action: 'execute_selected',
-                  title: _hotkeyTitles['execute_selected']!,
-                  allHotkeys: hotkeys,
-                  actionTitles: _hotkeyTitles,
-                ),
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-                  child: Text(
-                    'Choose a hardware gesture to trigger an action. A gesture can only be assigned to one action.',
-                    style: TextStyle(color: cs.onSurfaceVariant),
-                  ),
-                ),
-              ],
-            ),
-          ),
+        ExpansionTile(
+          key: const PageStorageKey('advanced-hotkeys'),
+          leading: const Icon(Icons.keyboard_outlined),
+          title: const Text('Hotkeys'),
+          children: [
+            for (final action in _hotkeyTitles.entries)
+              _HotkeyTile(
+                action: action.key,
+                title: action.value,
+                allHotkeys: hotkeys,
+                actionTitles: _hotkeyTitles,
+              ),
+          ],
         ),
-        const SizedBox(height: 10),
-        const SectionHeader(title: 'Dial shortcuts'),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16),
-          child: Card(
-            child: appSettingsAsync.when(
+        ExpansionTile(
+          key: const PageStorageKey('advanced-dial-shortcuts'),
+          leading: const Icon(Icons.dialpad),
+          title: const Text('Dial shortcuts'),
+          children: [
+            appSettingsAsync.when(
               loading: () => const Padding(
                 padding: EdgeInsets.all(16),
                 child: Center(child: CircularProgressIndicator()),
               ),
-              error: (e, st) => Padding(
-                padding: const EdgeInsets.all(16),
-                child: Text('Failed to load dial shortcuts: $e'),
-              ),
+              error: (e, st) =>
+                  const ListTile(title: Text('Could not load dial shortcuts')),
               data: (settings) {
                 final bindings = _normalizeDialShortcuts(
                   settings.dialShortcuts,
                 );
                 return Column(
                   children: [
-                    for (int i = 0; i < bindings.length; i++) ...[
+                    for (final binding in bindings)
                       _DialShortcutTile(
-                        binding: bindings[i],
+                        binding: binding,
                         payloads: payloads,
                         onChanged: (next) =>
                             _updateDialShortcut(ref, bindings, next),
                       ),
-                      if (i != bindings.length - 1) const Divider(height: 1),
-                    ],
                     Padding(
                       padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
                       child: Text(
-                        'Dial *#*#CODE#*#* in the phone app. Only the listed codes are supported.',
+                        'Dial *#*#CODE#*#* in the phone app.',
                         style: TextStyle(color: cs.onSurfaceVariant),
                       ),
                     ),
@@ -311,9 +266,8 @@ class _BodyState extends ConsumerState<_Body> {
                 );
               },
             ),
-          ),
+          ],
         ),
-        const SizedBox(height: 18),
       ],
     );
   }
@@ -692,12 +646,14 @@ class _UsbReferenceTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ListTile(
-      contentPadding: EdgeInsets.zero,
       leading: const Icon(Icons.manage_search),
       title: const Text('USB ID reference'),
-      subtitle: const Text('Look up vendor and product IDs. Sessions use Android’s USB identity.'),
+      subtitle: const Text('Find and copy vendor and product IDs'),
       trailing: const Icon(Icons.chevron_right),
-      onTap: () => showConfigurationPage<void>(context, (_) => const UsbIdReferenceScreen()),
+      onTap: () => showConfigurationPage<void>(
+        context,
+        (_) => const UsbIdReferenceScreen(),
+      ),
     );
   }
 }

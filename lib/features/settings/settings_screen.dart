@@ -15,7 +15,6 @@ import '../../widgets/arm_profile_sheet.dart';
 import '../../widgets/configuration_page.dart';
 import 'about_screen.dart';
 import 'script_reference_screen.dart';
-import 'usb_id_reference_screen.dart';
 import 'widgets/donation_sheet.dart';
 import 'widgets/section_card.dart';
 import 'widgets/dynamic_colors_tile.dart';
@@ -247,11 +246,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final advanced = _SettingsDestination(
       icon: Icons.tune,
       title: 'Advanced',
-      subtitle: 'Profiles, hotkeys, command presets',
+      subtitle: 'Keyboard layout, USB, and shortcuts',
       keywords: const [
         'advanced',
         'vid',
         'pid',
+        'usb id reference',
         'profile',
         'hotkey',
         'preset',
@@ -260,13 +260,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       ],
       onTap: (context) =>
           context.push(const AdvancedSettingsRoute().location),
-    );
-    final usbIds = _SettingsDestination(
-      icon: Icons.manage_search,
-      title: 'USB ID reference',
-      subtitle: 'Find a vendor or product',
-      keywords: const ['usb', 'vid', 'pid', 'vendor', 'product', 'database'],
-      onTap: (context) => showConfigurationPage<void>(context, (_) => const UsbIdReferenceScreen()),
     );
     final store = _SettingsDestination(
       icon: Icons.storefront_outlined,
@@ -284,6 +277,13 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         context,
         (_) => const ScriptReferenceScreen(),
       ),
+    );
+    final updates = _SettingsDestination(
+      icon: Icons.system_update_outlined,
+      title: 'App updates',
+      subtitle: 'GitHub releases and update notifications',
+      keywords: const ['update', 'version', 'install', 'release', 'notifications'],
+      onTap: (context) => context.push(const AppUpdatesRoute().location),
     );
     final about = _SettingsDestination(
       icon: Icons.info_outline,
@@ -321,9 +321,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         appearance,
         if (model == null || model.state != 'unsupported') aiDraft,
       ]),
-      _SettingsGroup('Keyboard & USB', [execution, usb, usbIds, advanced]),
+      _SettingsGroup('Keyboard & USB', [execution, usb, advanced]),
       _SettingsGroup('Library', [store, scriptReference]),
-      _SettingsGroup('About & Support', [about, support, reset]),
+      _SettingsGroup('About & Support', [updates, about, support, reset]),
     ];
   }
 

@@ -10,6 +10,30 @@ object Configfs {
   const val SETUP_NOT_STARTED = 27
   const val STOCK_BINDING_CHANGED = 28
   const val USB_DATA_RESTORE_FAILED = 29
+  const val USB_LINK_NOT_RESTORED = 30
+
+  private val refuseLiveLegacyUsbMutation = """
+    if [ "${'$'}UDC_NAME" = msm_hsusb ] && ! usb_quiet; then
+      echo "Unplug the USB cable before changing this controller's configuration." >&2
+      exit $HOST_ATTACHED_REFUSED
+    fi
+  """.trimIndent()
+
+  private val checkLiveStockSetup = """
+    $refuseLiveLegacyUsbMutation
+    LIVE_SETUP=0
+    if ! usb_quiet; then
+      if [ -z "${'$'}USB_DATA_MARKER" ] || [ -e "${'$'}USB_DATA_MARKER" ]; then
+        echo "Live USB setup is unavailable while a data pause is disabled or pending recovery." >&2
+        exit $SETUP_NOT_STARTED
+      fi
+      if [ "${'$'}(usb_port_status)" != enabled ]; then
+        echo "Android did not report an enabled USB data port." >&2
+        exit $SETUP_NOT_STARTED
+      fi
+      LIVE_SETUP=1
+    fi
+  """.trimIndent()
 
   private val stockFunctionProbe = """
     ANDROID_USB_MODES=${'$'}(getprop sys.usb.config 2>/dev/null || :)
@@ -342,6 +366,121 @@ object Configfs {
     return listOf(create, functions, link, bind).joinToString("\n\n") + "\n"
   }
 
+  internal fun useSeparateGadget(controller: String): Boolean = controller == "msm_hsusb"
+
+  internal fun buildSeparateControllerProbe(controller: String): String {
+    require(controller.matches(Regex("[A-Za-z0-9._-]+")))
+    if (useSeparateGadget(controller)) return ":"
+    return """
+      device=/sys/class/udc/$controller/device
+      driver=${'$'}(readlink "${'$'}device/driver")
+      [ "${'$'}{driver##*/}" = dwc3 ] || exit 1
+      parent=${'$'}(readlink -f "${'$'}device/..") || exit 1
+      # Exynos data-pause HAL changes the role and binding, not only signaling.
+      for capability in usb_data_enabled new_data_role dwc3_exynos_gadget_state; do
+        [ -r "${'$'}parent/${'$'}capability" ] || exit 1
+      done
+    """.trimIndent()
+  }
+
+  fun buildSeparateSetupScript(p: ParsedProfile, gadgetDir: String, stockDir: String, udc: String): String {
+    val controllerProbe = buildSeparateControllerProbe(udc)
+    require(gadgetDir.startsWith("gadgetfs_"))
+    val functions = when (p.roleType.lowercase(Locale.US)) {
+      "keyboard" -> buildKeyboardFunctionScript("hid.usb0")
+      "mouse" -> buildMouseFunctionScript("hid.usb0")
+      else -> buildCompositeFunctionScript()
+    }
+    val names = expectedFunctionNames(p.roleType).joinToString(" ")
+    return """
+      set -e
+      ${stockGadgetLocation(stockDir)}
+      STOCK="${'$'}G"
+      UDC_NAME=${shEscape(udc)}
+      (${controllerProbe}) || exit $SETUP_NOT_STARTED
+      [ "${'$'}(cat "${'$'}STOCK/UDC")" = "${'$'}UDC_NAME" ] || exit $STOCK_BINDING_CHANGED
+      BASE=${'$'}{STOCK%/*}
+      G="${'$'}BASE/${sanitizeGadgetName(gadgetDir)}"
+      [ ! -e "${'$'}G" ] || exit $GADGET_CREATION_FAILED
+      for other in "${'$'}BASE"/*/UDC; do
+        [ "${'$'}other" = "${'$'}STOCK/UDC" ] ||
+          [ "${'$'}(cat "${'$'}other")" != "${'$'}UDC_NAME" ] || exit $STOCK_BINDING_CHANGED
+      done
+      mkdir "${'$'}G"
+      cd "${'$'}G"
+      printf '%s\n' ${shEscape(String.format(Locale.US, "0x%04x", p.vendorId and 0xffff))} > idVendor
+      printf '%s\n' ${shEscape(String.format(Locale.US, "0x%04x", p.productId and 0xffff))} > idProduct
+      echo 0x0200 > bcdUSB
+      echo 0x0100 > bcdDevice
+      mkdir -p strings/0x409 configs/c.1/strings/0x409
+      printf '%s\n' ${shEscape(p.manufacturer)} > strings/0x409/manufacturer
+      printf '%s\n' ${shEscape(p.product)} > strings/0x409/product
+      printf '%s\n' ${shEscape(p.serialNumber)} > strings/0x409/serialnumber
+      echo Keyboard > configs/c.1/strings/0x409/configuration
+      echo ${p.maxPowerMa.coerceIn(2, 500)} > configs/c.1/MaxPower
+      $functions
+      for fn in $names; do
+        ln -s "${'$'}G/functions/${'$'}fn" "configs/c.1/${'$'}fn"
+      done
+      # Recheck ownership after preparation, immediately before the switch.
+      [ "${'$'}(cat "${'$'}STOCK/UDC")" = "${'$'}UDC_NAME" ] || exit $STOCK_BINDING_CHANGED
+      for other in "${'$'}BASE"/*/UDC; do
+        [ "${'$'}other" = "${'$'}STOCK/UDC" ] ||
+          [ "${'$'}(cat "${'$'}other")" != "${'$'}UDC_NAME" ] || exit $STOCK_BINDING_CHANGED
+      done
+      printf '\n' > "${'$'}STOCK/UDC"
+      printf '%s\n' "${'$'}UDC_NAME" > UDC
+      [ "${'$'}(cat UDC)" = "${'$'}UDC_NAME" ] || exit 25
+      for fn in $names; do
+        printf '%s=%s\n' "${'$'}fn" "${'$'}(cat "functions/${'$'}fn/dev")"
+      done
+    """.trimIndent() + "\n"
+  }
+
+  fun buildSeparateRestoreScript(gadgetDir: String, stockDir: String, udc: String, originalConfig: String? = null): String {
+    val controllerProbe = buildSeparateControllerProbe(udc)
+    require(gadgetDir.startsWith("gadgetfs_"))
+    require(sanitizeGadgetName(gadgetDir) != sanitizeGadgetName(stockDir))
+    require(originalConfig == null || originalConfig.matches(Regex("[a-z0-9_,]+")))
+    val reapplyMode = originalConfig?.let { mode -> """
+      # Reapply through Android's owner so FunctionFS/adbd is restarted as needed.
+      setprop sys.usb.config none
+      sleep 0.1
+      setprop sys.usb.config ${shEscape(mode)}
+      for attempt in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16; do
+        [ "${'$'}(getprop sys.usb.state)" != ${shEscape(mode)} ] || break
+        sleep 0.5
+      done
+      binding=${'$'}(cat "${'$'}STOCK/UDC")
+      [ -z "${'$'}binding" ] || [ "${'$'}binding" = "${'$'}UDC_NAME" ] || exit $STOCK_BINDING_CHANGED
+      if [ -z "${'$'}binding" ]; then printf '%s\n' "${'$'}UDC_NAME" > "${'$'}STOCK/UDC"; fi
+    """.trimIndent() }.orEmpty()
+    return """
+      set -e
+      ${stockGadgetLocation(stockDir)}
+      STOCK="${'$'}G"
+      BASE=${'$'}{STOCK%/*}
+      OWN="${'$'}BASE/${sanitizeGadgetName(gadgetDir)}"
+      UDC_NAME=${shEscape(udc)}
+      (${controllerProbe}) || exit $STOCK_BINDING_CHANGED
+      for other in "${'$'}BASE"/*/UDC; do
+        [ "${'$'}other" = "${'$'}STOCK/UDC" ] || [ "${'$'}other" = "${'$'}OWN/UDC" ] ||
+          [ "${'$'}(cat "${'$'}other")" != "${'$'}UDC_NAME" ] || exit $STOCK_BINDING_CHANGED
+      done
+      if [ -d "${'$'}OWN" ]; then
+        binding=${'$'}(cat "${'$'}OWN/UDC")
+        [ -z "${'$'}binding" ] || [ "${'$'}binding" = "${'$'}UDC_NAME" ] || exit $STOCK_BINDING_CHANGED
+        if [ -n "${'$'}binding" ]; then printf '\n' > "${'$'}OWN/UDC"; fi
+      fi
+      binding=${'$'}(cat "${'$'}STOCK/UDC")
+      [ -z "${'$'}binding" ] || [ "${'$'}binding" = "${'$'}UDC_NAME" ] || exit $STOCK_BINDING_CHANGED
+      if [ -z "${'$'}binding" ]; then printf '%s\n' "${'$'}UDC_NAME" > "${'$'}STOCK/UDC"; fi
+      [ "${'$'}(cat "${'$'}STOCK/UDC")" = "${'$'}UDC_NAME" ] || exit 25
+      (${buildUnbindAndCleanupScript(gadgetDir)})
+      $reapplyMode
+    """.trimIndent() + "\n"
+  }
+
   fun buildUnbindAndCleanupScript(gadgetDir: String): String {
     val gadget = sanitizeGadgetName(gadgetDir)
     return """
@@ -397,12 +536,7 @@ object Configfs {
       ${stockGadgetLocation(gadgetDir)}
       UDC_NAME=${shEscape(udc)}
       ${usbDataFunctions(usbDataMarker)}
-      LIVE_SETUP=0
-      if ! usb_quiet; then
-        [ -n "${'$'}USB_DATA_MARKER" ] && [ ! -e "${'$'}USB_DATA_MARKER" ] || exit $SETUP_NOT_STARTED
-        [ "${'$'}(usb_port_status)" = enabled ] || exit $SETUP_NOT_STARTED
-        LIVE_SETUP=1
-      fi
+      $checkLiveStockSetup
       CURRENT_UDC=${'$'}(cat UDC) || exit $STOCK_BINDING_CHANGED
       if [ "${'$'}CURRENT_UDC" != ${shEscape(originalUdc)} ] ||
         { [ -n "${'$'}CURRENT_UDC" ] && [ "${'$'}CURRENT_UDC" != "${'$'}UDC_NAME" ]; }; then
@@ -523,10 +657,16 @@ object Configfs {
       [ -n "${'$'}USB_DATA_MARKER" ] && [ ! -e "${'$'}USB_DATA_MARKER" ] || return 1
       [ "${'$'}(usb_port_status)" = enabled ] || return 1
       (umask 077 && : > "${'$'}USB_DATA_MARKER") || return 1
-      svc usb enableUsbDataSignal false || return 1
+      if ! svc usb enableUsbDataSignal false; then
+        echo "Android rejected the request to pause USB data." >&2
+        return 1
+      fi
       count=0
       until usb_data_paused; do
-        [ "${'$'}count" -lt 15 ] || return 1
+        if [ "${'$'}count" -ge 15 ]; then
+          echo "Android did not confirm that USB data was paused and the controller detached." >&2
+          return 1
+        fi
         count=${'$'}((count + 1))
         sleep 0.15
       done
@@ -579,19 +719,26 @@ object Configfs {
     }
   """.trimIndent()
 
-  fun buildReadStockLayoutScript(gadgetDir: String): String = """
+  fun buildReadStockLayoutScript(gadgetDir: String, liveUsbDataMarker: String? = null): String = """
     set -e
     export LC_ALL=C
     ${stockGadgetLocation(gadgetDir)}
+    ${liveUsbDataMarker?.let { usbDataFunctions(it) + "\n" + checkLiveStockSetup }.orEmpty()}
     $stockLayoutProbe
     mode=${'$'}(svc usb getFunctions 2>/dev/null) || mode='?'
     case "${'$'}mode" in *[!a-z0-9_,]*) mode='?' ;; esac
     printf 'mode=%s\n' "${'$'}mode"
+    if [ "${'$'}(usb_controller_state)" = configured ]; then printf 'host_configured=1\n'; fi
     stock_layout
   """.trimIndent()
 
   fun buildVerifyStockLayoutScript(gadgetDir: String, layout: String, usbDataMarker: String? = null): String {
     val reportedMode = layout.lineSequence().first().removePrefix("mode=")
+    val hostWasConfigured = layout.lineSequence().any { it == "host_configured=1" }
+    val rawExpectedLayout = layout.substringAfter('\n').removePrefix("host_configured=1\n")
+    val stateWasUnreported = rawExpectedLayout.lineSequence().any { it == "sys.usb.state=" }
+    val expectedLayout = if (stateWasUnreported) rawExpectedLayout.lineSequence()
+      .filterNot { it.startsWith("sys.usb.state=") }.joinToString("\n") else rawExpectedLayout
     val configuredMode = layout.lineSequence().firstOrNull { it.startsWith("sys.usb.config=") }
       ?.substringAfter('=')?.split(',')?.filterNot { it == "adb" || it == "none" }?.joinToString(",")
     val originalMode = reportedMode.takeUnless { it.isEmpty() || it == "?" } ?: configuredMode ?: reportedMode
@@ -612,16 +759,28 @@ object Configfs {
     ${stockGadgetLocation(gadgetDir)}
     $stockLayoutProbe
     ${usbDataFunctions(usbDataMarker)}
-    EXPECTED=${shEscape(layout.substringAfter('\n'))}
+    EXPECTED=${shEscape(expectedLayout)}
     ORIGINAL_MODE=${shEscape(originalMode)}
+    verification_layout() {
+      ${if (stateWasUnreported) "stock_layout | sed '/^sys[.]usb[.]state=/d'" else "stock_layout"}
+    }
     matches_baseline() {
-      actual=${'$'}(stock_layout) && [ "${'$'}actual" = "${'$'}EXPECTED" ]
+      actual=${'$'}(verification_layout) && [ "${'$'}actual" = "${'$'}EXPECTED" ]
+    }
+    verify_host_connection() {
+      [ "${if (hostWasConfigured) 1 else 0}" = 1 ] || exit 0
+      for attempt in ${ (1..30).joinToString(" ") }; do
+        if ! usb_cable_present || [ "${'$'}(usb_controller_state)" = configured ]; then exit 0; fi
+        sleep 0.5
+      done
+      echo "Android USB settings match, but the USB host connection has not returned." >&2
+      exit $USB_LINK_NOT_RESTORED
     }
     without_power_attributes() {
       sed -e '/^configs\/[^/]*\/MaxPower=/d' -e '/^configs\/[^/]*\/bmAttributes=/d'
     }
     only_power_differs() {
-      actual=${'$'}(stock_layout) || return 1
+      actual=${'$'}(verification_layout) || return 1
       [ "${'$'}(printf '%s\n' "${'$'}actual" | without_power_attributes)" = "${'$'}EXPECTED_WITHOUT_POWER" ]
     }
     restore_power_attribute() {
@@ -637,7 +796,8 @@ object Configfs {
       resume_usb_data || exit $USB_DATA_RESTORE_FAILED
       exit "${'$'}rc"
     }
-    if matches_baseline; then exit 0; fi
+    if matches_baseline; then verify_host_connection; fi
+    $refuseLiveLegacyUsbMutation
     EXPECTED_WITHOUT_POWER=${'$'}(printf '%s\n' "${'$'}EXPECTED" | without_power_attributes)
     if ! only_power_differs; then
       case "${'$'}ORIGINAL_MODE" in
@@ -646,7 +806,7 @@ object Configfs {
         *) svc usb setFunctions "${'$'}ORIGINAL_MODE" || : ;;
       esac
       for attempt in 1 2 3 4 5 6 7 8 9 10 11 12; do
-        if matches_baseline; then exit 0; fi
+        if matches_baseline; then verify_host_connection; fi
         if only_power_differs; then break; fi
         sleep 0.5
       done
@@ -662,7 +822,7 @@ object Configfs {
       $powerAttributes
       resume_usb_data || exit $USB_DATA_RESTORE_FAILED
       if [ "${'$'}paused" = 1 ]; then sleep 0.25; fi
-      if matches_baseline; then exit 0; fi
+      if matches_baseline; then verify_host_connection; fi
       if only_power_differs && ! usb_quiet; then exit $HOST_ATTACHED_REFUSED; fi
     fi
     echo "Android has not restored the USB layout captured before arming" >&2
@@ -678,17 +838,23 @@ object Configfs {
 
   fun buildStockUsbTransaction(udc: String, operation: String): String = """
     UDC_NAME=${shEscape(udc)}
-    usb_controller_detached() {
-      [ "${'$'}(cat "/sys/class/udc/${'$'}UDC_NAME/state" 2>/dev/null)" = "not attached" ]
+    usb_controller_state() {
+      cat "/sys/class/udc/${'$'}UDC_NAME/state" 2>/dev/null
     }
-    usb_quiet() {
-      usb_controller_detached || return 1
+    usb_controller_detached() {
+      [ "${'$'}(usb_controller_state)" = "not attached" ]
+    }
+    usb_cable_present() {
       for partner in /sys/class/typec/*-partner; do
-        [ ! -e "${'$'}partner" ] || return 1
+        [ ! -e "${'$'}partner" ] || return 0
       done
       for signal in present online; do
-        [ "${'$'}(cat "/sys/class/power_supply/usb/${'$'}signal" 2>/dev/null)" != 1 ] || return 1
+        [ "${'$'}(cat "/sys/class/power_supply/usb/${'$'}signal" 2>/dev/null)" != 1 ] || return 0
       done
+      return 1
+    }
+    usb_quiet() {
+      usb_controller_detached && ! usb_cable_present
     }
     $operation
   """.trimIndent()
@@ -709,6 +875,7 @@ object Configfs {
     if [ "${'$'}ARTIFACTS" -eq 0 ] && [ "${'$'}CURRENT_UDC" = "${'$'}ORIGINAL_UDC" ]; then
       exit 0
     fi
+    $refuseLiveLegacyUsbMutation
     can_restore_binding() {
       usb_quiet || usb_data_paused
     }

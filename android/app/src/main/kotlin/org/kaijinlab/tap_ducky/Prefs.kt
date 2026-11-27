@@ -48,7 +48,8 @@ class Prefs(context: Context) {
   var armed: Boolean
     get() = sp.getBoolean(KEY_ARMED, false)
     set(value) {
-      sp.edit().putBoolean(KEY_ARMED, value).apply()
+      val edit = sp.edit().putBoolean(KEY_ARMED, value)
+      if (!value && pendingSeparateGadget) edit.commit() else edit.apply()
     }
 
   /** Role to use for a deferred first-time prepare. */
@@ -101,6 +102,12 @@ class Prefs(context: Context) {
   val pendingSharedGadget: Boolean
     get() = sp.getBoolean(KEY_PENDING_SHARED_GADGET, false)
 
+  val pendingSeparateGadget: Boolean
+    get() = sp.getBoolean(KEY_PENDING_SEPARATE_GADGET, false)
+
+  val separateStockDir: String?
+    get() = sp.getString(KEY_SEPARATE_STOCK_DIR, null)
+
   val pendingProfileId: String?
     get() = sp.getString(KEY_PENDING_PROFILE_ID, null)
 
@@ -117,9 +124,22 @@ class Prefs(context: Context) {
     .putString(KEY_PENDING_GADGET_DIR, gadgetDir)
     .putString(KEY_PENDING_PROFILE_ID, profileId)
     .putBoolean(KEY_PENDING_SHARED_GADGET, true)
+    .remove(KEY_PENDING_SEPARATE_GADGET)
+    .remove(KEY_SEPARATE_STOCK_DIR)
     .putString(KEY_SHARED_CONTROLLER, controller)
     .putString(KEY_ORIGINAL_STOCK_UDC, originalUdc)
     .putString(KEY_ORIGINAL_STOCK_LAYOUT, layout)
+    .commit()
+
+  fun setSeparateGadgetDir(gadgetDir: String, stockDir: String, profileId: String, controller: String, originalLayout: String): Boolean = sp.edit()
+    .putString(KEY_PENDING_GADGET_DIR, gadgetDir)
+    .putString(KEY_SEPARATE_STOCK_DIR, stockDir)
+    .putString(KEY_PENDING_PROFILE_ID, profileId)
+    .putBoolean(KEY_PENDING_SEPARATE_GADGET, true)
+    .remove(KEY_PENDING_SHARED_GADGET)
+    .putString(KEY_SHARED_CONTROLLER, controller)
+    .putString(KEY_ORIGINAL_STOCK_UDC, originalLayout.lineSequence().firstOrNull { it.startsWith("UDC=") }?.substringAfter('='))
+    .putString(KEY_ORIGINAL_STOCK_LAYOUT, originalLayout)
     .commit()
 
   var typingSpeedFactor: Float
@@ -222,6 +242,8 @@ class Prefs(context: Context) {
       .putString(KEY_PENDING_GADGET_DIR, gadgetDir)
       .putString(KEY_PENDING_PROFILE_ID, profileId)
       .remove(KEY_PENDING_SHARED_GADGET)
+      .remove(KEY_PENDING_SEPARATE_GADGET)
+      .remove(KEY_SEPARATE_STOCK_DIR)
       .commit()
   }
 
@@ -235,6 +257,8 @@ class Prefs(context: Context) {
       .remove(KEY_PENDING_GADGET_DIR)
       .remove(KEY_PENDING_PROFILE_ID)
       .remove(KEY_PENDING_SHARED_GADGET)
+      .remove(KEY_PENDING_SEPARATE_GADGET)
+      .remove(KEY_SEPARATE_STOCK_DIR)
       .remove(KEY_SHARED_CONTROLLER)
       .remove(KEY_ORIGINAL_STOCK_UDC)
       .remove(KEY_ORIGINAL_STOCK_LAYOUT)
@@ -261,6 +285,8 @@ class Prefs(context: Context) {
       .remove(KEY_PENDING_GADGET_DIR)
       .remove(KEY_PENDING_PROFILE_ID)
       .remove(KEY_PENDING_SHARED_GADGET)
+      .remove(KEY_PENDING_SEPARATE_GADGET)
+      .remove(KEY_SEPARATE_STOCK_DIR)
       .remove(KEY_SHARED_CONTROLLER)
       .remove(KEY_ORIGINAL_STOCK_UDC)
       .remove(KEY_ORIGINAL_STOCK_LAYOUT)
@@ -290,6 +316,8 @@ class Prefs(context: Context) {
     private const val KEY_PREV_BOUND_GADGETS = "prev_bound_gadgets"
     private const val KEY_PENDING_GADGET_DIR = "pending_gadget_dir"
     private const val KEY_PENDING_SHARED_GADGET = "pending_shared_gadget"
+    private const val KEY_PENDING_SEPARATE_GADGET = "pending_separate_gadget"
+    private const val KEY_SEPARATE_STOCK_DIR = "separate_stock_dir"
     private const val KEY_TYPING_SPEED_FACTOR = "typing_speed_factor"
     private const val KEY_RISKY_FAST_MODE = "risky_fast_mode"
     private const val KEY_DIAL_SHORTCUT_BINDINGS = "dial_shortcut_bindings"

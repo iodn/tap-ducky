@@ -1,13 +1,18 @@
 package org.kaijinlab.tap_ducky
 
 import android.os.SystemClock
+import java.io.File
 
-/** Diagnostic-only observer of USB enumeration in an app-owned tracefs instance. */
-internal class UsbHostOsObserver(private val root: RootShell, private val log: LogBus) {
+/** Diagnostic-only USB observer using the control-request source exposed by each driver. */
+internal class UsbHostOsObserver(private val root: RootShell, private val log: LogBus, private val qualcommRecovery: File) {
   private var attemptedController: String? = null
   private var instance: String? = null
+  private var qualcommPath: String? = null
+  private var qualcommProbePath: String? = null
+  private var qualcommTrace: QualcommUsbHostTrace? = null
+  private val qualcommProbeRecovery = File(qualcommRecovery.parentFile, "qualcomm-usb-probe")
 
-  val available: Boolean get() = instance != null
+  val available: Boolean get() = instance != null || qualcommPath != null || qualcommProbePath != null
 
   fun start(controller: String?) {
     if (controller == null || !controller.matches(Regex("[A-Za-z0-9._-]+"))) {
@@ -22,10 +27,45 @@ internal class UsbHostOsObserver(private val root: RootShell, private val log: L
       path == "/sys/kernel/tracing/instances/$instanceName" ||
         path == "/sys/kernel/debug/tracing/instances/$instanceName"
     }
+    if (instance == null && !qualcommProbeRecovery.exists()) {
+      val capture = exec(QualcommUsbHostTrace.buildProbeStartScript(controller, qualcommProbeRecovery.path))
+      qualcommProbePath = capture?.takeIf { it.ok }?.stdout?.trim()?.takeIf {
+        it == "/sys/kernel/tracing/instances/tapducky_qualcomm_host" ||
+          it == "/sys/kernel/debug/tracing/instances/tapducky_qualcomm_host"
+      }
+      if (qualcommProbePath != null) {
+        qualcommTrace = QualcommUsbHostTrace(0)
+        log.log("host-os", "Filtered Qualcomm CI13xxx/MSM USB capture enabled")
+      } else restoreQualcommProbe()
+    }
+    if (instance == null && qualcommProbePath == null &&
+      !qualcommRecovery.exists() && !qualcommProbeRecovery.exists()
+    ) {
+      val capture = exec(QualcommUsbHostTrace.buildStartScript(controller, qualcommRecovery.path))
+      val lines = capture?.takeIf { it.ok }?.stdout?.trim()?.lines().orEmpty()
+      val path = "/sys/class/udc/$controller/device/gadget"
+      if (lines.firstOrNull() == path) {
+        qualcommPath = path
+        qualcommTrace = QualcommUsbHostTrace(QualcommUsbHostTrace.latestTimestampUs(lines.drop(1).joinToString("\n")))
+        log.log("host-os", "Qualcomm CI13xxx/MSM USB capture enabled")
+      } else {
+        restoreQualcommLogging()
+      }
+    }
     log.log("host-os", if (available) "Passive USB capture enabled" else "Passive USB capture unavailable")
   }
 
   fun read(): UsbHostFingerprint {
+    qualcommProbePath?.let { path ->
+      val events = exec("tail -n 256 ${shQuote("$path/trace")}")?.takeIf { it.ok }
+        ?: return UsbHostFingerprint()
+      return qualcommTrace?.readProbe(events.stdout, SystemClock.uptimeMillis()) ?: UsbHostFingerprint()
+    }
+    qualcommPath?.let { path ->
+      val events = exec("cat ${shQuote("$path/events")}")?.takeIf { it.ok }
+        ?: return UsbHostFingerprint()
+      return qualcommTrace?.read(events.stdout, SystemClock.uptimeMillis()) ?: UsbHostFingerprint()
+    }
     val path = instance ?: return UsbHostFingerprint()
     val trace = exec("tail -n 256 ${shQuote("$path/trace")}")?.takeIf { it.ok }
       ?: return UsbHostFingerprint()
@@ -34,9 +74,28 @@ internal class UsbHostOsObserver(private val root: RootShell, private val log: L
 
   fun stop() {
     attemptedController = null
+    qualcommPath = null
+    qualcommProbePath = null
+    qualcommTrace = null
+    restoreQualcommProbe()
+    restoreQualcommLogging()
     val path = instance ?: return
     instance = null
     exec("rmdir ${shQuote(path)}")
+  }
+
+  private fun restoreQualcommLogging() {
+    if (qualcommRecovery.exists()) {
+      val restored = exec(QualcommUsbHostTrace.buildStopScript(qualcommRecovery.path))
+      if (restored?.ok != true) log.logError("host-os", "Qualcomm USB logging recovery is pending")
+    }
+  }
+
+  private fun restoreQualcommProbe() {
+    if (qualcommProbeRecovery.exists()) {
+      val restored = exec(QualcommUsbHostTrace.buildProbeStopScript(qualcommProbeRecovery.path))
+      if (restored?.ok != true) log.logError("host-os", "Qualcomm USB probe cleanup is pending")
+    }
   }
 
   private fun exec(script: String): RootShell.ExecResult? = try {

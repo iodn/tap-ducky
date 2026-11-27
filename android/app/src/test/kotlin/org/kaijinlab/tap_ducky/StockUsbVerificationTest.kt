@@ -15,6 +15,41 @@ class StockUsbVerificationTest {
   @get:Rule val directory = TemporaryFolder()
 
   @Test
+  fun attachedLegacyControllerCanConfirmAnUnchangedStockLayoutWithoutWrites() {
+    val fixture = Fixture(directory.newFolder(), attached = true, udc = "msm_hsusb")
+    val (exit, layout) = fixture.snapshot()
+    assertEquals(0, exit)
+    assertEquals(0, fixture.restore().first)
+    assertEquals(0, fixture.verify(layout).first)
+
+    fixture.maxPower.writeText("500\n")
+    assertEquals(Configfs.HOST_ATTACHED_REFUSED, fixture.verify(layout).first)
+    assertEquals("500", fixture.maxPower.readText().trim())
+
+    val hid = fixture.addFunction("hid.tapducky0", "hid.tapducky0")
+    File(hid, "no_out_endpoint").writeText("1\n")
+    assertEquals(Configfs.HOST_ATTACHED_REFUSED, fixture.restore().first)
+    assertTrue(Files.isSymbolicLink(hid.toPath()))
+    assertTrue(fixture.calls().isEmpty())
+  }
+
+  @Test
+  fun connectedSetupPreflightDoesNotChangeUsbState() {
+    val legacy = Fixture(directory.newFolder(), attached = true, udc = "msm_hsusb")
+    assertEquals(Configfs.HOST_ATTACHED_REFUSED, legacy.snapshot(preflight = true).first)
+    assertTrue(legacy.calls().isEmpty())
+    assertFalse(legacy.marker.exists())
+
+    val modern = Fixture(directory.newFolder(), attached = true)
+    modern.status.writeText("unknown\n")
+    assertEquals(Configfs.SETUP_NOT_STARTED, modern.snapshot(preflight = true).first)
+    modern.status.writeText("enabled\n")
+    assertEquals(0, modern.snapshot(preflight = true).first)
+    assertTrue(modern.calls().isEmpty())
+    assertFalse(modern.marker.exists())
+  }
+
+  @Test
   fun reportsUsbModeOnlyWhenEveryConfigurationAgrees() {
     val base = directory.newFolder()
     val gadget = File(base, "stock").apply { mkdir() }
@@ -121,6 +156,44 @@ class StockUsbVerificationTest {
   }
 
   @Test
+  fun reportsWhenAndroidNeverConfirmsThePause() {
+    val fixture = Fixture(directory.newFolder(), attached = true, confirmsPause = false)
+    val (exit, output) = fixture.verify()
+    assertEquals(Configfs.HOST_ATTACHED_REFUSED, exit)
+    assertTrue(output.contains("Android did not confirm that USB data was paused"))
+    assertEquals("0", fixture.maxPower.readText().trim())
+    assertFalse(fixture.marker.exists())
+  }
+
+  @Test
+  fun matchingDescriptorsDoNotHideALostHostConnection() {
+    val fixture = Fixture(directory.newFolder(), attached = true)
+    val (snapshotExit, layout) = fixture.snapshot()
+    assertEquals(0, snapshotExit)
+    assertTrue(layout.contains("host_configured=1\n"))
+
+    fixture.controllerState = "not attached"
+    val (exit, output) = fixture.verify(layout)
+    assertEquals(Configfs.USB_LINK_NOT_RESTORED, exit)
+    assertTrue(output.contains("the USB host connection has not returned"))
+
+    fixture.controllerState = "configured"
+    assertEquals(0, fixture.verify(layout).first)
+    assertTrue(fixture.calls().isEmpty())
+  }
+
+  @Test
+  fun anInitiallyUnreportedUsbStateDoesNotRejectARecoveredLink() {
+    val fixture = Fixture(directory.newFolder(), attached = true)
+    val (exit, baseline) = fixture.snapshot()
+    assertEquals(0, exit)
+    val unreported = baseline.replace("sys.usb.state=adb", "sys.usb.state=")
+    assertEquals(0, fixture.verify(unreported).first)
+    fixture.controllerState = "not attached"
+    assertEquals(Configfs.USB_LINK_NOT_RESTORED, fixture.verify(unreported).first)
+  }
+
+  @Test
   fun keepsExactVerificationAndReportsOtherMismatches() {
     val fixture = Fixture(directory.newFolder())
     File(fixture.gadget, "idProduct").writeText("0x0002\n")
@@ -185,7 +258,10 @@ class StockUsbVerificationTest {
     private val attached: Boolean = false,
     canPause: Boolean = true,
     private val stockMode: String = "adb",
+    private val udc: String = "fixture_udc",
+    private val confirmsPause: Boolean = true,
   ) {
+    var controllerState = if (attached) "configured" else "not attached"
     val gadget = File(root, "stock")
     val status = File(root, "status").apply { writeText(if (canPause) "enabled" else "disabled-dock") }
     val marker = File(root, "restore-data")
@@ -195,7 +271,7 @@ class StockUsbVerificationTest {
     val attributes = File(config, "bmAttributes").apply { writeText("0xc0\n") }
 
     init {
-      File(gadget, "UDC").writeText("fixture_udc\n")
+      File(gadget, "UDC").writeText("$udc\n")
       File(gadget, "idProduct").writeText("0x0001\n")
     }
 
@@ -214,12 +290,12 @@ class StockUsbVerificationTest {
       }
     }
 
-    fun snapshot(): Pair<Int, String> {
-      val (exit, layout) = run(Configfs.buildReadStockLayoutScript("stock"))
+    fun snapshot(preflight: Boolean = false): Pair<Int, String> {
+      val (exit, layout) = run(Configfs.buildReadStockLayoutScript("stock", marker.path.takeIf { preflight }))
       return exit to layout.trimEnd('\n')
     }
 
-    fun restore(): Pair<Int, String> = run(Configfs.buildRestoreStockScript("stock", "fixture_udc", marker.path))
+    fun restore(): Pair<Int, String> = run(Configfs.buildRestoreStockScript("stock", udc, marker.path))
 
     fun verify(layout: String = """
         mode=
@@ -237,8 +313,10 @@ class StockUsbVerificationTest {
       val script = operation
         .replace("G=\"/config/usb_gadget/", "G=\"${root.path}/")
       val fixture = """
-        UDC_NAME=fixture_udc
+        UDC_NAME='$udc'
         usb_quiet() { [ "${if (attached) "yes" else "no"}" = no ]; }
+        usb_cable_present() { ! usb_quiet; }
+        usb_controller_state() { echo '$controllerState'; }
         usb_controller_detached() { usb_quiet || [ "${'$'}(cat '${status.path}')" = disabled-force ]; }
         getprop() { echo '$stockMode'; }
         dumpsys() { printf 'usb_data_status=%s\n' "${'$'}(cat '${status.path}')"; }
@@ -252,7 +330,7 @@ class StockUsbVerificationTest {
           if [ "${'$'}*" = 'usb getFunctions' ]; then echo '${stockMode.substringBefore(",adb").takeUnless { it == "adb" }.orEmpty()}'; return; fi
           echo "${'$'}*" >> '${commands.path}'
           case "${'$'}*" in
-            'usb enableUsbDataSignal false') echo disabled-force > '${status.path}' ;;
+            'usb enableUsbDataSignal false') ${if (confirmsPause) "echo disabled-force > '${status.path}'" else ":"} ;;
             'usb enableUsbDataSignal true') echo enabled > '${status.path}' ;;
           esac
         }

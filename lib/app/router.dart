@@ -14,6 +14,7 @@ import '../features/payloads/store/manage_sources_screen.dart';
 import '../features/schedule/schedule_editor_screen.dart';
 import '../features/schedule/schedule_screen.dart';
 import '../features/settings/advanced_settings_screen.dart';
+import '../features/settings/app_updates_screen.dart';
 import '../features/settings/settings_screen.dart';
 import '../widgets/app_shell.dart';
 
@@ -117,6 +118,15 @@ final appRouterProvider = Provider<GoRouter>((ref) {
             pageBuilder: (context, state) => const NoTransitionPage(child: SettingsScreen()),
             routes: [
               GoRoute(
+                path: 'updates',
+                name: AppUpdatesRoute.name,
+                parentNavigatorKey: rootNavigator,
+                pageBuilder: (context, state) => const MaterialPage(
+                  child: AppUpdatesScreen(),
+                  fullscreenDialog: true,
+                ),
+              ),
+              GoRoute(
                 path: 'advanced',
                 name: AdvancedSettingsRoute.name,
                 pageBuilder: (context, state) => const MaterialPage(child: AdvancedSettingsScreen()),
@@ -202,6 +212,11 @@ class ScheduleEditorRoute {
 class SettingsRoute extends AppRoute {
   const SettingsRoute() : super('/settings');
   static const name = 'settings';
+}
+
+class AppUpdatesRoute extends AppRoute {
+  const AppUpdatesRoute() : super('/settings/updates');
+  static const name = 'app_updates';
 }
 
 class AdvancedSettingsRoute extends AppRoute {

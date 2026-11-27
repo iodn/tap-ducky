@@ -16,6 +16,7 @@ import 'package:tap_ducky/features/payloads/payload_editor_screen.dart';
 import 'package:tap_ducky/features/schedule/schedule_editor_screen.dart';
 import 'package:tap_ducky/features/schedule/schedule_screen.dart';
 import 'package:tap_ducky/features/payloads/payloads_screen.dart';
+import 'package:tap_ducky/features/settings/advanced_settings_screen.dart';
 import 'package:tap_ducky/features/settings/settings_screen.dart';
 import 'package:tap_ducky/state/controllers/advanced_settings_controller.dart';
 import 'package:tap_ducky/state/controllers/app_settings_controller.dart';
@@ -32,14 +33,14 @@ import 'package:tap_ducky/widgets/arm_profile_sheet.dart';
 class _HidStatus extends HidStatusController {
   String? armedProfile;
 
-  void connectHost() {
+  void connectHost({bool ready = true, bool detectionAvailable = true}) {
     state = state.copyWith(
       sessionArmed: true,
       gadgetBound: true,
-      deviceConnected: true,
+      deviceConnected: ready,
       pcConnected: true,
-      inferredHostOs: HostOs.windows,
-      hostOsDetectionAvailable: true,
+      inferredHostOs: detectionAvailable ? HostOs.windows : HostOs.unknown,
+      hostOsDetectionAvailable: detectionAvailable,
     );
   }
 
@@ -249,17 +250,60 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('USB reference search shows vendor and product IDs', (tester) async {
-    await _pumpScreen(tester, const SettingsScreen(), size: const Size(390, 740), usbDb: _UsbReferenceDb());
-    await tester.enterText(find.byType(TextField), 'database');
+  testWidgets('general Settings no longer offers a separate USB reference', (tester) async {
+    await _pumpScreen(tester, const SettingsScreen(), size: const Size(390, 740));
+    await tester.enterText(find.byType(TextField), 'USB ID reference');
     await tester.pumpAndSettle();
+    expect(find.byWidgetPredicate((widget) => widget is Text && widget.data == 'USB ID reference'), findsNothing);
+    expect(find.text('Advanced'), findsOneWidget);
+  });
+
+  testWidgets('Advanced Settings groups shortcuts and USB lookup can copy IDs', (tester) async {
+    final copies = <String>[];
+    final messenger = TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(SystemChannels.platform, (call) async {
+      if (call.method == 'Clipboard.setData') {
+        copies.add((call.arguments as Map)['text'] as String);
+      }
+      return null;
+    });
+    addTearDown(() => messenger.setMockMethodCallHandler(SystemChannels.platform, null));
+    await _pumpScreen(
+      tester,
+      const AdvancedSettingsScreen(),
+      size: const Size(320, 640),
+      usbDb: _UsbReferenceDb(),
+    );
+    expect(find.text('Keyboard layout'), findsOneWidget);
+    expect(find.text('USB controller'), findsOneWidget);
+    expect(find.text('Add preset'), findsNothing);
+    await tester.scrollUntilVisible(find.text('Command presets'), 160);
+    await tester.tap(find.text('Command presets'));
+    await tester.pumpAndSettle();
+    expect(find.text('Add preset'), findsOneWidget);
+
+    final list = tester.state<ScrollableState>(find.byType(Scrollable).first);
+    list.position.jumpTo(0);
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(find.text('USB ID reference').hitTestable(), 120);
     await tester.tap(find.text('USB ID reference'));
     await tester.pumpAndSettle();
+    expect(find.textContaining('keep Android'), findsOneWidget);
     await tester.enterText(find.byType(TextField), 'sample adapter');
     await tester.pump(const Duration(milliseconds: 300));
     await tester.pumpAndSettle();
     expect(find.text('USB Adapter'), findsOneWidget);
     expect(find.textContaining('0x1234:0xABCD'), findsOneWidget);
+    await tester.tap(find.byTooltip('Copy VID:PID'));
+    await tester.pumpAndSettle();
+    expect(find.text('Copied 0x1234:0xABCD'), findsOneWidget);
+    await tester.pump(const Duration(seconds: 2));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('USB Adapter'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Copy Vendor ID (VID)'));
+    await tester.pumpAndSettle();
+    expect(copies, ['0x1234:0xABCD', '0x1234']);
     await tester.tap(find.byTooltip('Clear search'));
     await tester.pumpAndSettle();
     expect(find.text('USB Adapter'), findsNothing);
@@ -468,6 +512,12 @@ void main() {
 
     expect(find.text('Host OS · Windows'), findsOneWidget);
     expect(find.byTooltip('Automatically inferred from USB'), findsOneWidget);
+
+    hid.connectHost(ready: false, detectionAvailable: false);
+    await tester.pumpAndSettle();
+    expect(find.text('USB host connected · HID pending'), findsOneWidget);
+    expect(find.text('Host OS · Detection unavailable'), findsOneWidget);
+    expect(find.text('Host OS · Windows'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
