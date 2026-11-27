@@ -11,15 +11,17 @@ final runObservationProvider =
 
 const _recordingsKey = 'tapducky.runRecordings.v1';
 
+final runRecordingsProvider = FutureProvider.autoDispose((ref) async {
+  final storage = await ref.watch(prefsStorageProvider.future);
+  final recordings = storage.getJsonList(_recordingsKey).reversed
+      .map(RunRecording.fromJson).nonNulls;
+  return {for (final recording in recordings) recording.executionId: recording};
+});
+
 final runRecordingProvider = FutureProvider.autoDispose
     .family<RunRecording?, String>((ref, id) async {
-      final storage = await ref.watch(prefsStorageProvider.future);
-      return storage
-          .getJsonList(_recordingsKey)
-          .map(RunRecording.fromJson)
-          .nonNulls
-          .where((recording) => recording.executionId == id)
-          .firstOrNull;
+      final recordings = await ref.watch(runRecordingsProvider.future);
+      return recordings[id];
     });
 
 class RunObservation {
@@ -73,7 +75,7 @@ class RunObservationController extends Notifier<RunObservation?> {
     final clear = _writes.then((_) async {
       final storage = await ref.read(prefsStorageProvider.future);
       await storage.remove(_recordingsKey);
-      if (ref.mounted) ref.invalidate(runRecordingProvider);
+      if (ref.mounted) ref.invalidate(runRecordingsProvider);
     });
     _writes = clear.then<void>((_) {}, onError: (Object _, StackTrace _) {});
     return clear;
@@ -179,7 +181,7 @@ class RunObservationController extends Notifier<RunObservation?> {
           .where((item) => item['executionId'] != id)
           .take(_maxRecordings - 1);
       await storage.setJsonList(_recordingsKey, [recording.toJson(), ...saved]);
-      if (ref.mounted) ref.invalidate(runRecordingProvider(id));
+      if (ref.mounted) ref.invalidate(runRecordingsProvider);
     });
     _writes = write.then<void>((_) {}, onError: (Object _, StackTrace _) {});
     return write;

@@ -5,6 +5,7 @@ import '../../data/models/execution_outcome.dart';
 import '../../data/models/log_entry.dart';
 import '../../state/controllers/execution_controller.dart';
 import '../../state/controllers/logs_controller.dart';
+import '../../state/controllers/run_observation_controller.dart';
 import '../../widgets/empty_state.dart';
 import '../../widgets/configuration_page.dart';
 import 'run_recording_screen.dart';
@@ -15,6 +16,7 @@ class ExecutionHistoryScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final logsAsync = ref.watch(logsControllerProvider);
+    final recordings = ref.watch(runRecordingsProvider).value;
     final activeId = ref.watch(executionControllerProvider.select(
       (state) => state.isRunning ? state.executionId : null,
     ));
@@ -75,6 +77,7 @@ class ExecutionHistoryScreen extends ConsumerWidget {
                     key: ValueKey(groups[i].executionId),
                     group: groups[i],
                     isRunning: groups[i].executionId == activeId,
+                    hasRecording: recordings?.containsKey(groups[i].executionId) ?? false,
                   ),
                 ),
               ),
@@ -219,10 +222,12 @@ class _ExecutionGroupTile extends StatefulWidget {
     super.key,
     required this.group,
     required this.isRunning,
+    required this.hasRecording,
   });
 
   final ExecutionGroup group;
   final bool isRunning;
+  final bool hasRecording;
 
   @override
   State<_ExecutionGroupTile> createState() => _ExecutionGroupTileState();
@@ -366,7 +371,7 @@ class _ExecutionGroupTileState extends State<_ExecutionGroupTile> {
                         ? '—'
                         : _formatFullTimestamp(g.endTime),
                   ),
-                  if (g.events.any((event) => event.meta?['hasRecording'] == 'true'))
+                  if (widget.hasRecording)
                     TextButton.icon(
                       onPressed: () => showConfigurationPage<void>(
                         context, (_) => RunRecordingScreen(executionId: g.executionId),

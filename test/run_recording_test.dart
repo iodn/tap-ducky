@@ -117,6 +117,32 @@ void main() {
     },
   );
 
+  test('recording availability updates when the oldest run is evicted', () async {
+    SharedPreferences.setMockInitialValues({});
+    final container = ProviderContainer(
+      overrides: [hidStatusControllerProvider.overrideWith(_Usb.new)],
+    );
+    addTearDown(container.dispose);
+    final observer = container.read(runObservationProvider.notifier);
+    final recordings = container.listen(runRecordingsProvider, (_, _) {});
+    addTearDown(recordings.close);
+    for (var i = 0; i < 30; i++) {
+      observer.start('run-$i', record: true);
+      await observer.finish('run-$i', RunEventKind.completed);
+    }
+    final beforeEviction = await container.read(runRecordingsProvider.future);
+    expect(beforeEviction.containsKey('run-0'), isTrue);
+
+    observer.start('run-30', record: true);
+    await observer.finish('run-30', RunEventKind.completed);
+    final retained = await container.read(runRecordingsProvider.future);
+    expect(retained, hasLength(30));
+    expect(retained.containsKey('run-0'), isFalse);
+    expect(retained.containsKey('run-30'), isTrue);
+    expect(await container.read(runRecordingProvider('run-0').future), isNull);
+    expect(await container.read(runRecordingProvider('run-30').future), isNotNull);
+  });
+
   test('uses determinate progress only when the current run reports it', () {
     final container = ProviderContainer(
       overrides: [hidStatusControllerProvider.overrideWith(_Usb.new)],
