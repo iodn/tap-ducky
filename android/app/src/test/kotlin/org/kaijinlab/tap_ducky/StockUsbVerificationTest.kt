@@ -130,10 +130,61 @@ class StockUsbVerificationTest {
     assertEquals("0", fixture.maxPower.readText().trim())
   }
 
+  @Test
+  fun disarmPreservesAdbAndMtpLinksWithOrWithoutCable() {
+    for (attached in listOf(false, true)) {
+      val fixture = Fixture(directory.newFolder(), attached = attached, stockMode = "mtp,adb")
+      val adb = fixture.addFunction("f1", "ffs.adb")
+      val mtp = fixture.addFunction("f2", "mtp.gs0")
+      fixture.maxPower.writeText("500\n")
+      fixture.attributes.writeText("0x80\n")
+      val (snapshotExit, layout) = fixture.snapshot()
+      assertEquals(0, snapshotExit)
+      assertTrue(layout.contains("configs/b.1/f1="))
+      assertTrue(layout.contains("configs/b.1/f2="))
+
+      val hid = fixture.addFunction("hid.tapducky0", "hid.tapducky0")
+      File(hid, "no_out_endpoint").writeText("1\n")
+      val (restoreExit, restoreOutput) = fixture.restore()
+      assertEquals(restoreOutput, 0, restoreExit)
+      assertFalse(Files.isSymbolicLink(hid.toPath()))
+      assertFalse(File(fixture.gadget, "functions/hid.tapducky0").exists())
+      assertEquals(adb.toPath().toRealPath(), File(fixture.gadget, "functions/ffs.adb").toPath())
+      assertEquals(mtp.toPath().toRealPath(), File(fixture.gadget, "functions/mtp.gs0").toPath())
+      val (verifyExit, verifyOutput) = fixture.verify(layout)
+      assertEquals(verifyOutput, 0, verifyExit)
+      fixture.assertRestored()
+      val calls = if (attached) listOf("usb enableUsbDataSignal false", "usb enableUsbDataSignal true") else emptyList()
+      assertEquals(calls, fixture.calls())
+      assertEquals("enabled", fixture.status.readText().trim())
+      assertFalse(fixture.marker.exists())
+    }
+  }
+
+  @Test
+  fun verificationRejectsMissingAdbOrMtpLinksEvenWhenUsbModeMatches() {
+    val fixture = Fixture(directory.newFolder(), stockMode = "mtp,adb")
+    val adb = fixture.addFunction("f1", "ffs.adb")
+    val mtp = fixture.addFunction("f2", "mtp.gs0")
+    val (snapshotExit, layout) = fixture.snapshot()
+    assertEquals(0, snapshotExit)
+
+    for (link in listOf(adb, mtp)) {
+      val target = Files.readSymbolicLink(link.toPath())
+      Files.delete(link.toPath())
+      val (exit, output) = fixture.verify(layout)
+      assertEquals(output, 25, exit)
+      assertTrue(output.contains("Missing: configs/b.1/${link.name}"))
+      Files.createSymbolicLink(link.toPath(), target)
+    }
+    assertEquals(0, fixture.verify(layout).first)
+  }
+
   private class Fixture(
     private val root: File,
     private val attached: Boolean = false,
     canPause: Boolean = true,
+    private val stockMode: String = "adb",
   ) {
     val gadget = File(root, "stock")
     val status = File(root, "status").apply { writeText(if (canPause) "enabled" else "disabled-dock") }
@@ -156,9 +207,21 @@ class StockUsbVerificationTest {
       assertEquals("fixture_udc", File(gadget, "UDC").readText().trim())
     }
 
-    fun verify(): Pair<Int, String> {
-      assumeTrue(File("/bin/sh").canExecute())
-      val layout = """
+    fun addFunction(link: String, name: String): File {
+      val function = File(gadget, "functions/$name").apply { mkdirs() }
+      return File(config, link).also {
+        Files.createSymbolicLink(it.toPath(), function.toPath())
+      }
+    }
+
+    fun snapshot(): Pair<Int, String> {
+      val (exit, layout) = run(Configfs.buildReadStockLayoutScript("stock"))
+      return exit to layout.trimEnd('\n')
+    }
+
+    fun restore(): Pair<Int, String> = run(Configfs.buildRestoreStockScript("stock", "fixture_udc", marker.path))
+
+    fun verify(layout: String = """
         mode=
         sys.usb.config=adb
         sys.usb.state=adb
@@ -167,16 +230,26 @@ class StockUsbVerificationTest {
         idProduct=0x0001
         configs/b.1/bmAttributes=0x80
         configs/b.1/MaxPower=500
-      """.trimIndent()
-      val verify = Configfs.buildVerifyStockLayoutScript("stock", layout, marker.path)
+      """.trimIndent()): Pair<Int, String> = run(Configfs.buildVerifyStockLayoutScript("stock", layout, marker.path))
+
+    private fun run(operation: String): Pair<Int, String> {
+      assumeTrue(File("/bin/sh").canExecute())
+      val script = operation
         .replace("G=\"/config/usb_gadget/", "G=\"${root.path}/")
       val fixture = """
+        UDC_NAME=fixture_udc
         usb_quiet() { [ "${if (attached) "yes" else "no"}" = no ]; }
         usb_controller_detached() { usb_quiet || [ "${'$'}(cat '${status.path}')" = disabled-force ]; }
-        getprop() { echo adb; }
+        getprop() { echo '$stockMode'; }
         dumpsys() { printf 'usb_data_status=%s\n' "${'$'}(cat '${status.path}')"; }
         sleep() { :; }
+        rmdir() {
+          # ConfigFS attributes are virtual and do not prevent removal of a function.
+          if [ "${'$'}1" = functions/hid.tapducky0 ]; then rm -f "${'$'}1/no_out_endpoint"; fi
+          command rmdir "${'$'}@"
+        }
         svc() {
+          if [ "${'$'}*" = 'usb getFunctions' ]; then echo '${stockMode.substringBefore(",adb").takeUnless { it == "adb" }.orEmpty()}'; return; fi
           echo "${'$'}*" >> '${commands.path}'
           case "${'$'}*" in
             'usb enableUsbDataSignal false') echo disabled-force > '${status.path}' ;;
@@ -184,7 +257,7 @@ class StockUsbVerificationTest {
           esac
         }
       """.trimIndent()
-      val shell = ProcessBuilder("/bin/sh", "-c", "$fixture\n$verify").redirectErrorStream(true).start()
+      val shell = ProcessBuilder("/bin/sh", "-c", "$fixture\n$script").redirectErrorStream(true).start()
       try {
         assertTrue(shell.waitFor(5, TimeUnit.SECONDS))
         return shell.exitValue() to shell.inputStream.bufferedReader().readText()
