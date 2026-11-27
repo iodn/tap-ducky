@@ -30,6 +30,7 @@ class RunObservation {
     this.determinate = false,
     this.line,
     this.waitUntil,
+    this.waitLabel,
     this.conditionTimeout = false,
   });
 
@@ -37,6 +38,7 @@ class RunObservation {
   final bool determinate;
   final int? line;
   final DateTime? waitUntil;
+  final String? waitLabel;
   final bool conditionTimeout;
 }
 
@@ -45,6 +47,9 @@ class RunObservationController extends Notifier<RunObservation?> {
   static const _maxRecordings = 30;
   final _clock = Stopwatch();
   final _events = <RunEvent>[];
+  // A button callback can start another wait before the interrupted wait ends.
+  final _waits =
+      <({int id, int? line, DateTime? until, String? label, bool condition})>[];
   RunEventKind? _lastUsb;
   int _omittedEvents = 0;
   bool _record = false;
@@ -62,6 +67,7 @@ class RunObservationController extends Notifier<RunObservation?> {
       ..reset()
       ..start();
     _events.clear();
+    _waits.clear();
     _omittedEvents = 0;
     _lastUsb = null;
     state = RunObservation(id);
@@ -90,30 +96,41 @@ class RunObservationController extends Notifier<RunObservation?> {
         : current.line;
     switch (event['type']) {
       case 'start':
+        _waits.clear();
         state = RunObservation(
           id,
           determinate: event['progressDeterminate'] == true,
         );
       case 'phase':
+      case 'step' when _waits.isNotEmpty:
         if (current.line == line) return;
         state = RunObservation(
           id,
           determinate: current.determinate,
           line: line,
           waitUntil: current.waitUntil,
+          waitLabel: current.waitLabel,
           conditionTimeout: current.conditionTimeout,
         );
       case 'step':
-      case 'button_resumed':
-        if (current.waitUntil != null || event['type'] == 'button_resumed') {
-          _add(RunEventKind.resumed, line: line);
+        if (current.waitUntil == null &&
+            current.waitLabel == null &&
+            !current.conditionTimeout &&
+            current.line == line) {
+          return;
         }
-        if (current.line == line && current.waitUntil == null) return;
-        state = RunObservation(
-          id,
-          determinate: current.determinate,
-          line: line,
-        );
+        if (current.waitUntil != null) _add(RunEventKind.resumed, line: line);
+        _restoreWait(current, line);
+      case 'button_resumed':
+        _add(RunEventKind.resumed, line: line);
+        _restoreWait(current, line);
+      case 'wait_end':
+        if (_waits.isEmpty || _waits.last.id != event['waitId']) return;
+        final ended = _waits.removeLast();
+        if (event['resumed'] != false) {
+          _add(RunEventKind.resumed, line: ended.line);
+        }
+        _restoreWait(current, ended.line);
       case 'warning':
         if (event['code'] == 'KEY_ROLLOVER') {
           _add(RunEventKind.keyRollover, line: line);
@@ -128,22 +145,48 @@ class RunObservationController extends Notifier<RunObservation?> {
           _ => RunEventKind.timedWait,
         };
         _add(kind, line: line, waitMs: ms);
+        final until = ms == null
+            ? null
+            : DateTime.now().add(Duration(milliseconds: ms));
+        final message = event['message'];
+        final label = message is String ? message : null;
+        if (event['waitId'] case final int waitId) {
+          _waits.add((
+            id: waitId,
+            line: line,
+            until: until,
+            label: label,
+            condition: condition,
+          ));
+        }
         state = RunObservation(
           id,
           determinate: current.determinate,
           line: line,
-          waitUntil: ms == null
-              ? null
-              : DateTime.now().add(Duration(milliseconds: ms)),
+          waitUntil: until,
+          waitLabel: label,
           conditionTimeout: condition,
         );
     }
+  }
+
+  void _restoreWait(RunObservation current, int? line) {
+    final outer = _waits.lastOrNull;
+    state = RunObservation(
+      current.id,
+      determinate: current.determinate,
+      line: outer == null ? line : outer.line,
+      waitUntil: outer?.until,
+      waitLabel: outer?.label,
+      conditionTimeout: outer?.condition ?? false,
+    );
   }
 
   void stopRequested(String id) {
     final current = state;
     if (current == null || current.id != id) return;
     _add(RunEventKind.stopRequested, line: current.line);
+    _waits.clear();
     state = RunObservation(id, line: current.line);
   }
 
@@ -151,6 +194,7 @@ class RunObservationController extends Notifier<RunObservation?> {
     final current = state;
     if (current == null || current.id != id) return;
     _add(RunEventKind.stopEscalated, line: current.line);
+    _waits.clear();
     state = RunObservation(id, line: current.line);
   }
 
@@ -171,6 +215,7 @@ class RunObservationController extends Notifier<RunObservation?> {
     final recording = RunRecording(id, List.of(_events), _omittedEvents);
     _clock.stop();
     _record = false;
+    _waits.clear();
     state = null;
     if (!record) return Future.value();
 

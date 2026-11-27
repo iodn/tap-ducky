@@ -539,6 +539,12 @@ class ExecutionController extends Notifier<ExecutionState> {
     );
   }
 
+  void _finishNativeWait() {
+    if (state.stopRequested) return;
+    final label = ref.read(runObservationProvider)?.waitLabel ?? 'Running…';
+    if (state.status != label) state = state.copyWith(status: label);
+  }
+
   void _resumeAfterButton(
     String executionId,
     Object? promptId,
@@ -548,7 +554,10 @@ class ExecutionController extends Notifier<ExecutionState> {
     if (_activeExecutionId != executionId || state.stopRequested ||
         _waitingButtonPromptId == null || _waitingButtonPromptId != promptId) return;
     _waitingButtonPromptId = null;
-    state = state.copyWith(status: 'Executing…', clearButtonPrompt: true);
+    state = state.copyWith(
+      status: ref.read(runObservationProvider)?.waitLabel ?? 'Executing…',
+      clearButtonPrompt: true,
+    );
     final remaining = _timeoutBudget - _timeoutClock.elapsed;
     _startTimeoutTimer(
       executionId: executionId,
@@ -652,6 +661,10 @@ class ExecutionController extends Notifier<ExecutionState> {
       if (!state.stopRequested) ref.read(runObservationProvider.notifier).observe(executionId, evt);
 
       final type = evt['type']?.toString() ?? '';
+      if (type == 'wait_end') {
+        _finishNativeWait();
+        return;
+      }
       if (type == 'phase' && !state.stopRequested) {
         if (state.status != 'Running…') state = state.copyWith(status: 'Running…');
         return;
@@ -852,6 +865,10 @@ class ExecutionController extends Notifier<ExecutionState> {
       if (!state.stopRequested) ref.read(runObservationProvider.notifier).observe(executionId, evt);
 
       final type = evt['type']?.toString() ?? '';
+      if (type == 'wait_end') {
+        _finishNativeWait();
+        return;
+      }
       if (type == 'phase' && !state.stopRequested) {
         if (state.status != 'Running…') state = state.copyWith(status: 'Running…');
         return;

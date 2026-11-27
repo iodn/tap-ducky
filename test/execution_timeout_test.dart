@@ -377,6 +377,7 @@ void main() {
       'lineNumber': 1,
       'message': 'Waiting for HOST_CONNECTED',
       'waitMs': 300000,
+      'waitId': 1,
     });
     await tester.pump();
     await tester.pump(const Duration(seconds: 100));
@@ -385,6 +386,16 @@ void main() {
     final running = container.read(executionControllerProvider);
     expect(running.status, 'Waiting for HOST_CONNECTED');
     expect(running.tail.last.message, contains('Line 1'));
+    events.add({
+      'type': 'wait_end',
+      'executionId': service.startedId,
+      'waitId': 1,
+      'lineNumber': 1,
+      'resumed': true,
+    });
+    await tester.pump();
+    expect(container.read(runObservationProvider)?.waitUntil, isNull);
+    expect(container.read(executionControllerProvider).status, 'Running…');
     await tester.pump(const Duration(seconds: 291));
     expect(service.cancelledIds, [service.startedId]);
     events.add({

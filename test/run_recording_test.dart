@@ -52,6 +52,7 @@ void main() {
       });
       final wait = container.read(runObservationProvider)!;
       expect(wait.waitUntil, isNotNull);
+      expect(wait.waitLabel, 'private text or parameter');
       expect(wait.conditionTimeout, isTrue);
       observer.observe(id, {
         'type': 'step',
@@ -90,6 +91,126 @@ void main() {
       expect(await container.read(runRecordingProvider(id).future), isNull);
     },
   );
+
+  test('wait_end records one resume before the next step', () async {
+    SharedPreferences.setMockInitialValues({});
+    final container = ProviderContainer(
+      overrides: [hidStatusControllerProvider.overrideWith(_Usb.new)],
+    );
+    addTearDown(container.dispose);
+    final observer = container.read(runObservationProvider.notifier);
+    const id = 'precise';
+    observer.start(id, record: true);
+    observer.observe(id, {
+      'type': 'wait',
+      'waitId': 1,
+      'waitKind': 'condition',
+      'lineNumber': 7,
+      'waitMs': 3000,
+      'message': 'Outer wait',
+    });
+    final waiting = container.read(runObservationProvider)!;
+    expect(waiting.waitUntil, isNotNull);
+    expect(waiting.conditionTimeout, isTrue);
+
+    const end = {'type': 'wait_end', 'waitId': 1, 'resumed': true};
+    observer.observe('previous', end);
+    observer.observe(id, {'type': 'wait_end', 'waitId': 2});
+    expect(container.read(runObservationProvider), same(waiting));
+
+    observer.observe(id, end);
+    final ended = container.read(runObservationProvider)!;
+    expect(ended.waitUntil, isNull);
+    expect(ended.waitLabel, isNull);
+    expect(ended.conditionTimeout, isFalse);
+    expect(ended.line, 7);
+    observer.observe(id, end);
+    observer.observe(id, {'type': 'step', 'lineNumber': 7});
+
+    observer.observe(id, {
+      'type': 'wait',
+      'waitId': 2,
+      'waitKind': 'condition',
+      'lineNumber': 8,
+      'waitMs': 1000,
+    });
+    observer.observe(id, {'type': 'wait_end', 'waitId': 2, 'resumed': false});
+    expect(container.read(runObservationProvider)?.waitUntil, isNull);
+    await observer.finish(id, RunEventKind.failed);
+    final recording = (await container.read(runRecordingProvider(id).future))!;
+    expect(recording.events.map((event) => event.kind), [
+      RunEventKind.started,
+      RunEventKind.usbConnected,
+      RunEventKind.conditionWait,
+      RunEventKind.resumed,
+      RunEventKind.conditionWait,
+      RunEventKind.failed,
+    ]);
+    expect(recording.events[3].line, 7);
+    expect(jsonEncode(recording.toShareJson()), isNot(contains('Outer wait')));
+  });
+
+  test('callback steps and nested waits preserve the outer deadline', () {
+    final container = ProviderContainer(
+      overrides: [hidStatusControllerProvider.overrideWith(_Usb.new)],
+    );
+    addTearDown(container.dispose);
+    final observer = container.read(runObservationProvider.notifier);
+    const id = 'nested';
+    observer.start(id);
+    observer.observe(id, {
+      'type': 'wait',
+      'waitId': 1,
+      'waitKind': 'condition',
+      'lineNumber': 7,
+      'waitMs': 3000,
+      'message': 'Outer wait',
+    });
+    final outer = container.read(runObservationProvider)!;
+    observer.observe(id, {'type': 'phase', 'lineNumber': 10});
+    observer.observe(id, {'type': 'step', 'lineNumber': 11});
+    expect(container.read(runObservationProvider)?.line, 11);
+    expect(container.read(runObservationProvider)?.waitUntil, outer.waitUntil);
+    expect(container.read(runObservationProvider)?.waitLabel, 'Outer wait');
+
+    observer.observe(id, {
+      'type': 'wait',
+      'waitId': 2,
+      'lineNumber': 7,
+      'waitMs': 1000,
+      'message': 'Inner wait',
+    });
+    expect(container.read(runObservationProvider)?.waitLabel, 'Inner wait');
+    expect(container.read(runObservationProvider)?.conditionTimeout, isFalse);
+    observer.observe(id, {'type': 'wait_end', 'waitId': 2});
+    expect(container.read(runObservationProvider)?.waitUntil, outer.waitUntil);
+    expect(container.read(runObservationProvider)?.waitLabel, 'Outer wait');
+    expect(container.read(runObservationProvider)?.conditionTimeout, isTrue);
+
+    observer.observe(id, {
+      'type': 'wait',
+      'promptId': 'confirmation',
+      'lineNumber': 12,
+      'message': 'Confirmation wait',
+    });
+    expect(container.read(runObservationProvider)?.waitUntil, isNull);
+    expect(
+      container.read(runObservationProvider)?.waitLabel,
+      'Confirmation wait',
+    );
+    observer.observe(id, {
+      'type': 'button_resumed',
+      'promptId': 'confirmation',
+    });
+    expect(container.read(runObservationProvider)?.waitUntil, outer.waitUntil);
+    expect(container.read(runObservationProvider)?.waitLabel, 'Outer wait');
+    expect(container.read(runObservationProvider)?.line, 7);
+
+    observer.observe(id, {'type': 'wait_end', 'waitId': 1});
+    expect(container.read(runObservationProvider)?.waitUntil, isNull);
+    expect(container.read(runObservationProvider)?.waitLabel, isNull);
+    expect(container.read(runObservationProvider)?.conditionTimeout, isFalse);
+  });
 
   test(
     'long recordings retain the final outcome and count omitted events',

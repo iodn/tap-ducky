@@ -862,6 +862,7 @@ class DuckyScriptExecutor(
   private var completedSteps = 0
   private var determinateProgress = false
   private var currentLine: Int? = null
+  private var nextWaitId = 0
   private val timing = TimingController(delayMultiplier) { log.log("ducky", it) }
 
   fun execute(script: String) {
@@ -1134,6 +1135,7 @@ class DuckyScriptExecutor(
     waitMs: Long? = null,
     promptId: String? = null,
     condition: Boolean = false,
+    waitId: Int? = null,
   ) {
     emitExec(mapOf(
       "type" to "wait",
@@ -1143,12 +1145,47 @@ class DuckyScriptExecutor(
       "waitMs" to waitMs,
       "waitKind" to if (condition) "condition" else "duration",
       "promptId" to promptId,
+      "waitId" to waitId,
     ))
+  }
+
+  private inline fun withReportedWait(
+    label: String,
+    durationMs: Long,
+    condition: Boolean = false,
+    wait: () -> Boolean,
+  ): Boolean {
+    val waitId = ++nextWaitId
+    val line = currentLine
+    reportWait(label, durationMs, condition = condition, waitId = waitId)
+    var resumed = false
+    try {
+      resumed = wait()
+      return resumed
+    } finally {
+      emitExec(mapOf(
+        "type" to "wait_end",
+        "executionId" to executionId,
+        "lineNumber" to line,
+        "waitId" to waitId,
+        "resumed" to resumed,
+      ))
+    }
   }
 
   private fun sleepMsCancellable(totalMs: Long, label: String, dispatchButton: Boolean = true) {
     if (totalMs <= 0L) return
-    if (totalMs >= 1000L) reportWait(label, totalMs)
+    if (totalMs >= 1000L) {
+      withReportedWait(label, totalMs) {
+        sleepUntilCancellable(totalMs, dispatchButton)
+        true
+      }
+    } else {
+      sleepUntilCancellable(totalMs, dispatchButton)
+    }
+  }
+
+  private fun sleepUntilCancellable(totalMs: Long, dispatchButton: Boolean) {
     val deadline = android.os.SystemClock.elapsedRealtime() + totalMs
     while (true) {
       throwIfCancelled()
@@ -1170,18 +1207,19 @@ class DuckyScriptExecutor(
     val timeout = timeoutMs.coerceAtLeast(0L)
     if (timeout == 0L) return predicate()
 
-    reportWait(label, timeout, condition = true)
-    val deadline = android.os.SystemClock.elapsedRealtime() + timeout
-    while (true) {
+    return withReportedWait(label, timeout, condition = true) {
+      val deadline = android.os.SystemClock.elapsedRealtime() + timeout
+      while (true) {
+        throwIfCancelled()
+        runPendingButtonCallback()
+        val remaining = deadline - android.os.SystemClock.elapsedRealtime()
+        if (remaining <= 0L) break
+        Thread.sleep(minOf(pollMs.coerceAtLeast(50L), remaining))
+        if (predicate()) return@withReportedWait true
+      }
       throwIfCancelled()
-      runPendingButtonCallback()
-      val remaining = deadline - android.os.SystemClock.elapsedRealtime()
-      if (remaining <= 0L) break
-      Thread.sleep(minOf(pollMs.coerceAtLeast(50L), remaining))
-      if (predicate()) return true
+      predicate()
     }
-    throwIfCancelled()
-    return predicate()
   }
 
   private fun markStep(cmd: DuckyCommand, stepMessage: String?) {
