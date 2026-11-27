@@ -69,6 +69,45 @@ Future<void> _openEditor(
 void main() {
   setUp(() => SharedPreferences.setMockInitialValues({}));
 
+  testWidgets(
+    'validation distinguishes parameter templates from concrete scripts',
+    (tester) async {
+      final nativeChecks = <String>[];
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      messenger.setMockMethodCallHandler(_gadget, (call) async {
+        if (call.method == 'validateDuckyScript') {
+          nativeChecks.add((call.arguments as Map)['script'] as String);
+        }
+        return null;
+      });
+      addTearDown(() => messenger.setMockMethodCallHandler(_gadget, null));
+      await _openEditor(tester, payloads: _Payloads([]));
+
+      for (final template in ['STRING {{VALUE}}', r'STRING ${VALUE}']) {
+        await tester.enterText(_scriptField, template);
+        await tester.pump(const Duration(milliseconds: 500));
+        await tester.tap(find.byTooltip('Script validation and estimate'));
+        await tester.pumpAndSettle();
+        expect(find.text('No editor issues found'), findsOneWidget);
+        expect(
+          find.textContaining('Android checks syntax at run time'),
+          findsOneWidget,
+        );
+        expect(nativeChecks, isEmpty);
+        await tester.tap(find.byType(CloseButton));
+        await tester.pumpAndSettle();
+      }
+
+      await tester.enterText(_scriptField, 'STRING Hello');
+      await tester.pump(const Duration(milliseconds: 500));
+      await tester.tap(find.byTooltip('Script validation and estimate'));
+      await tester.pumpAndSettle();
+      expect(nativeChecks, ['STRING Hello']);
+      expect(find.text('No issues found'), findsOneWidget);
+    },
+  );
+
   testWidgets('validation updates an open issue list when Android responds', (
     tester,
   ) async {

@@ -1176,7 +1176,7 @@ class _ValidationDialog extends StatelessWidget {
                         ],
                         if (hasParameters)
                           const Text(
-                            'Android checks syntax when parameter values are supplied.',
+                            'Android checks syntax at run time using the supplied parameter values.',
                           ),
                         Text(
                           'Total delays: ${(result.totalDelayMs / 1000).toStringAsFixed(1)}s',
@@ -1187,7 +1187,7 @@ class _ValidationDialog extends StatelessWidget {
                               : snapshot.hasError
                               ? 'Could not check Android syntax.'
                               : issues.isEmpty
-                              ? 'No issues found'
+                              ? (hasParameters ? 'No editor issues found' : 'No issues found')
                               : 'Issues (${issues.length})',
                         ),
                       ],
