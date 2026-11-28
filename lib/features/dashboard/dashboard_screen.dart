@@ -268,6 +268,10 @@ class _HeroStatusCard extends ConsumerWidget {
       statusText = 'System Not Ready';
       statusIcon = Icons.error_outline;
       statusColor = cs.error;
+    } else if (hid.externalSession) {
+      statusText = 'USB already enabled in another app';
+      statusIcon = Icons.usb;
+      statusColor = cs.tertiary;
     } else if (!hid.sessionArmed) {
       statusText = 'Session disarmed';
       statusIcon = Icons.lock_outline;
@@ -411,11 +415,11 @@ class _HeroStatusCard extends ConsumerWidget {
                   if (!hid.usbRestoring)
                     Expanded(
                       child: FilledButton.icon(
-                        onPressed: hid.rootAvailable && hid.hidSupported
+                        onPressed: hid.rootAvailable && hid.hidSupported && !hid.externalSession
                             ? onArmToggle
                             : null,
                         icon: Icon(hid.sessionArmed ? Icons.lock_open : Icons.lock_outline),
-                        label: Text(hid.sessionArmed ? 'Disarm' : 'Arm Session'),
+                        label: Text(hid.externalSession ? 'In use' : hid.sessionArmed ? 'Disarm' : 'Arm Session'),
                         style: FilledButton.styleFrom(
                           padding: const EdgeInsets.symmetric(vertical: 14),
                         ),

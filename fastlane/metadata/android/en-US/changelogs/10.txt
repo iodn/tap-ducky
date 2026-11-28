@@ -1,0 +1,4 @@
+- Fixed bottom navigation getting stuck behind settings subsections.
+- Added cross-app USB session detection to prevent conflicting gadget activation.
+- Improved navigation from update notifications and nested settings.
+- Pinned release tooling; APKs are built and verified locally.

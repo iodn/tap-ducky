@@ -29,6 +29,14 @@ class MainActivity : FlutterActivity() {
   private var keysSink: EventChannel.EventSink? = null
   private var executionSink: EventChannel.EventSink? = null
 
+  override fun onResume() {
+    super.onResume()
+    if (::manager.isInitialized) executor.execute {
+      try { manager.refreshAndEmitStatus() }
+      catch (failure: Throwable) { logBus.logError("usb", failure.message ?: "USB refresh failed.") }
+    }
+  }
+
   override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
     super.configureFlutterEngine(flutterEngine)
 

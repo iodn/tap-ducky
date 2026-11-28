@@ -17,8 +17,9 @@ import '../state/providers.dart';
 import 'task_bar.dart';
 
 class AppShell extends ConsumerStatefulWidget {
-  const AppShell({super.key, required this.child});
+  const AppShell({super.key, required this.child, required this.navigatorKey});
   final Widget child;
+  final GlobalKey<NavigatorState> navigatorKey;
 
   @override
   ConsumerState<AppShell> createState() => _AppShellState();
@@ -353,6 +354,8 @@ class _AppShellState extends ConsumerState<AppShell> with WidgetsBindingObserver
             NavigationBar(
               selectedIndex: index,
               onDestinationSelected: (i) {
+                // Pop imperative settings pages, including when reselecting Settings.
+                widget.navigatorKey.currentState?.popUntil((route) => route.settings is Page);
                 switch (i) {
                   case 0:
                     context.go(const DashboardRoute().location);

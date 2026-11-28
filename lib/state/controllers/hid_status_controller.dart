@@ -8,6 +8,7 @@ import 'advanced_settings_controller.dart';
 class HidStatus {
   const HidStatus({
     this.isInitializing = false,
+    this.externalSession = false,
     required this.rootAvailable,
     required this.hidSupported,
     required this.deviceConnected,
@@ -31,6 +32,7 @@ class HidStatus {
   });
 
   final bool isInitializing;
+  final bool externalSession;
   final bool rootAvailable;
   final bool hidSupported;
   final bool deviceConnected;
@@ -61,6 +63,7 @@ class HidStatus {
 
   HidStatus copyWith({
     bool? isInitializing,
+    bool? externalSession,
     bool? rootAvailable,
     bool? hidSupported,
     bool? deviceConnected,
@@ -84,6 +87,7 @@ class HidStatus {
   }) {
     return HidStatus(
       isInitializing: isInitializing ?? this.isInitializing,
+      externalSession: externalSession ?? this.externalSession,
       rootAvailable: rootAvailable ?? this.rootAvailable,
       hidSupported: hidSupported ?? this.hidSupported,
       deviceConnected: deviceConnected ?? this.deviceConnected,
@@ -114,6 +118,7 @@ class HidStatus {
   }) {
     return HidStatus(
       isInitializing: isInitializing,
+      externalSession: gs.state == 'EXTERNAL',
       rootAvailable: gs.rootAvailable,
       hidSupported: gs.supportAvailable,
       deviceConnected: gs.deviceConnected,

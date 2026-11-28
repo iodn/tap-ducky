@@ -20,22 +20,25 @@ import '../widgets/app_shell.dart';
 
 final appRouterProvider = Provider<GoRouter>((ref) {
   final rootNavigator = GlobalKey<NavigatorState>();
+  final shellNavigator = GlobalKey<NavigatorState>();
   return GoRouter(
     navigatorKey: rootNavigator,
     initialLocation: const DashboardRoute().location,
     routes: [
       ShellRoute(
-        builder: (context, state, child) => AppShell(child: child),
+        navigatorKey: shellNavigator,
+        builder: (context, state, child) =>
+            AppShell(navigatorKey: shellNavigator, child: child),
         routes: [
           GoRoute(
             path: const DashboardRoute().location,
             name: DashboardRoute.name,
-            pageBuilder: (context, state) => const NoTransitionPage(child: DashboardScreen()),
+            pageBuilder: (context, state) => NoTransitionPage(key: state.pageKey, child: const DashboardScreen()),
           ),
           GoRoute(
             path: const PayloadsRoute().location,
             name: PayloadsRoute.name,
-            pageBuilder: (context, state) => const NoTransitionPage(child: PayloadsScreen()),
+            pageBuilder: (context, state) => NoTransitionPage(key: state.pageKey, child: const PayloadsScreen()),
             routes: [
              GoRoute(
                path: 'store',
@@ -77,7 +80,7 @@ final appRouterProvider = Provider<GoRouter>((ref) {
           GoRoute(
             path: const ExecuteRoute().location,
             name: ExecuteRoute.name,
-            pageBuilder: (context, state) => const NoTransitionPage(child: ExecuteScreen()),
+            pageBuilder: (context, state) => NoTransitionPage(key: state.pageKey, child: const ExecuteScreen()),
             routes: [
               GoRoute(
                 path: 'history',
@@ -89,7 +92,7 @@ final appRouterProvider = Provider<GoRouter>((ref) {
           GoRoute(
             path: const ScheduleRoute().location,
             name: ScheduleRoute.name,
-            pageBuilder: (context, state) => const NoTransitionPage(child: ScheduleScreen()),
+            pageBuilder: (context, state) => NoTransitionPage(key: state.pageKey, child: const ScheduleScreen()),
             routes: [
               GoRoute(
                 path: 'new',
@@ -115,15 +118,14 @@ final appRouterProvider = Provider<GoRouter>((ref) {
           GoRoute(
             path: const SettingsRoute().location,
             name: SettingsRoute.name,
-            pageBuilder: (context, state) => const NoTransitionPage(child: SettingsScreen()),
+            pageBuilder: (context, state) => NoTransitionPage(key: state.pageKey, child: const SettingsScreen()),
             routes: [
               GoRoute(
                 path: 'updates',
                 name: AppUpdatesRoute.name,
-                parentNavigatorKey: rootNavigator,
-                pageBuilder: (context, state) => const MaterialPage(
-                  child: AppUpdatesScreen(),
-                  fullscreenDialog: true,
+                pageBuilder: (context, state) => MaterialPage(
+                  key: state.pageKey,
+                  child: const AppUpdatesScreen(),
                 ),
               ),
               GoRoute(

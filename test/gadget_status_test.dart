@@ -4,6 +4,24 @@ import 'package:tap_ducky/state/controllers/hid_status_controller.dart';
 
 void main() {
   test(
+    'a peer session is visible without claiming its writers or ownership',
+    () {
+      final state = HidStatus.fromGadgetStatus(
+        GadgetStatus.fromMap({
+          'state': 'EXTERNAL',
+          'desiredArmed': false,
+          'message': 'USB gadget enabled by GadgetFS.',
+        }),
+      );
+      expect(state.externalSession, isTrue);
+      expect(state.sessionArmed, isFalse);
+      expect(state.keyboardWriterReady, isFalse);
+      expect(state.message, contains('GadgetFS'));
+      expect(state.copyWith(pcConnected: true).externalSession, isTrue);
+    },
+  );
+
+  test(
     'a recovered session uses the native role and can be armed without a host',
     () {
       final state = HidStatus.fromGadgetStatus(
@@ -78,7 +96,9 @@ void main() {
       'pcConnected': true,
       'udcState': 'configured',
     });
-    final hid = HidStatus.fromGadgetStatus(GadgetStatus.fromMap(status.toMap()));
+    final hid = HidStatus.fromGadgetStatus(
+      GadgetStatus.fromMap(status.toMap()),
+    );
 
     expect(hid.sessionArmed, isTrue);
     expect(hid.pcConnected, isTrue);

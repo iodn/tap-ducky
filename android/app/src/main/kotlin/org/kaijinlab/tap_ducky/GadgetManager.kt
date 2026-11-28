@@ -301,7 +301,29 @@ class GadgetManager(
     return next
   }
 
+  private fun foreignUsbSession(): UsbPeerSession? {
+    val result = root.exec(UsbPeerSession.buildInventoryScript(), timeoutSec = 5, logOutput = false)
+    check(result.ok) { "Could not verify USB session ownership." }
+    return UsbPeerSession.parse(result.stdout).firstOrNull { it.owner != "tapducky" }
+  }
+
   private fun readPhysicalStatus(current: Status): Status {
+    if (current.supportAvailable) {
+      try {
+        val peer = foreignUsbSession()
+        if (peer != null) return current.copy(
+          state = "EXTERNAL", activeProfileId = null, desiredArmed = false,
+          keyboardWriterReady = false, mouseWriterReady = false,
+          gadgetBound = false, prepared = false, deviceConnected = false,
+          inferredHostOs = null, hostOsDetectionAvailable = false, hostOsDetecting = false,
+          message = "USB gadget enabled by " + peer.displayName +
+            ". Stop it in that app before switching.",
+        )
+      } catch (failure: Throwable) {
+        return current.copy(state = "ERROR", keyboardWriterReady = false, mouseWriterReady = false,
+          message = failure.message ?: "Could not verify USB session ownership.")
+      }
+    }
     val dir = prefs.pendingGadgetDir.takeIf { pendingUsbRecovery }
       ?: prefs.activeGadgetDir.takeIf { prefs.preparedVersion == PREPARED_LAYOUT_VERSION }
     val session = when {
@@ -356,7 +378,7 @@ class GadgetManager(
     return current.copy(
       state = state,
       activeProfileId = prefs.activeProfileId.takeIf { probe != null },
-      message = current.message.takeIf {
+      message = current.message.takeUnless { current.state == "EXTERNAL" }?.takeIf {
         error || (armed && probe == null) || (!armed && (pendingUsbRecovery || current.state == "IDLE"))
       },
       keyboardWriterReady = armed && connected && probe?.keyboard != null,
@@ -510,6 +532,17 @@ class GadgetManager(
       return
     }
     val profile = parseProfile(profileMap)
+    if (checkRoot()) {
+      try {
+        if (foreignUsbSession() != null) {
+          refreshAndEmitStatus()
+          return
+        }
+      } catch (failure: Throwable) {
+        setError(failure.message ?: "Could not verify USB session ownership.")
+        return
+      }
+    }
     desiredProfile = profile
     prefs.armed = true
     statusRef.updateAndGet { it.copy(usbRestorePhase = null) }
@@ -526,6 +559,10 @@ class GadgetManager(
     }
 
     val refreshed = refreshAndEmitStatus()
+    if (refreshed.state == "EXTERNAL") {
+      prefs.armed = false
+      return
+    }
     if (refreshed.gadgetBound) {
       setState("ACTIVE", prefs.activeProfileId ?: profile.id, null)
       startForeground("TapDucky USB ready")
@@ -770,6 +807,12 @@ class GadgetManager(
 
   private fun resumeUsbDataIfNeeded() {
     if (usbDataMarker.exists()) {
+      try {
+        if (foreignUsbSession() != null) return
+      } catch (failure: Throwable) {
+        log.logError("usb", failure.message ?: "Could not verify USB session ownership.")
+        return
+      }
       val result = root.exec(Configfs.buildResumeUsbDataScript(usbDataMarker.path), timeoutSec = 15)
       if (!result.ok) log.logError("usb", "Could not resume Android USB data: ${result.stderr.trim()}")
     }
@@ -778,6 +821,12 @@ class GadgetManager(
   private fun restoreStockUsb() {
     val dir = prefs.pendingGadgetDir?.takeIf { pendingUsbRecovery } ?: return
     if (prefs.armed) return
+    if (foreignUsbSession() != null) {
+      val next = readPhysicalStatus(statusRef.get())
+      statusRef.set(next)
+      emit(next)
+      return
+    }
     startupSeparateRecovery = false
     statusRef.updateAndGet(Status::withoutScriptUsbInfo)
     updateUsbRestorePhase(UsbRestorePhase.RESTORING, "Restoring the original USB configuration…")
@@ -1233,6 +1282,7 @@ class GadgetManager(
       statusRef.set(next)
       emit(next)
     }
+    if (next.state == "EXTERNAL") return
     if (next.supportAvailable && next.desiredArmed && !prefs.pendingSeparateGadget && !current.gadgetBound && !next.gadgetBound &&
       (!prepareAttempted || (deferredPreparationUdc != null && hostAttachedNow(next.udcState) == false))
     ) {
